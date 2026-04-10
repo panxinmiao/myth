@@ -144,8 +144,8 @@ pub mod prelude {
     pub use myth_core::{NodeHandle, SkeletonKey, Transform};
     pub use myth_scene::camera::ProjectionType;
     pub use myth_scene::{
-        BackgroundMapping, BackgroundMode, BackgroundSettings, Camera, Light, LightKind, Node,
-        ProceduralSkyParams, Scene, SceneLogic, SceneNode,
+        BackgroundMapping, BackgroundMode, BackgroundSettings, Camera, DayNightCycle, Light,
+        LightKind, Node, ProceduralSkyParams, Scene, SceneLogic, SceneNode,
     };
 
     // Resources
@@ -198,7 +198,7 @@ pub use myth_app::{Engine, FrameState};
 // Scene
 pub use myth_core::{NodeHandle, Transform};
 pub use myth_scene::{
-    BackgroundMapping, BackgroundMode, BackgroundSettings, Camera, Light, Node,
+    BackgroundMapping, BackgroundMode, BackgroundSettings, Camera, DayNightCycle, Light, Node,
     ProceduralSkyParams, Scene,
 };
 

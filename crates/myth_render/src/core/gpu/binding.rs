@@ -440,8 +440,10 @@ impl ResourceManager {
         scene: &Scene,
         render_state: &RenderState,
     ) -> u32 {
-        let has_active_environment = matches!(scene.background.mode, myth_scene::background::BackgroundMode::Procedural(_))
-            || scene.environment.has_env_map();
+        let has_active_environment = matches!(
+            scene.background.mode,
+            myth_scene::background::BackgroundMode::Procedural(_)
+        ) || scene.environment.has_env_map();
 
         // === Ensure: upload all buffers, obtain physical resource IDs ===
         let (_, camera_result) = self.ensure_buffer(render_state.uniforms());
@@ -575,8 +577,10 @@ impl ResourceManager {
         );
 
         // Resolve env_map from GpuEnvironment cache
-        let env_map_source = if matches!(scene.background.mode, myth_scene::background::BackgroundMode::Procedural(_))
-            || scene.environment.has_env_map()
+        let env_map_source = if matches!(
+            scene.background.mode,
+            myth_scene::background::BackgroundMode::Procedural(_)
+        ) || scene.environment.has_env_map()
         {
             self.gpu_environment(scene.id()).map_or_else(
                 || TextureHandle::dummy_env_map().into(),
@@ -600,8 +604,10 @@ impl ResourceManager {
         );
 
         // Resolve pmrem_map from GpuEnvironment cache
-        let pmrem_source = if matches!(scene.background.mode, myth_scene::background::BackgroundMode::Procedural(_))
-            || scene.environment.has_env_map()
+        let pmrem_source = if matches!(
+            scene.background.mode,
+            myth_scene::background::BackgroundMode::Procedural(_)
+        ) || scene.environment.has_env_map()
         {
             self.gpu_environment(scene.id()).map(|gpu_env| {
                 TextureSource::Attachment(gpu_env.pmrem_view.id(), wgpu::TextureViewDimension::Cube)

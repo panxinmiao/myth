@@ -14,6 +14,7 @@
 //
 // Dispatch: (32/8, 32/8, 1) = (4, 4, 1) workgroups
 
+{$ include "entry/utility/atmosphere/atmosphere_math" $}
 {$ include "entry/utility/atmosphere/atmosphere_common" $}
 
 @group(0) @binding(1)
@@ -29,7 +30,12 @@ const MS_SAMPLE_COUNT: u32 = 20u;
 const SPHERE_SAMPLES: u32 = 64u;
 
 fn sample_transmittance_lut(altitude: f32, cos_zenith: f32) -> vec3<f32> {
-    let uv = transmittance_lut_uv(altitude, cos_zenith);
+    let uv = transmittance_lut_uv(
+        altitude,
+        cos_zenith,
+        atmo.planet_radius,
+        atmo.atmosphere_radius,
+    );
     return textureSampleLevel(transmittance_tex, lut_sampler, uv, 0.0).rgb;
 }
 

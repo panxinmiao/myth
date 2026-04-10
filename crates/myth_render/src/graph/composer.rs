@@ -62,9 +62,9 @@ use crate::graph::frame::{PreparedSkyboxDraw, RenderLists};
 use crate::graph::passes::utils::add_msaa_resolve_pass;
 use crate::graph::passes::{
     AtmosphereFeature, BloomFeature, BrdfLutFeature, CasFeature, EquirectToCubeFeature,
-    FxaaFeature, IblComputeFeature, MsaaSyncFeature, OpaqueFeature, PrepassFeature,
-    ShadowFeature, SimpleForwardFeature, SkyboxFeature, SsaoFeature, SsssFeature,
-    TaaFeature, ToneMappingFeature, TransmissionCopyFeature, TransparentFeature,
+    FxaaFeature, IblComputeFeature, MsaaSyncFeature, OpaqueFeature, PrepassFeature, ShadowFeature,
+    SimpleForwardFeature, SkyboxFeature, SsaoFeature, SsssFeature, TaaFeature, ToneMappingFeature,
+    TransmissionCopyFeature, TransparentFeature,
 };
 use crate::pipeline::PipelineCache;
 use crate::pipeline::ShaderManager;
@@ -409,503 +409,508 @@ impl<'a> FrameComposer<'a> {
         // let taa_enabled = self.ctx.wgpu_ctx.taa_enabled && is_high_fidelity;
 
         let scene_environment_updated = {
-        let scene_id = self.ctx.scene.id();
-        let scene_gpu_environment = if has_active_environment {
-            self.ctx.resource_manager.gpu_environment(scene_id)
-        } else {
-            None
-        };
+            let scene_id = self.ctx.scene.id();
+            let scene_gpu_environment = if has_active_environment {
+                self.ctx.resource_manager.gpu_environment(scene_id)
+            } else {
+                None
+            };
 
-        let scene_environment_resources = scene_gpu_environment.map(|gpu_env| {
-            SceneEnvironmentGraphResources {
-                base_cube: graph_ctx.graph.import_external_resource(
-                    "Scene_Environment_BaseCube",
-                    base_cube_desc(&gpu_env.base_cube_texture),
-                    &gpu_env.base_cube_view,
-                ),
-                pmrem: graph_ctx.graph.import_external_resource(
-                    "Scene_Environment_PMREM",
-                    pmrem_desc(&gpu_env.pmrem_texture),
-                    &gpu_env.pmrem_view,
-                ),
-                source_type: gpu_env.source_type,
-                source_ready: gpu_env.source_ready,
-                needs_compute: gpu_env.needs_compute,
-            }
-        });
+            let scene_environment_resources =
+                scene_gpu_environment.map(|gpu_env| SceneEnvironmentGraphResources {
+                    base_cube: graph_ctx.graph.import_external_resource(
+                        "Scene_Environment_BaseCube",
+                        base_cube_desc(&gpu_env.base_cube_texture),
+                        &gpu_env.base_cube_view,
+                    ),
+                    pmrem: graph_ctx.graph.import_external_resource(
+                        "Scene_Environment_PMREM",
+                        pmrem_desc(&gpu_env.pmrem_texture),
+                        &gpu_env.pmrem_view,
+                    ),
+                    source_type: gpu_env.source_type,
+                    source_ready: gpu_env.source_ready,
+                    needs_compute: gpu_env.needs_compute,
+                });
 
-        let mut env_dependency_base = None;
-        let mut env_dependency_pmrem = None;
-        let mut procedural_skybox_dependencies = [None, None];
-        let mut scene_environment_updated = false;
+            let mut env_dependency_base = None;
+            let mut env_dependency_pmrem = None;
+            let mut procedural_skybox_dependencies = [None, None];
+            let mut scene_environment_updated = false;
 
-        // ── 2c. Wire Compute + Shadow Passes ───────────────────────────
-        graph_ctx.with_group("Compute", |c| {
-            if self.ctx.resource_manager.needs_brdf_compute {
-                self.ctx.brdf_pass.add_to_graph(c);
-            }
+            // ── 2c. Wire Compute + Shadow Passes ───────────────────────────
+            graph_ctx.with_group("Compute", |c| {
+                if self.ctx.resource_manager.needs_brdf_compute {
+                    self.ctx.brdf_pass.add_to_graph(c);
+                }
 
-            if let (Some(env), Some(gpu_env)) =
-                (scene_environment_resources.as_ref(), scene_gpu_environment)
-            {
-                match env.source_type {
-                    CubeSourceType::Procedural => {
-                        if let myth_scene::background::BackgroundMode::Procedural(params) =
-                            &self.ctx.scene.background.mode
-                        {
-                            let bake_environment = env.needs_compute && env.source_ready;
-                            let atmosphere_output = self.ctx.atmosphere_pass.add_to_graph(
-                                c,
-                                scene_id,
-                                params,
-                                env.base_cube,
-                                &gpu_env.base_cube_storage_view,
-                                bake_environment,
-                            );
-                            procedural_skybox_dependencies = atmosphere_output.skybox_dependencies();
+                if let (Some(env), Some(gpu_env)) =
+                    (scene_environment_resources.as_ref(), scene_gpu_environment)
+                {
+                    match env.source_type {
+                        CubeSourceType::Procedural => {
+                            if let myth_scene::background::BackgroundMode::Procedural(params) =
+                                &self.ctx.scene.background.mode
+                            {
+                                let bake_environment = env.needs_compute && env.source_ready;
+                                let atmosphere_output = self.ctx.atmosphere_pass.add_to_graph(
+                                    c,
+                                    scene_id,
+                                    params,
+                                    env.base_cube,
+                                    &gpu_env.base_cube_storage_view,
+                                    bake_environment,
+                                );
+                                procedural_skybox_dependencies =
+                                    atmosphere_output.skybox_dependencies();
 
-                            if bake_environment {
-                                self.ctx
-                                    .ibl_pass
-                                    .add_to_graph(c, scene_id, env.base_cube, env.pmrem);
+                                if bake_environment {
+                                    self.ctx.ibl_pass.add_to_graph(
+                                        c,
+                                        scene_id,
+                                        env.base_cube,
+                                        env.pmrem,
+                                    );
+                                    env_dependency_base = Some(env.base_cube);
+                                    env_dependency_pmrem = Some(env.pmrem);
+                                    scene_environment_updated = true;
+                                }
+                            }
+                        }
+                        CubeSourceType::Equirectangular | CubeSourceType::Cubemap => {
+                            if env.needs_compute && env.source_ready {
+                                self.ctx.equirect_to_cube_pass.add_to_graph(
+                                    c,
+                                    scene_id,
+                                    env.source_type,
+                                    env.base_cube,
+                                );
+                                self.ctx.ibl_pass.add_to_graph(
+                                    c,
+                                    scene_id,
+                                    env.base_cube,
+                                    env.pmrem,
+                                );
                                 env_dependency_base = Some(env.base_cube);
                                 env_dependency_pmrem = Some(env.pmrem);
                                 scene_environment_updated = true;
                             }
                         }
                     }
-                    CubeSourceType::Equirectangular | CubeSourceType::Cubemap => {
-                        if env.needs_compute && env.source_ready {
-                            self.ctx.equirect_to_cube_pass.add_to_graph(
-                                c,
-                                scene_id,
-                                env.source_type,
-                                env.base_cube,
-                            );
-                            self.ctx
-                                .ibl_pass
-                                .add_to_graph(c, scene_id, env.base_cube, env.pmrem);
-                            env_dependency_base = Some(env.base_cube);
-                            env_dependency_pmrem = Some(env.pmrem);
-                            scene_environment_updated = true;
-                        }
-                    }
                 }
-            }
-        });
+            });
 
-        let shadow_output = if self.ctx.extracted_scene.has_shadow_casters() {
-            graph_ctx.with_group("Shadow", |c| self.ctx.shadow_pass.add_to_graph(c))
-        } else {
-            crate::graph::passes::shadow::ShadowOutput {
-                shadow_2d: None,
-                shadow_cube: None,
-            }
-        };
-
-        // ── 2d. Wire Scene Rendering Passes (explicit data-flow) ──────
-        //
-        // Each pass's `add_to_graph` creates its own transient resources
-        // internally and returns typed output structs.  The Composer
-        // threads `TextureNodeId` values from producer to consumer —
-        // no blackboard lookups remain for mutable resources.
-
-        // Track scene_color / scene_depth for the GraphBlackboard (hooks).
-        let mut bb_scene_color = None;
-        let mut bb_scene_depth = None;
-
-        // Debug view: capture intermediate texture IDs for safe resolution.
-        #[cfg(feature = "debug_view")]
-        let mut dbg_normals: Option<crate::graph::core::TextureNodeId> = None;
-        #[cfg(feature = "debug_view")]
-        let mut dbg_velocity: Option<crate::graph::core::TextureNodeId> = None;
-        #[cfg(feature = "debug_view")]
-        let mut dbg_ssao: Option<crate::graph::core::TextureNodeId> = None;
-
-        let mut current_surface = surface_out;
-
-        if is_high_fidelity {
-            // ────────────────────────────────────────────────────────────
-            // HighFidelity pipeline: separate passes, explicit wiring.
-            // ────────────────────────────────────────────────────────────
-
-            // ── Scene Rendering Group ──────────────────────────────────
-
-            // let taa_enabled = self.ctx.camera.aa_mode.is_taa();
-
-            let cas_enabled = if let Some(s) = self.ctx.camera.aa_mode.taa_settings() {
-                s.sharpen_intensity > 0.0
+            let shadow_output = if self.ctx.extracted_scene.has_shadow_casters() {
+                graph_ctx.with_group("Shadow", |c| self.ctx.shadow_pass.add_to_graph(c))
             } else {
-                false
+                crate::graph::passes::shadow::ShadowOutput {
+                    shadow_2d: None,
+                    shadow_cube: None,
+                }
             };
 
-            let fxaa_enabled = self.ctx.camera.aa_mode.is_fxaa();
+            // ── 2d. Wire Scene Rendering Passes (explicit data-flow) ──────
+            //
+            // Each pass's `add_to_graph` creates its own transient resources
+            // internally and returns typed output structs.  The Composer
+            // threads `TextureNodeId` values from producer to consumer —
+            // no blackboard lookups remain for mutable resources.
 
-            let (mut active_color, mut scene_depth) = graph_ctx.with_group("Scene", |c| {
-                // 1. Prepass
-                let prepass_out = self.ctx.prepass.add_to_graph(
-                    c,
-                    needs_normal,
-                    needs_feature_id,
-                    needs_velocity,
-                );
+            // Track scene_color / scene_depth for the GraphBlackboard (hooks).
+            let mut bb_scene_color = None;
+            let mut bb_scene_depth = None;
 
-                let scene_depth = prepass_out.scene_depth;
+            // Debug view: capture intermediate texture IDs for safe resolution.
+            #[cfg(feature = "debug_view")]
+            let mut dbg_normals: Option<crate::graph::core::TextureNodeId> = None;
+            #[cfg(feature = "debug_view")]
+            let mut dbg_velocity: Option<crate::graph::core::TextureNodeId> = None;
+            #[cfg(feature = "debug_view")]
+            let mut dbg_ssao: Option<crate::graph::core::TextureNodeId> = None;
 
-                // 2. SSAO
-                let ssao_output = if ssao_enabled {
-                    Some(
-                        self.ctx.ssao_pass.add_to_graph(
-                            c,
-                            scene_depth,
-                            prepass_out
-                                .scene_normals
-                                .expect("SSAO requires scene normals from Prepass"),
-                        ),
-                    )
+            let mut current_surface = surface_out;
+
+            if is_high_fidelity {
+                // ────────────────────────────────────────────────────────────
+                // HighFidelity pipeline: separate passes, explicit wiring.
+                // ────────────────────────────────────────────────────────────
+
+                // ── Scene Rendering Group ──────────────────────────────────
+
+                // let taa_enabled = self.ctx.camera.aa_mode.is_taa();
+
+                let cas_enabled = if let Some(s) = self.ctx.camera.aa_mode.taa_settings() {
+                    s.sharpen_intensity > 0.0
                 } else {
-                    None
+                    false
                 };
 
-                // 3. Opaque
-                let opaque_out = self.ctx.opaque_pass.add_to_graph(
-                    c,
-                    scene_depth,
-                    self.ctx.extracted_scene.background.clear_color(),
-                    ssss_enabled,
-                    ssao_output,
-                    shadow_output.shadow_2d,
-                    shadow_output.shadow_cube,
-                    env_dependency_base,
-                    env_dependency_pmrem,
-                );
+                let fxaa_enabled = self.ctx.camera.aa_mode.is_fxaa();
 
-                let mut active_color = opaque_out.active_color;
-
-                // 4. SSSS
-                if ssss_enabled {
-                    if is_msaa {
-                        let hdr_desc = TextureDesc::new_2d(
-                            c.frame_config.width,
-                            c.frame_config.height,
-                            crate::HDR_TEXTURE_FORMAT,
-                            wgpu::TextureUsages::RENDER_ATTACHMENT
-                                | wgpu::TextureUsages::TEXTURE_BINDING
-                                | wgpu::TextureUsages::COPY_SRC,
-                        );
-                        // If MSAA is enabled, resolve the opaque output to an intermediate non-MSAA texture for SSSS input.
-                        active_color = add_msaa_resolve_pass(c, active_color, hdr_desc);
-                    }
-
-                    active_color = self.ctx.ssss_pass.add_to_graph(
+                let (mut active_color, mut scene_depth) = graph_ctx.with_group("Scene", |c| {
+                    // 1. Prepass
+                    let prepass_out = self.ctx.prepass.add_to_graph(
                         c,
-                        active_color,
-                        prepass_out.scene_depth,
-                        prepass_out.scene_normals.unwrap(),
-                        prepass_out.feature_id.unwrap(),
-                        opaque_out.specular_mrt.unwrap(),
+                        needs_normal,
+                        needs_feature_id,
+                        needs_velocity,
                     );
 
-                    if is_msaa {
-                        // If MSAA is enabled, synchronize the SSSS output back to an MSAA texture for downstream passes (Skybox, Transparent) that expect MSAA input.
-                        // This avoids redundant MSAA resolve + re-multisample operations.
-                        active_color = self.ctx.msaa_sync_pass.add_to_graph(c, active_color);
-                    }
-                }
+                    let scene_depth = prepass_out.scene_depth;
 
-                // 5. Skybox
-                if needs_skybox {
-                    active_color =
-                        self.ctx
-                            .skybox_pass
-                            .add_to_graph(
+                    // 2. SSAO
+                    let ssao_output = if ssao_enabled {
+                        Some(
+                            self.ctx.ssao_pass.add_to_graph(
+                                c,
+                                scene_depth,
+                                prepass_out
+                                    .scene_normals
+                                    .expect("SSAO requires scene normals from Prepass"),
+                            ),
+                        )
+                    } else {
+                        None
+                    };
+
+                    // 3. Opaque
+                    let opaque_out = self.ctx.opaque_pass.add_to_graph(
+                        c,
+                        scene_depth,
+                        self.ctx.extracted_scene.background.clear_color(),
+                        ssss_enabled,
+                        ssao_output,
+                        shadow_output.shadow_2d,
+                        shadow_output.shadow_cube,
+                        env_dependency_base,
+                        env_dependency_pmrem,
+                    );
+
+                    let mut active_color = opaque_out.active_color;
+
+                    // 4. SSSS
+                    if ssss_enabled {
+                        if is_msaa {
+                            let hdr_desc = TextureDesc::new_2d(
+                                c.frame_config.width,
+                                c.frame_config.height,
+                                crate::HDR_TEXTURE_FORMAT,
+                                wgpu::TextureUsages::RENDER_ATTACHMENT
+                                    | wgpu::TextureUsages::TEXTURE_BINDING
+                                    | wgpu::TextureUsages::COPY_SRC,
+                            );
+                            // If MSAA is enabled, resolve the opaque output to an intermediate non-MSAA texture for SSSS input.
+                            active_color = add_msaa_resolve_pass(c, active_color, hdr_desc);
+                        }
+
+                        active_color = self.ctx.ssss_pass.add_to_graph(
+                            c,
+                            active_color,
+                            prepass_out.scene_depth,
+                            prepass_out.scene_normals.unwrap(),
+                            prepass_out.feature_id.unwrap(),
+                            opaque_out.specular_mrt.unwrap(),
+                        );
+
+                        if is_msaa {
+                            // If MSAA is enabled, synchronize the SSSS output back to an MSAA texture for downstream passes (Skybox, Transparent) that expect MSAA input.
+                            // This avoids redundant MSAA resolve + re-multisample operations.
+                            active_color = self.ctx.msaa_sync_pass.add_to_graph(c, active_color);
+                        }
+                    }
+
+                    // 5. Skybox
+                    if needs_skybox {
+                        active_color = self.ctx.skybox_pass.add_to_graph(
+                            c,
+                            active_color,
+                            opaque_out.active_depth,
+                            procedural_skybox_dependencies,
+                        );
+                    }
+
+                    // ── 6. TAA Resolve ────────────────────────────────────────────
+                    // Resolve temporal anti-aliasing before bloom/tone-mapping.
+                    // The resolved colour replaces post_transparent_color for
+                    // downstream post-processing.
+                    if taa_enabled && let Some(velocity) = prepass_out.velocity_buffer {
+                        c.with_group("TAA_System", |c| {
+                            active_color = self.ctx.taa_pass.add_to_graph(
                                 c,
                                 active_color,
-                                opaque_out.active_depth,
-                                procedural_skybox_dependencies,
+                                velocity,
+                                scene_depth,
                             );
-                }
 
-                // ── 6. TAA Resolve ────────────────────────────────────────────
-                // Resolve temporal anti-aliasing before bloom/tone-mapping.
-                // The resolved colour replaces post_transparent_color for
-                // downstream post-processing.
-                if taa_enabled && let Some(velocity) = prepass_out.velocity_buffer {
-                    c.with_group("TAA_System", |c| {
-                        active_color =
+                            // ── 6b. CAS (Contrast Adaptive Sharpening) ────────────
+                            // Recover fine detail lost to temporal filtering.
+                            if cas_enabled {
+                                active_color = self.ctx.cas_pass.add_to_graph(c, active_color);
+                            }
+                        });
+                    }
+
+                    // 7. Transmission Copy
+                    let transmission_tex = if has_transmission {
+                        Some(
                             self.ctx
-                                .taa_pass
-                                .add_to_graph(c, active_color, velocity, scene_depth);
+                                .transmission_copy_pass
+                                .add_to_graph(c, active_color),
+                        )
+                    } else {
+                        None
+                    };
 
-                        // ── 6b. CAS (Contrast Adaptive Sharpening) ────────────
-                        // Recover fine detail lost to temporal filtering.
-                        if cas_enabled {
-                            active_color = self.ctx.cas_pass.add_to_graph(c, active_color);
+                    // 8. Transparent
+                    let active_color = self.ctx.transparent_pass.add_to_graph(
+                        c,
+                        active_color,
+                        opaque_out.active_depth,
+                        transmission_tex,
+                        ssao_output,
+                        shadow_output.shadow_2d,
+                        shadow_output.shadow_cube,
+                    );
+
+                    // Capture intermediate IDs for debug view resolution.
+                    #[cfg(feature = "debug_view")]
+                    {
+                        dbg_normals = prepass_out.scene_normals;
+                        dbg_velocity = prepass_out.velocity_buffer;
+                        dbg_ssao = ssao_output;
+                    }
+
+                    (active_color, scene_depth)
+                });
+
+                // ── Before-Post-Process Hooks ──────────────────────────────
+                {
+                    let mut blackboard = GraphBlackboard {
+                        scene_color: Some(active_color),
+                        scene_depth: Some(scene_depth),
+                        surface_out,
+                    };
+                    for (stage, hook_opt) in &mut self.hooks {
+                        if *stage == HookStage::BeforePostProcess
+                            && let Some(hook) = hook_opt.take()
+                        {
+                            blackboard = hook(graph_ctx.graph, blackboard);
                         }
-                    });
+                    }
+
+                    active_color = blackboard.scene_color.unwrap_or(active_color);
+                    scene_depth = blackboard.scene_depth.unwrap_or(scene_depth);
                 }
 
-                // 7. Transmission Copy
-                let transmission_tex = if has_transmission {
-                    Some(
+                // ── Post-Processing Group ──────────────────────────────────
+                current_surface = graph_ctx.with_group("PostProcess", |ctx| {
+                    // Bloom (internally flattened into Bloom_System subgroup)
+                    if bloom_enabled {
+                        active_color = self.ctx.bloom_pass.add_to_graph(
+                            ctx,
+                            active_color,
+                            self.ctx.scene.bloom.karis_average,
+                            self.ctx.scene.bloom.max_mip_levels(),
+                        );
+                    }
+
+                    // ToneMapping: HDR → LDR
+                    let mut surface = if fxaa_enabled {
+                        // Route through an intermediate LDR texture for FXAA input
+                        let ldr =
+                            ctx.graph
+                                .register_resource("LDR_Intermediate", surface_desc, false);
+                        self.ctx.tone_map_pass.add_to_graph(ctx, active_color, ldr)
+                    } else {
                         self.ctx
-                            .transmission_copy_pass
-                            .add_to_graph(c, active_color),
-                    )
-                } else {
-                    None
-                };
+                            .tone_map_pass
+                            .add_to_graph(ctx, active_color, current_surface)
+                    };
 
-                // 8. Transparent
-                let active_color = self.ctx.transparent_pass.add_to_graph(
-                    c,
-                    active_color,
-                    opaque_out.active_depth,
-                    transmission_tex,
-                    ssao_output,
-                    shadow_output.shadow_2d,
-                    shadow_output.shadow_cube,
-                );
+                    // FXAA: anti-alias the LDR result onto the surface
+                    if fxaa_enabled {
+                        let ldr_intermediate = surface;
+                        surface =
+                            self.ctx
+                                .fxaa_pass
+                                .add_to_graph(ctx, ldr_intermediate, current_surface);
+                    }
 
-                // Capture intermediate IDs for debug view resolution.
+                    bb_scene_color = Some(active_color);
+                    bb_scene_depth = Some(scene_depth);
+
+                    surface
+                });
+
+                // ── Debug View Override ────────────────────────────────────
+                // Resolve the semantic DebugViewMode to a concrete
+                // TextureNodeId, then blit it onto the surface.  Targets
+                // whose producer was disabled (e.g. SSAO off) safely
+                // resolve to None — no pass is injected.
+                // Material-override modes are handled separately via shader
+                // defines and do not use this post-process path.
                 #[cfg(feature = "debug_view")]
                 {
-                    dbg_normals = prepass_out.scene_normals;
-                    dbg_velocity = prepass_out.velocity_buffer;
-                    dbg_ssao = ssao_output;
-                }
+                    use crate::graph::render_state::DebugViewTarget;
+                    let target = DebugViewTarget::from_mode(self.ctx.render_state.debug_view_mode);
+                    let source: Option<crate::graph::core::TextureNodeId> = match target {
+                        DebugViewTarget::SceneNormal => dbg_normals,
+                        DebugViewTarget::Velocity => dbg_velocity,
+                        DebugViewTarget::SsaoRaw => dbg_ssao,
+                        DebugViewTarget::SceneDepth => Some(scene_depth),
+                        _ => None,
+                    };
 
-                (active_color, scene_depth)
-            });
+                    let is_depth = target == DebugViewTarget::SceneDepth;
 
-            // ── Before-Post-Process Hooks ──────────────────────────────
-            {
-                let mut blackboard = GraphBlackboard {
-                    scene_color: Some(active_color),
-                    scene_depth: Some(scene_depth),
-                    surface_out,
-                };
-                for (stage, hook_opt) in &mut self.hooks {
-                    if *stage == HookStage::BeforePostProcess
-                        && let Some(hook) = hook_opt.take()
-                    {
-                        blackboard = hook(graph_ctx.graph, blackboard);
+                    if let Some(src) = source {
+                        current_surface = self.ctx.debug_view_pass.add_to_graph(
+                            &mut graph_ctx,
+                            src,
+                            current_surface,
+                            is_depth,
+                        );
                     }
                 }
+            } else {
+                // BasicForward pipeline: single-pass LDR rendering.
 
-                active_color = blackboard.scene_color.unwrap_or(active_color);
-                scene_depth = blackboard.scene_depth.unwrap_or(scene_depth);
-            }
+                let prepared_skybox = if needs_skybox {
+                    let skybox_pipeline = self.ctx.skybox_pass.current_pipeline;
+                    let skybox_bind_group = &self.ctx.skybox_pass.current_bind_group;
 
-            // ── Post-Processing Group ──────────────────────────────────
-            current_surface = graph_ctx.with_group("PostProcess", |ctx| {
-                // Bloom (internally flattened into Bloom_System subgroup)
-                if bloom_enabled {
-                    active_color = self.ctx.bloom_pass.add_to_graph(
-                        ctx,
-                        active_color,
-                        self.ctx.scene.bloom.karis_average,
-                        self.ctx.scene.bloom.max_mip_levels(),
-                    );
-                }
-
-                // ToneMapping: HDR → LDR
-                let mut surface = if fxaa_enabled {
-                    // Route through an intermediate LDR texture for FXAA input
-                    let ldr = ctx
-                        .graph
-                        .register_resource("LDR_Intermediate", surface_desc, false);
-                    self.ctx.tone_map_pass.add_to_graph(ctx, active_color, ldr)
-                } else {
-                    self.ctx
-                        .tone_map_pass
-                        .add_to_graph(ctx, active_color, current_surface)
-                };
-
-                // FXAA: anti-alias the LDR result onto the surface
-                if fxaa_enabled {
-                    let ldr_intermediate = surface;
-                    surface =
-                        self.ctx
-                            .fxaa_pass
-                            .add_to_graph(ctx, ldr_intermediate, current_surface);
-                }
-
-                bb_scene_color = Some(active_color);
-                bb_scene_depth = Some(scene_depth);
-
-                surface
-            });
-
-            // ── Debug View Override ────────────────────────────────────
-            // Resolve the semantic DebugViewMode to a concrete
-            // TextureNodeId, then blit it onto the surface.  Targets
-            // whose producer was disabled (e.g. SSAO off) safely
-            // resolve to None — no pass is injected.
-            // Material-override modes are handled separately via shader
-            // defines and do not use this post-process path.
-            #[cfg(feature = "debug_view")]
-            {
-                use crate::graph::render_state::DebugViewTarget;
-                let target = DebugViewTarget::from_mode(self.ctx.render_state.debug_view_mode);
-                let source: Option<crate::graph::core::TextureNodeId> = match target {
-                    DebugViewTarget::SceneNormal => dbg_normals,
-                    DebugViewTarget::Velocity => dbg_velocity,
-                    DebugViewTarget::SsaoRaw => dbg_ssao,
-                    DebugViewTarget::SceneDepth => Some(scene_depth),
-                    _ => None,
-                };
-
-                let is_depth = target == DebugViewTarget::SceneDepth;
-
-                if let Some(src) = source {
-                    current_surface = self.ctx.debug_view_pass.add_to_graph(
-                        &mut graph_ctx,
-                        src,
-                        current_surface,
-                        is_depth,
-                    );
-                }
-            }
-        } else {
-            // BasicForward pipeline: single-pass LDR rendering.
-
-            let prepared_skybox = if needs_skybox {
-                let skybox_pipeline = self.ctx.skybox_pass.current_pipeline;
-                let skybox_bind_group = &self.ctx.skybox_pass.current_bind_group;
-
-                if let (Some(pipeline_id), Some(bg)) = (skybox_pipeline, skybox_bind_group) {
-                    Some(PreparedSkyboxDraw {
-                        pipeline: self.ctx.pipeline_cache.get_render_pipeline(pipeline_id),
-                        bind_group: bg,
-                        sampled_textures: procedural_skybox_dependencies,
-                    })
+                    if let (Some(pipeline_id), Some(bg)) = (skybox_pipeline, skybox_bind_group) {
+                        Some(PreparedSkyboxDraw {
+                            pipeline: self.ctx.pipeline_cache.get_render_pipeline(pipeline_id),
+                            bind_group: bg,
+                            sampled_textures: procedural_skybox_dependencies,
+                        })
+                    } else {
+                        None
+                    }
                 } else {
                     None
+                };
+
+                graph_ctx.with_group("BasicForward", |c| {
+                    self.ctx.simple_forward_pass.add_to_graph(
+                        c,
+                        surface_out,
+                        self.ctx.extracted_scene.background.clear_color(),
+                        prepared_skybox,
+                        shadow_output.shadow_2d,
+                        shadow_output.shadow_cube,
+                        env_dependency_base,
+                        env_dependency_pmrem,
+                    );
+                });
+            }
+
+            drop(graph_ctx);
+
+            // ── After-Post-Process Hooks (UI, debug overlays) ──────────────
+            {
+                let mut blackboard = GraphBlackboard {
+                    scene_color: bb_scene_color,
+                    scene_depth: bb_scene_depth,
+                    surface_out: current_surface,
+                };
+                for (stage, hook_opt) in &mut self.hooks {
+                    if *stage == HookStage::AfterPostProcess
+                        && let Some(hook) = hook_opt.take()
+                    {
+                        blackboard = hook(&mut graph, blackboard);
+                    }
                 }
+            }
+
+            // ━━━ 3. Compile & Execute RDG ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+            graph.compile(self.ctx.transient_pool, &self.ctx.wgpu_ctx.device);
+
+            // ─── 3a. RDG Prepare: transient-only BindGroup assembly ────────
+            //
+            // Only the swapchain surface is truly external — all other textures
+            // (scene_color, scene_depth, etc.) are RDG transient resources.
+
+            let mut prepare_ctx = PrepareContext {
+                views: ViewResolver {
+                    resources: &graph.storage.resources,
+                    pool: self.ctx.transient_pool,
+                },
+                device: &self.ctx.wgpu_ctx.device,
+                queue: &self.ctx.wgpu_ctx.queue,
+                sampler_registry: &self.ctx.resource_manager.sampler_registry,
+                global_bind_group_cache: self.ctx.global_bind_group_cache,
+                system_textures: &self.ctx.resource_manager.system_textures,
+            };
+
+            for &pass_idx in &graph.storage.execution_queue {
+                let pass = graph.storage.passes[pass_idx].get_pass_mut();
+                pass.prepare(&mut prepare_ctx);
+            }
+
+            // ─── 3c. Bake render commands ──────────────────────────────────
+            //
+            // Resolve every asset handle (geometry, material, pipeline) to its
+            // physical wgpu reference.  After this point the execute phase is
+            // "blind" — it processes only pre-resolved GPU state.
+            let prepass_config = if is_high_fidelity {
+                Some(crate::graph::bake::PrepassBakeConfig {
+                    local_cache: self.ctx.prepass.local_cache(),
+                    needs_normal: self.ctx.prepass.needs_normal(),
+                    needs_feature_id: self.ctx.prepass.needs_feature_id(),
+                    needs_velocity: self.ctx.prepass.needs_velocity(),
+                })
             } else {
                 None
             };
 
-            graph_ctx.with_group("BasicForward", |c| {
-                self.ctx.simple_forward_pass.add_to_graph(
-                    c,
-                    surface_out,
-                    self.ctx.extracted_scene.background.clear_color(),
-                    prepared_skybox,
-                    shadow_output.shadow_2d,
-                    shadow_output.shadow_cube,
-                    env_dependency_base,
-                    env_dependency_pmrem,
-                );
-            });
-        }
+            let baked_lists = crate::graph::bake::bake_render_lists(
+                self.ctx.render_lists,
+                self.ctx.resource_manager,
+                self.ctx.pipeline_cache,
+                &prepass_config,
+            );
 
-        drop(graph_ctx);
+            // ─── 3d. Execute ───────────────────────────────────────────────
 
-        // ── After-Post-Process Hooks (UI, debug overlays) ──────────────
-        {
-            let mut blackboard = GraphBlackboard {
-                scene_color: bb_scene_color,
-                scene_depth: bb_scene_depth,
-                surface_out: current_surface,
-            };
-            for (stage, hook_opt) in &mut self.hooks {
-                if *stage == HookStage::AfterPostProcess
-                    && let Some(hook) = hook_opt.take()
-                {
-                    blackboard = hook(&mut graph, blackboard);
-                }
-            }
-        }
-
-        // ━━━ 3. Compile & Execute RDG ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-
-        graph.compile(self.ctx.transient_pool, &self.ctx.wgpu_ctx.device);
-
-        // ─── 3a. RDG Prepare: transient-only BindGroup assembly ────────
-        //
-        // Only the swapchain surface is truly external — all other textures
-        // (scene_color, scene_depth, etc.) are RDG transient resources.
-
-        let mut prepare_ctx = PrepareContext {
-            views: ViewResolver {
+            let mut execute_ctx = ExecuteContext {
                 resources: &graph.storage.resources,
                 pool: self.ctx.transient_pool,
-            },
-            device: &self.ctx.wgpu_ctx.device,
-            queue: &self.ctx.wgpu_ctx.queue,
-            sampler_registry: &self.ctx.resource_manager.sampler_registry,
-            global_bind_group_cache: self.ctx.global_bind_group_cache,
-            system_textures: &self.ctx.resource_manager.system_textures,
-        };
+                device: &self.ctx.wgpu_ctx.device,
+                queue: &self.ctx.wgpu_ctx.queue,
+                pipeline_cache: self.ctx.pipeline_cache,
+                global_bind_group_cache: self.ctx.global_bind_group_cache,
+                mipmap_generator: &self.ctx.resource_manager.mipmap_generator,
+                baked_lists: &baked_lists,
+                wgpu_ctx: &*self.ctx.wgpu_ctx,
+                current_timeline_index: 0,
+            };
 
-        for &pass_idx in &graph.storage.execution_queue {
-            let pass = graph.storage.passes[pass_idx].get_pass_mut();
-            pass.prepare(&mut prepare_ctx);
-        }
+            let mut encoder =
+                self.ctx
+                    .wgpu_ctx
+                    .device
+                    .create_command_encoder(&wgpu::CommandEncoderDescriptor {
+                        label: Some("Unified Encoder"),
+                    });
 
-        // ─── 3c. Bake render commands ──────────────────────────────────
-        //
-        // Resolve every asset handle (geometry, material, pipeline) to its
-        // physical wgpu reference.  After this point the execute phase is
-        // "blind" — it processes only pre-resolved GPU state.
-        let prepass_config = if is_high_fidelity {
-            Some(crate::graph::bake::PrepassBakeConfig {
-                local_cache: self.ctx.prepass.local_cache(),
-                needs_normal: self.ctx.prepass.needs_normal(),
-                needs_feature_id: self.ctx.prepass.needs_feature_id(),
-                needs_velocity: self.ctx.prepass.needs_velocity(),
-            })
-        } else {
-            None
-        };
+            for (timeline_index, &pass_idx) in graph.storage.execution_queue.iter().enumerate() {
+                execute_ctx.current_timeline_index = timeline_index;
+                #[cfg(debug_assertions)]
+                encoder.push_debug_group(graph.storage.passes[pass_idx].name);
+                graph.storage.passes[pass_idx]
+                    .get_pass_mut()
+                    .execute(&execute_ctx, &mut encoder);
+                #[cfg(debug_assertions)]
+                encoder.pop_debug_group();
+            }
 
-        let baked_lists = crate::graph::bake::bake_render_lists(
-            self.ctx.render_lists,
-            self.ctx.resource_manager,
-            self.ctx.pipeline_cache,
-            &prepass_config,
-        );
+            // ━━━ 4. Submit & Present ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 
-        // ─── 3d. Execute ───────────────────────────────────────────────
-
-        let mut execute_ctx = ExecuteContext {
-            resources: &graph.storage.resources,
-            pool: self.ctx.transient_pool,
-            device: &self.ctx.wgpu_ctx.device,
-            queue: &self.ctx.wgpu_ctx.queue,
-            pipeline_cache: self.ctx.pipeline_cache,
-            global_bind_group_cache: self.ctx.global_bind_group_cache,
-            mipmap_generator: &self.ctx.resource_manager.mipmap_generator,
-            baked_lists: &baked_lists,
-            wgpu_ctx: &*self.ctx.wgpu_ctx,
-            current_timeline_index: 0,
-        };
-
-        let mut encoder =
-            self.ctx
-                .wgpu_ctx
-                .device
-                .create_command_encoder(&wgpu::CommandEncoderDescriptor {
-                    label: Some("Unified Encoder"),
-                });
-
-        for (timeline_index, &pass_idx) in graph.storage.execution_queue.iter().enumerate() {
-            execute_ctx.current_timeline_index = timeline_index;
-            #[cfg(debug_assertions)]
-            encoder.push_debug_group(graph.storage.passes[pass_idx].name);
-            graph.storage.passes[pass_idx]
-                .get_pass_mut()
-                .execute(&execute_ctx, &mut encoder);
-            #[cfg(debug_assertions)]
-            encoder.pop_debug_group();
-        }
-
-        // ━━━ 4. Submit & Present ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-
-        self.ctx.wgpu_ctx.queue.submit(Some(encoder.finish()));
-        scene_environment_updated
+            self.ctx.wgpu_ctx.queue.submit(Some(encoder.finish()));
+            scene_environment_updated
         };
 
         if scene_environment_updated {

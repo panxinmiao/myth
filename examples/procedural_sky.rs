@@ -1,28 +1,33 @@
 use myth::prelude::*;
-use myth::resources::Key;
 use myth::utils::FpsCounter;
 
 /// Procedural Sky Demo
 ///
-/// Demonstrates the Hillaire 2020 atmosphere system with dynamic IBL.
-/// The sun orbits automatically; press Space to pause/resume.
+/// Demonstrates the Hillaire 2020 atmosphere system with a SceneLogic-driven
+/// day/night cycle, moon light, and hybrid star field.
 struct ProceduralSkyDemo {
     cam_node_id: NodeHandle,
-    light_node_id: NodeHandle,
     controls: OrbitControls,
     fps_counter: FpsCounter,
-    time: f32,
-    paused: bool,
 }
 
 impl AppHandler for ProceduralSkyDemo {
     fn init(engine: &mut Engine, _window: &dyn Window) -> Self {
         let scene = engine.scene_manager.create_active();
 
-        // Procedural sky with golden-hour defaults
+        let starbox = engine.assets.load_texture(
+            "examples/assets/envs/Milky_Way_panorama.jpg",
+            ColorSpace::Srgb,
+            true,
+        );
+
+        let mut sky = ProceduralSkyParams::sunset();
+        sky.set_starbox_texture(Some(starbox.into()));
+        sky.set_star_intensity(1.0);
+        sky.set_moon_intensity(0.18);
         scene
             .background
-            .set_mode(BackgroundMode::procedural());
+            .set_mode(BackgroundMode::procedural_with(sky));
 
         // Directional light aligned with initial sun direction
         let sun_dir = scene
@@ -30,13 +35,33 @@ impl AppHandler for ProceduralSkyDemo {
             .procedural_sky_params()
             .map(|p| p.sun_direction)
             .unwrap_or(Vec3::new(0.0, 0.2, -1.0).normalize());
+        let moon_dir = scene
+            .background
+            .procedural_sky_params()
+            .map(|p| p.moon_direction)
+            .unwrap_or(-sun_dir);
 
-        let light = Light::new_directional(Vec3::new(1.0, 0.95, 0.8), 3.0);
-        let light_node_id = scene.add_light(light);
-        if let Some(node) = scene.get_node_mut(light_node_id) {
+        let mut sun_light = Light::new_directional(Vec3::new(1.0, 0.95, 0.8), 3.0);
+        sun_light.cast_shadows = true;
+        let sun_light_node = scene.add_light(sun_light);
+        if let Some(node) = scene.get_node_mut(sun_light_node) {
             node.transform.position = sun_dir * 10.0;
             node.transform.look_at(Vec3::ZERO, Vec3::Y);
         }
+
+        let moon_light = Light::new_directional(Vec3::new(0.62, 0.72, 1.0), 0.08);
+        let moon_light_node = scene.add_light(moon_light);
+        if let Some(node) = scene.get_node_mut(moon_light_node) {
+            node.transform.position = moon_dir * 10.0;
+            node.transform.look_at(Vec3::ZERO, Vec3::Y);
+        }
+
+        scene.add_logic(
+            DayNightCycle::new(18.5, 35.0)
+                .with_sun(sun_light_node)
+                .with_moon(moon_light_node)
+                .with_time_speed(0.35),
+        );
 
         // Load the DamagedHelmet model as a reference object
         let gltf_path =
@@ -56,11 +81,8 @@ impl AppHandler for ProceduralSkyDemo {
 
         Self {
             cam_node_id,
-            light_node_id,
             controls: OrbitControls::new(Vec3::new(0.0, 0.5, 4.0), Vec3::ZERO),
             fps_counter: FpsCounter::new(),
-            time: 0.0,
-            paused: false,
         }
     }
 
@@ -69,36 +91,6 @@ impl AppHandler for ProceduralSkyDemo {
             return;
         };
 
-        // Toggle pause with Space
-        if engine.input.get_key_down(Key::Space) {
-            self.paused = !self.paused;
-        }
-
-        // Animate the sun direction around a circular arc
-        if !self.paused {
-            self.time += frame.dt * 0.15;
-        }
-
-        let elevation = self.time.sin();
-        let azimuth = self.time * 0.7;
-        let sun_dir = Vec3::new(azimuth.cos() * elevation.cos(), elevation, azimuth.sin() * elevation.cos()).normalize();
-
-        if let Some(params) = scene.background.procedural_sky_params_mut() {
-            params.set_sun_direction(sun_dir);
-        }
-
-        // Keep the directional light pointing opposite the sun direction
-        if let Some((light, node)) = scene.get_light_bundle(self.light_node_id) {
-            node.transform.position = sun_dir * 10.0;
-            node.transform.look_at(Vec3::ZERO, Vec3::Y);
-
-            if elevation > 0.0 {
-                light.intensity = 3.0 * elevation;
-            } else {
-                light.intensity = 0.0;
-            }
-        }
-
         // Orbit camera
         if let Some(cam_node) = scene.get_node_mut(self.cam_node_id) {
             self.controls
@@ -106,11 +98,7 @@ impl AppHandler for ProceduralSkyDemo {
         }
 
         if let Some(fps) = self.fps_counter.update() {
-            window.set_title(&format!(
-                "Procedural Sky Demo - FPS: {:.0}{}",
-                fps,
-                if self.paused { " [PAUSED]" } else { "" }
-            ));
+            window.set_title(&format!("Procedural Sky Day/Night - FPS: {:.0}", fps));
         }
     }
 }

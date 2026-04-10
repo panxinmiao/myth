@@ -8,6 +8,7 @@
 
 pub mod background;
 pub mod camera;
+pub mod day_night;
 pub mod environment;
 pub mod light;
 pub mod node;
@@ -36,6 +37,7 @@ pub use background::{BackgroundMapping, BackgroundMode, BackgroundSettings, Proc
 pub use camera::{Camera, Frustum, ProjectionType, RenderCamera};
 #[cfg(feature = "debug_view")]
 pub use camera::{DebugViewMode, DebugViewSettings};
+pub use day_night::DayNightCycle;
 pub use environment::Environment;
 pub use light::{DirectionalLight, Light, LightKind, PointLight, ShadowConfig, SpotLight};
 pub use node::Node;

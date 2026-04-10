@@ -9,15 +9,22 @@
 //
 // Dispatch: (N/8, N/8, 6) workgroups
 
-const PI: f32 = 3.14159265358979323846;
+{$ include "entry/utility/atmosphere/atmosphere_math" $}
 
 struct BakeParams {
     sun_direction: vec3<f32>,
     sun_intensity: f32,
+    moon_direction: vec3<f32>,
+    moon_intensity: f32,
+    star_axis: vec3<f32>,
     sun_disk_size: f32,
+    moon_disk_size: f32,
     exposure: f32,
     planet_radius: f32,
     atmosphere_radius: f32,
+    star_intensity: f32,
+    star_rotation: f32,
+    _pad2: vec2<f32>,
 };
 
 @group(0) @binding(0)
@@ -49,55 +56,6 @@ fn get_cube_direction(face: u32, uv_: vec2<f32>) -> vec3<f32> {
     }
 }
 
-/// Inverse of the sky-view LUT non-linear mapping.
-/// Converts a world direction to UV coordinates in the sky-view LUT.
-fn direction_to_sky_view_uv(dir: vec3<f32>) -> vec2<f32> {
-    // Latitude (elevation angle)
-    let theta = asin(clamp(dir.y, -1.0, 1.0));
-
-    // Non-linear latitude mapping (matches sky_view_lut.wgsl)
-    var v: f32;
-    if theta < 0.0 {
-        let coord = sqrt(-theta / (PI * 0.5));
-        v = 0.5 - 0.5 * coord;
-    } else {
-        let coord = sqrt(theta / (PI * 0.5));
-        v = 0.5 + 0.5 * coord;
-    }
-
-    // Longitude (azimuth angle)
-    let phi = atan2(dir.x, dir.z);
-    let u = (phi + PI) / (2.0 * PI);
-
-    return vec2<f32>(u, v);
-}
-
-fn ray_sphere_intersect(o: vec3<f32>, d: vec3<f32>, radius: f32) -> vec2<f32> {
-    let a = dot(d, d);
-    let b = 2.0 * dot(d, o);
-    let c = dot(o, o) - radius * radius;
-    let discriminant = b * b - 4.0 * a * c;
-    if discriminant < 0.0 { return vec2<f32>(-1.0, -1.0); }
-    let sq = sqrt(discriminant);
-    return vec2<f32>((-b - sq) / (2.0 * a), (-b + sq) / (2.0 * a));
-}
-
-// Transmittance LUT UV mapping based on Hillaire's atmospheric scattering model.
-fn transmittance_lut_uv(altitude: f32, cos_zenith: f32) -> vec2<f32> {
-    let H = sqrt(max(0.0, params.atmosphere_radius * params.atmosphere_radius - params.planet_radius * params.planet_radius));
-    let rho = sqrt(max(0.0, (params.planet_radius + altitude) * (params.planet_radius + altitude) - params.planet_radius * params.planet_radius));
-    let d = ray_sphere_intersect(
-        vec3<f32>(0.0, params.planet_radius + altitude, 0.0),
-        vec3<f32>(0.0, cos_zenith, sqrt(max(0.0, 1.0 - cos_zenith * cos_zenith))),
-        params.atmosphere_radius
-    ).y;
-    let d_min = params.atmosphere_radius - params.planet_radius - altitude;
-    let d_max = rho + H;
-    let x_mu = (d - d_min) / (d_max - d_min);
-    let x_r = rho / H;
-    return vec2<f32>(x_mu, x_r);
-}
-
 /// Approximate sun disk rendering.
 fn sun_disk(dir: vec3<f32>, sun_dir: vec3<f32>, sun_size_deg: f32) -> vec3<f32> {
     let cos_angle = dot(dir, sun_dir);
@@ -124,7 +82,12 @@ fn sun_disk(dir: vec3<f32>, sun_dir: vec3<f32>, sun_size_deg: f32) -> vec3<f32> 
         }
         let sun_cos_zenith = sun_dir.y;
         
-        let trans_uv = transmittance_lut_uv(altitude, sun_cos_zenith);
+        let trans_uv = transmittance_lut_uv(
+            altitude,
+            sun_cos_zenith,
+            params.planet_radius,
+            params.atmosphere_radius,
+        );
         let transmittance = textureSampleLevel(transmittance_lut, lut_sampler, trans_uv, 0.0).rgb;
 
         // The sun's apparent brightness is modulated by the atmospheric transmittance, which accounts for the dimming effect of the atmosphere, especially near the horizon.

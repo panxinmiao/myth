@@ -49,9 +49,9 @@ pub(crate) use crate::core::gpu::material::GpuMaterial;
 pub(crate) use crate::core::gpu::texture::{GpuImage, ResourceState, TextureBinding};
 use crate::pipeline::vertex::VertexLayoutSignature;
 
-use myth_resources::buffer::{CpuBuffer, GpuData};
 pub use crate::core::gpu::mipmap::MipmapGenerator;
 pub use allocator::ModelBufferAllocator;
+use myth_resources::buffer::{CpuBuffer, GpuData};
 pub use resource_ids::{
     BindGroupFingerprint, EnsureResult, ResourceId, ResourceIdSet, hash_layout_entries,
 };

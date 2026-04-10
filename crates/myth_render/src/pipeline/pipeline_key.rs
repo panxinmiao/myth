@@ -311,9 +311,7 @@ pub fn fx_hash_key<K: Hash>(key: &K) -> u64 {
 
 /// Compute a stable hash for `wgpu` pipeline compilation options.
 #[inline]
-pub fn hash_pipeline_compilation_options(
-    options: &wgpu::PipelineCompilationOptions<'_>,
-) -> u64 {
+pub fn hash_pipeline_compilation_options(options: &wgpu::PipelineCompilationOptions<'_>) -> u64 {
     let mut hasher = rustc_hash::FxHasher::default();
     options.zero_initialize_workgroup_memory.hash(&mut hasher);
     for (name, value) in options.constants {

@@ -16,6 +16,7 @@
 //
 // Dispatch: (256/8, 64/8, 1) = (32, 8, 1) workgroups
 
+{$ include "entry/utility/atmosphere/atmosphere_math" $}
 {$ include "entry/utility/atmosphere/atmosphere_common" $}
 
 @group(0) @binding(1)
@@ -64,7 +65,7 @@ fn main(@builtin(global_invocation_id) id: vec3<u32>) {
     }
 
     let uv = (vec2<f32>(id.xy) + 0.5) / vec2<f32>(dims);
-    let params = transmittance_lut_inv(uv);
+    let params = transmittance_lut_inv(uv, atmo.planet_radius, atmo.atmosphere_radius);
     let altitude = params.x;
     let cos_zenith = params.y;
 

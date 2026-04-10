@@ -553,11 +553,11 @@ impl<H: AppHandler> ApplicationHandler for AppRunner<H> {
                         canvas.set_height(new_h.max(1));
                     }
 
-                    (new_w.max(1), new_h.max(1))
+                    (new_w, new_h)
                 };
 
                 #[cfg(not(target_arch = "wasm32"))]
-                let (w, h) = (physical_size.width.max(1), physical_size.height.max(1));
+                let (w, h) = (physical_size.width, physical_size.height);
 
                 engine.resize(w, h);
             }

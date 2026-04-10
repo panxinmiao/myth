@@ -14,9 +14,9 @@ use crate::graph::frame::RenderLists;
 use crate::graph::passes::DebugViewFeature;
 use crate::graph::passes::{
     AtmosphereFeature, BloomFeature, BrdfLutFeature, CasFeature, EquirectToCubeFeature,
-    FxaaFeature, IblComputeFeature, MsaaSyncFeature, OpaqueFeature, PrepassFeature,
-    ShadowFeature, SimpleForwardFeature, SkyboxFeature, SsaoFeature, SsssFeature,
-    TaaFeature, ToneMappingFeature, TransmissionCopyFeature, TransparentFeature,
+    FxaaFeature, IblComputeFeature, MsaaSyncFeature, OpaqueFeature, PrepassFeature, ShadowFeature,
+    SimpleForwardFeature, SkyboxFeature, SsaoFeature, SsssFeature, TaaFeature, ToneMappingFeature,
+    TransmissionCopyFeature, TransparentFeature,
 };
 use myth_assets::AssetServer;
 use myth_core::Result;
@@ -431,14 +431,17 @@ impl Renderer {
             state.shadow_pass.extract_and_prepare(&mut extract_ctx);
 
             // Procedural atmosphere (LUT + cubemap + PMREM compute)
-            let procedural_skybox_resources = if let BackgroundMode::Procedural(params) = &scene.background.mode {
-                state
-                    .atmosphere_pass
-                    .extract_and_prepare(&mut extract_ctx, scene.id(), params);
-                state.atmosphere_pass.procedural_skybox_resources(scene.id())
-            } else {
-                None
-            };
+            let procedural_skybox_resources =
+                if let BackgroundMode::Procedural(params) = &scene.background.mode {
+                    state
+                        .atmosphere_pass
+                        .extract_and_prepare(&mut extract_ctx, scene.id(), params);
+                    state
+                        .atmosphere_pass
+                        .procedural_skybox_resources(scene.id())
+                } else {
+                    None
+                };
 
             // Skybox (both pipelines)
             if needs_skybox {
@@ -988,12 +991,13 @@ mod tests {
 
     use glam::{Affine3A, Quat, Vec3};
     use myth_assets::AssetServer;
+    use myth_scene::Scene;
     use myth_scene::background::BackgroundMode;
     use myth_scene::camera::Camera;
-    use myth_scene::Scene;
 
     fn init_headless_renderer() -> Renderer {
-        let mut renderer = Renderer::new(RendererInitConfig::default(), RendererSettings::default());
+        let mut renderer =
+            Renderer::new(RendererInitConfig::default(), RendererSettings::default());
         pollster::block_on(renderer.init_headless(128, 128, None))
             .expect("headless renderer init failed");
         renderer
@@ -1165,11 +1169,12 @@ mod tests {
             .expect("scene gpu environment missing after first render")
             .source_version;
 
-        let initial_sun_direction = if let BackgroundMode::Procedural(params) = &scene.background.mode {
-            params.sun_direction
-        } else {
-            panic!("expected procedural background");
-        };
+        let initial_sun_direction =
+            if let BackgroundMode::Procedural(params) = &scene.background.mode {
+                params.sun_direction
+            } else {
+                panic!("expected procedural background");
+            };
 
         if let BackgroundMode::Procedural(params) = &mut scene.background.mode {
             let slight_rotation = Quat::from_rotation_x(0.1_f32.to_radians());

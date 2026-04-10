@@ -64,11 +64,23 @@ pub struct ProceduralSkyParams {
     /// Normalized sun direction vector (world space, pointing toward the sun).
     pub sun_direction: Vec3,
 
+    /// Normalized moon direction vector (world space, pointing toward the moon).
+    pub moon_direction: Vec3,
+
+    /// Celestial pole axis used to rotate the star field.
+    pub star_axis: Vec3,
+
     /// Sun disk angular diameter in degrees (Earth's sun ≈ 0.53°).
     pub sun_disk_size: f32,
 
+    /// Moon disk angular diameter in degrees.
+    pub moon_disk_size: f32,
+
     /// Sun luminous intensity multiplier.
     pub sun_intensity: f32,
+
+    /// Moon luminous intensity multiplier.
+    pub moon_intensity: f32,
 
     /// Rayleigh scattering coefficients at sea level (per meter).
     ///
@@ -117,6 +129,18 @@ pub struct ProceduralSkyParams {
     /// Exposure multiplier applied to the final sky color.
     pub exposure: f32,
 
+    /// Optional user-provided star-field texture used for the night sky.
+    ///
+    /// 2D textures are treated as equirectangular panoramas; cube textures are
+    /// sampled directly as cubemaps.
+    pub starbox_texture: Option<TextureSource>,
+
+    /// Brightness multiplier applied to the star-field texture before exposure.
+    pub star_intensity: f32,
+
+    /// Rotation angle in radians applied around `star_axis`.
+    pub star_rotation: f32,
+
     /// Internal version counter, incremented on every mutation.
     version: u64,
 }
@@ -132,10 +156,15 @@ impl ProceduralSkyParams {
     #[must_use]
     pub fn golden_hour() -> Self {
         let sun_elevation = 15.0_f32.to_radians();
+        let sun_direction = Vec3::new(0.0, sun_elevation.sin(), -sun_elevation.cos()).normalize();
         Self {
-            sun_direction: Vec3::new(0.0, sun_elevation.sin(), -sun_elevation.cos()).normalize(),
+            sun_direction,
+            moon_direction: -sun_direction,
+            star_axis: Vec3::Y,
             sun_disk_size: 0.53,
+            moon_disk_size: 0.52,
             sun_intensity: 20.0,
+            moon_intensity: 0.35,
             rayleigh_scattering: Vec3::new(5.802e-6, 13.558e-6, 33.1e-6),
             rayleigh_scale_height: 8000.0,
             mie_scattering: 3.996e-6,
@@ -146,6 +175,9 @@ impl ProceduralSkyParams {
             planet_radius: 6_360_000.0,
             atmosphere_radius: 6_460_000.0,
             exposure: 10.0,
+            starbox_texture: None,
+            star_intensity: 50.0,
+            star_rotation: 0.0,
             version: 0,
         }
     }
@@ -183,9 +215,27 @@ impl ProceduralSkyParams {
 
     /// Sets the sun direction and increments the version.
     pub fn set_sun_direction(&mut self, dir: Vec3) {
-        let dir = dir.normalize();
+        let dir = dir.normalize_or_zero();
         if self.sun_direction != dir {
             self.sun_direction = dir;
+            self.version = self.version.wrapping_add(1);
+        }
+    }
+
+    /// Sets the moon direction and increments the version.
+    pub fn set_moon_direction(&mut self, dir: Vec3) {
+        let dir = dir.normalize_or_zero();
+        if self.moon_direction != dir {
+            self.moon_direction = dir;
+            self.version = self.version.wrapping_add(1);
+        }
+    }
+
+    /// Sets the celestial pole axis used for star rotation.
+    pub fn set_star_axis(&mut self, axis: Vec3) {
+        let axis = axis.normalize_or_zero();
+        if self.star_axis != axis {
+            self.star_axis = axis;
             self.version = self.version.wrapping_add(1);
         }
     }
@@ -198,10 +248,42 @@ impl ProceduralSkyParams {
         }
     }
 
+    /// Sets the moon intensity and increments the version.
+    pub fn set_moon_intensity(&mut self, intensity: f32) {
+        if self.moon_intensity != intensity {
+            self.moon_intensity = intensity;
+            self.version = self.version.wrapping_add(1);
+        }
+    }
+
     /// Sets the exposure multiplier and increments the version.
     pub fn set_exposure(&mut self, exposure: f32) {
         if self.exposure != exposure {
             self.exposure = exposure;
+            self.version = self.version.wrapping_add(1);
+        }
+    }
+
+    /// Sets the star texture intensity and increments the version.
+    pub fn set_star_intensity(&mut self, intensity: f32) {
+        if self.star_intensity != intensity {
+            self.star_intensity = intensity.max(0.0);
+            self.version = self.version.wrapping_add(1);
+        }
+    }
+
+    /// Sets the star-field rotation angle and increments the version.
+    pub fn set_star_rotation(&mut self, rotation: f32) {
+        if self.star_rotation != rotation {
+            self.star_rotation = rotation;
+            self.version = self.version.wrapping_add(1);
+        }
+    }
+
+    /// Sets the optional star texture and increments the version.
+    pub fn set_starbox_texture(&mut self, starbox_texture: Option<TextureSource>) {
+        if self.starbox_texture != starbox_texture {
+            self.starbox_texture = starbox_texture;
             self.version = self.version.wrapping_add(1);
         }
     }
@@ -234,6 +316,14 @@ impl ProceduralSkyParams {
     pub fn set_sun_disk_size(&mut self, degrees: f32) {
         if self.sun_disk_size != degrees {
             self.sun_disk_size = degrees;
+            self.version = self.version.wrapping_add(1);
+        }
+    }
+
+    /// Sets the moon disk size in degrees and increments the version.
+    pub fn set_moon_disk_size(&mut self, degrees: f32) {
+        if self.moon_disk_size != degrees {
+            self.moon_disk_size = degrees;
             self.version = self.version.wrapping_add(1);
         }
     }

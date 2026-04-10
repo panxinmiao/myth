@@ -161,7 +161,12 @@ impl IblComputeFeature {
 
             for mip in 0..mip_levels {
                 let mip_size = (pmrem_size >> mip).max(1);
-                let params = [mip as f32 / roughness_denominator, mip_size as f32, 0.0, 0.0];
+                let params = [
+                    mip as f32 / roughness_denominator,
+                    mip_size as f32,
+                    0.0,
+                    0.0,
+                ];
 
                 let buffer = Tracked::new(ctx.device.create_buffer(&wgpu::BufferDescriptor {
                     label: Some("IBL Params"),

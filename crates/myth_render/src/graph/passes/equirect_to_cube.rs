@@ -245,18 +245,19 @@ impl EquirectToCubeFeature {
             TextureSource::Asset(handle) => resource_manager
                 .texture_bindings
                 .get(*handle)
-                .and_then(|binding| resource_manager.gpu_images.get(binding.image_handle).map(|img| {
-                    ResolvedSourceView {
-                        view: &img.default_view,
-                        view_id: binding.view_id,
-                    }
-                })),
-            TextureSource::Attachment(id, _) => resource_manager.internal_resources.get(id).map(|view| {
-                ResolvedSourceView {
-                    view,
-                    view_id: *id,
-                }
-            }),
+                .and_then(|binding| {
+                    resource_manager
+                        .gpu_images
+                        .get(binding.image_handle)
+                        .map(|img| ResolvedSourceView {
+                            view: &img.default_view,
+                            view_id: binding.view_id,
+                        })
+                }),
+            TextureSource::Attachment(id, _) => resource_manager
+                .internal_resources
+                .get(id)
+                .map(|view| ResolvedSourceView { view, view_id: *id }),
         }
     }
 
@@ -284,8 +285,7 @@ impl EquirectToCubeFeature {
             ctx.device,
             equirect_module,
             &equirect_layout,
-            &ComputePipelineKey::new(equirect_hash)
-                .with_compilation_options(&compilation_options),
+            &ComputePipelineKey::new(equirect_hash).with_compilation_options(&compilation_options),
             &compilation_options,
             "Environment EquirectToCube Pipeline",
         ));
@@ -306,8 +306,7 @@ impl EquirectToCubeFeature {
             ctx.device,
             cubemap_module,
             &cubemap_layout,
-            &ComputePipelineKey::new(cubemap_hash)
-                .with_compilation_options(&compilation_options),
+            &ComputePipelineKey::new(cubemap_hash).with_compilation_options(&compilation_options),
             &compilation_options,
             "Environment CubeToCube Pipeline",
         ));
@@ -376,7 +375,9 @@ struct EquirectToCubePassNode<'a> {
 
 impl PassNode<'_> for EquirectToCubePassNode<'_> {
     fn execute(&self, ctx: &ExecuteContext, encoder: &mut wgpu::CommandEncoder) {
-        let pipeline = self.pipeline.expect("environment source pipeline must exist");
+        let pipeline = self
+            .pipeline
+            .expect("environment source pipeline must exist");
         let group_count = ctx.get_texture(self.base_cube).width().div_ceil(8);
 
         {

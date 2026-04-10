@@ -78,10 +78,17 @@ impl GpuAtmosphereParams {
 struct GpuBakeParams {
     sun_direction: [f32; 3],
     sun_intensity: f32,
+    moon_direction: [f32; 3],
+    moon_intensity: f32,
+    star_axis: [f32; 3],
     sun_disk_size: f32,
+    moon_disk_size: f32,
     exposure: f32,
     planet_radius: f32,
     atmosphere_radius: f32,
+    star_intensity: f32,
+    star_rotation: f32,
+    _pad2: [f32; 2],
 }
 
 impl GpuBakeParams {
@@ -89,10 +96,17 @@ impl GpuBakeParams {
         Self {
             sun_direction: params.sun_direction.into(),
             sun_intensity: params.sun_intensity,
+            moon_direction: params.moon_direction.into(),
+            moon_intensity: params.moon_intensity,
+            star_axis: params.star_axis.into(),
             sun_disk_size: params.sun_disk_size,
+            moon_disk_size: params.moon_disk_size,
             exposure: params.exposure,
             planet_radius: params.planet_radius,
             atmosphere_radius: params.atmosphere_radius,
+            star_intensity: params.star_intensity,
+            star_rotation: params.star_rotation,
+            _pad2: [0.0; 2],
         }
     }
 }
@@ -172,11 +186,7 @@ impl AtmosphereSceneState {
             0,
             bytemuck::bytes_of(atmosphere_params),
         );
-        queue.write_buffer(
-            &self.bake_params_buffer,
-            0,
-            bytemuck::bytes_of(bake_params),
-        );
+        queue.write_buffer(&self.bake_params_buffer, 0, bytemuck::bytes_of(bake_params));
         self.uploaded_version.store(version, Ordering::Relaxed);
     }
 }
@@ -457,12 +467,13 @@ impl AtmosphereFeature {
                     usage: wgpu::BufferUsages::UNIFORM | wgpu::BufferUsages::COPY_DST,
                     mapped_at_creation: false,
                 }));
-            let bake_params_buffer = Tracked::new(ctx.device.create_buffer(&wgpu::BufferDescriptor {
-                label: Some("Atmosphere Bake Params"),
-                size: std::mem::size_of::<GpuBakeParams>() as u64,
-                usage: wgpu::BufferUsages::UNIFORM | wgpu::BufferUsages::COPY_DST,
-                mapped_at_creation: false,
-            }));
+            let bake_params_buffer =
+                Tracked::new(ctx.device.create_buffer(&wgpu::BufferDescriptor {
+                    label: Some("Atmosphere Bake Params"),
+                    size: std::mem::size_of::<GpuBakeParams>() as u64,
+                    usage: wgpu::BufferUsages::UNIFORM | wgpu::BufferUsages::COPY_DST,
+                    mapped_at_creation: false,
+                }));
 
             let transmittance_texture = ctx.device.create_texture(&wgpu::TextureDescriptor {
                 label: Some("Atmosphere Transmittance LUT"),
@@ -475,12 +486,12 @@ impl AtmosphereFeature {
                 sample_count: 1,
                 dimension: wgpu::TextureDimension::D2,
                 format: wgpu::TextureFormat::Rgba16Float,
-                usage: wgpu::TextureUsages::STORAGE_BINDING
-                    | wgpu::TextureUsages::TEXTURE_BINDING,
+                usage: wgpu::TextureUsages::STORAGE_BINDING | wgpu::TextureUsages::TEXTURE_BINDING,
                 view_formats: &[],
             });
-            let transmittance_view =
-                Tracked::new(transmittance_texture.create_view(&wgpu::TextureViewDescriptor::default()));
+            let transmittance_view = Tracked::new(
+                transmittance_texture.create_view(&wgpu::TextureViewDescriptor::default()),
+            );
 
             let multi_scatter_texture = ctx.device.create_texture(&wgpu::TextureDescriptor {
                 label: Some("Atmosphere Multi-Scatter LUT"),
@@ -493,12 +504,12 @@ impl AtmosphereFeature {
                 sample_count: 1,
                 dimension: wgpu::TextureDimension::D2,
                 format: wgpu::TextureFormat::Rgba16Float,
-                usage: wgpu::TextureUsages::STORAGE_BINDING
-                    | wgpu::TextureUsages::TEXTURE_BINDING,
+                usage: wgpu::TextureUsages::STORAGE_BINDING | wgpu::TextureUsages::TEXTURE_BINDING,
                 view_formats: &[],
             });
-            let multi_scatter_view =
-                Tracked::new(multi_scatter_texture.create_view(&wgpu::TextureViewDescriptor::default()));
+            let multi_scatter_view = Tracked::new(
+                multi_scatter_texture.create_view(&wgpu::TextureViewDescriptor::default()),
+            );
 
             let sky_view_texture = ctx.device.create_texture(&wgpu::TextureDescriptor {
                 label: Some("Atmosphere Sky-View LUT"),
@@ -511,8 +522,7 @@ impl AtmosphereFeature {
                 sample_count: 1,
                 dimension: wgpu::TextureDimension::D2,
                 format: wgpu::TextureFormat::Rgba16Float,
-                usage: wgpu::TextureUsages::STORAGE_BINDING
-                    | wgpu::TextureUsages::TEXTURE_BINDING,
+                usage: wgpu::TextureUsages::STORAGE_BINDING | wgpu::TextureUsages::TEXTURE_BINDING,
                 view_formats: &[],
             });
             let sky_view_view =
@@ -780,8 +790,7 @@ impl AtmosphereFeature {
             ctx.device,
             trans_module,
             &trans_layout,
-            &ComputePipelineKey::new(trans_hash)
-                .with_compilation_options(&compilation_options),
+            &ComputePipelineKey::new(trans_hash).with_compilation_options(&compilation_options),
             &compilation_options,
             "Atmo Transmittance Pipeline",
         ));
@@ -802,8 +811,7 @@ impl AtmosphereFeature {
             ctx.device,
             multi_module,
             &multi_layout,
-            &ComputePipelineKey::new(multi_hash)
-                .with_compilation_options(&compilation_options),
+            &ComputePipelineKey::new(multi_hash).with_compilation_options(&compilation_options),
             &compilation_options,
             "Atmo Multi-Scatter Pipeline",
         ));
@@ -824,8 +832,7 @@ impl AtmosphereFeature {
             ctx.device,
             sky_view_module,
             &sky_view_layout,
-            &ComputePipelineKey::new(sky_view_hash)
-                .with_compilation_options(&compilation_options),
+            &ComputePipelineKey::new(sky_view_hash).with_compilation_options(&compilation_options),
             &compilation_options,
             "Atmo Sky-View Pipeline",
         ));
@@ -835,22 +842,24 @@ impl AtmosphereFeature {
             ShaderSource::File("entry/utility/atmosphere/sky_to_cube"),
             &opts,
         );
-        let sky_to_cube_layout = ctx
-            .device
-            .create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
-                label: Some("Atmo Sky-to-Cube PL"),
-                bind_group_layouts: &[Some(self.sky_to_cube_layout.as_deref().unwrap())],
-                immediate_size: 0,
-            });
-        self.sky_to_cube_pipeline = Some(ctx.pipeline_cache.get_or_create_compute(
-            ctx.device,
-            sky_to_cube_module,
-            &sky_to_cube_layout,
-            &ComputePipelineKey::new(sky_to_cube_hash)
-                .with_compilation_options(&compilation_options),
-            &compilation_options,
-            "Atmo Sky-to-Cube Pipeline",
-        ));
+        let sky_to_cube_layout =
+            ctx.device
+                .create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
+                    label: Some("Atmo Sky-to-Cube PL"),
+                    bind_group_layouts: &[Some(self.sky_to_cube_layout.as_deref().unwrap())],
+                    immediate_size: 0,
+                });
+        self.sky_to_cube_pipeline = Some(
+            ctx.pipeline_cache.get_or_create_compute(
+                ctx.device,
+                sky_to_cube_module,
+                &sky_to_cube_layout,
+                &ComputePipelineKey::new(sky_to_cube_hash)
+                    .with_compilation_options(&compilation_options),
+                &compilation_options,
+                "Atmo Sky-to-Cube Pipeline",
+            ),
+        );
     }
 }
 
@@ -922,7 +931,11 @@ impl<'a> PassNode<'a> for AtmosphereTransmittanceNode<'a> {
             timestamp_writes: None,
         });
         cpass.set_pipeline(self.pipeline);
-        cpass.set_bind_group(0, self.bind_group.expect("atmo transmittance bg missing"), &[]);
+        cpass.set_bind_group(
+            0,
+            self.bind_group.expect("atmo transmittance bg missing"),
+            &[],
+        );
         cpass.dispatch_workgroups(
             TRANSMITTANCE_WIDTH.div_ceil(8),
             TRANSMITTANCE_HEIGHT.div_ceil(8),
@@ -1007,7 +1020,11 @@ impl<'a> PassNode<'a> for AtmosphereMultiScatterNode<'a> {
             timestamp_writes: None,
         });
         cpass.set_pipeline(self.pipeline);
-        cpass.set_bind_group(0, self.bind_group.expect("atmo multi-scatter bg missing"), &[]);
+        cpass.set_bind_group(
+            0,
+            self.bind_group.expect("atmo multi-scatter bg missing"),
+            &[],
+        );
         cpass.dispatch_workgroups(
             MULTI_SCATTER_SIZE.div_ceil(8),
             MULTI_SCATTER_SIZE.div_ceil(8),
@@ -1190,7 +1207,11 @@ impl<'a> PassNode<'a> for AtmosphereSkyToCubeNode<'a> {
                 timestamp_writes: None,
             });
             cpass.set_pipeline(self.pipeline);
-            cpass.set_bind_group(0, self.bind_group.expect("atmo sky-to-cube bg missing"), &[]);
+            cpass.set_bind_group(
+                0,
+                self.bind_group.expect("atmo sky-to-cube bg missing"),
+                &[],
+            );
             cpass.dispatch_workgroups(dispatch, dispatch, 6);
         }
 

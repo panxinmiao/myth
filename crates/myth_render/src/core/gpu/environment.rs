@@ -103,11 +103,7 @@ fn procedural_bake_hash(params: &ProceduralSkyParams) -> u64 {
     hasher.finish()
 }
 
-fn procedural_source_version(
-    physics_hash: u64,
-    bake_hash: u64,
-    sun_direction: Vec3,
-) -> u64 {
+fn procedural_source_version(physics_hash: u64, bake_hash: u64, sun_direction: Vec3) -> u64 {
     let mut hasher = rustc_hash::FxHasher::default();
     physics_hash.hash(&mut hasher);
     bake_hash.hash(&mut hasher);
@@ -120,7 +116,9 @@ fn sun_direction_requires_rebake(last_baked: Option<Vec3>, current: Vec3) -> boo
         return true;
     };
 
-    let threshold_cos = PROCEDURAL_IBL_SUN_UPDATE_THRESHOLD_DEGREES.to_radians().cos();
+    let threshold_cos = PROCEDURAL_IBL_SUN_UPDATE_THRESHOLD_DEGREES
+        .to_radians()
+        .cos();
     last_baked.normalize().dot(current.normalize()) <= threshold_cos
 }
 
@@ -196,7 +194,9 @@ impl ResourceManager {
         }
 
         let resolved = match background {
-            BackgroundMode::Procedural(_) => unreachable!("procedural backgrounds are handled above"),
+            BackgroundMode::Procedural(_) => {
+                unreachable!("procedural backgrounds are handled above")
+            }
             _ => {
                 let Some(source) = environment.source_env_map().cloned() else {
                     if let Some(gpu_env) = self.scene_gpu_environments.get_mut(&scene_id) {
@@ -214,11 +214,10 @@ impl ResourceManager {
 
                 if let TextureSource::Asset(handle) = &source {
                     let state = self.prepare_texture(assets, *handle);
-                    source_ready = !matches!(state, ResourceState::Pending | ResourceState::Unknown);
+                    source_ready =
+                        !matches!(state, ResourceState::Pending | ResourceState::Unknown);
 
-                    if source_ready
-                        && let Some(tex) = assets.textures.get(*handle)
-                    {
+                    if source_ready && let Some(tex) = assets.textures.get(*handle) {
                         source_version = source_version.wrapping_shl(32)
                             ^ u64::from(assets.images.get_version(tex.image).unwrap_or(0));
                     }
@@ -309,13 +308,14 @@ impl ResourceManager {
                 | wgpu::TextureUsages::RENDER_ATTACHMENT,
             view_formats: &[],
         });
-        let base_cube_view = Tracked::new(base_cube_texture.create_view(&wgpu::TextureViewDescriptor {
-            label: Some("Scene Environment Base Cube View"),
-            dimension: Some(TextureViewDimension::Cube),
-            ..Default::default()
-        }));
-        let base_cube_storage_view = Tracked::new(base_cube_texture.create_view(
-            &wgpu::TextureViewDescriptor {
+        let base_cube_view =
+            Tracked::new(base_cube_texture.create_view(&wgpu::TextureViewDescriptor {
+                label: Some("Scene Environment Base Cube View"),
+                dimension: Some(TextureViewDimension::Cube),
+                ..Default::default()
+            }));
+        let base_cube_storage_view =
+            Tracked::new(base_cube_texture.create_view(&wgpu::TextureViewDescriptor {
                 label: Some("Scene Environment Base Cube Mip0"),
                 dimension: Some(TextureViewDimension::D2Array),
                 base_mip_level: 0,
@@ -324,8 +324,7 @@ impl ResourceManager {
                 array_layer_count: Some(6),
                 usage: Some(wgpu::TextureUsages::STORAGE_BINDING),
                 ..Default::default()
-            },
-        ));
+            }));
         self.internal_resources
             .insert(base_cube_view.id(), (*base_cube_view).clone());
 

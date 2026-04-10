@@ -15,6 +15,7 @@
 //
 // Dispatch: (192/8, 108/8, 1) = (24, 14, 1) workgroups
 
+{$ include "entry/utility/atmosphere/atmosphere_math" $}
 {$ include "entry/utility/atmosphere/atmosphere_common" $}
 
 @group(0) @binding(1)
@@ -32,7 +33,12 @@ var dest: texture_storage_2d<rgba16float, write>;
 const SKY_VIEW_STEPS: u32 = 30u;
 
 fn sample_transmittance_lut(altitude: f32, cos_zenith: f32) -> vec3<f32> {
-    let uv = transmittance_lut_uv(altitude, cos_zenith);
+    let uv = transmittance_lut_uv(
+        altitude,
+        cos_zenith,
+        atmo.planet_radius,
+        atmo.atmosphere_radius,
+    );
     return textureSampleLevel(transmittance_tex, lut_sampler, uv, 0.0).rgb;
 }
 
@@ -99,29 +105,6 @@ fn compute_sky_luminance(
     }
 
     return luminance;
-}
-
-fn sky_view_uv_to_direction(uv: vec2<f32>) -> vec3<f32> {
-    let phi = uv.x * 2.0 * PI - PI;
-
-    let v = uv.y;
-    var theta: f32;
-    if v < 0.5 {
-        let coord = 1.0 - 2.0 * v;
-        theta = -(PI * 0.5) * coord * coord;
-    } else {
-        let coord = 2.0 * v - 1.0;
-        theta = (PI * 0.5) * coord * coord;
-    }
-
-    let cos_theta = cos(theta);
-    let sin_theta = sin(theta);
-
-    return vec3<f32>(
-        cos_theta * sin(phi),
-        sin_theta,
-        cos_theta * cos(phi)
-    );
 }
 
 @compute
