@@ -389,16 +389,9 @@ impl SkyboxFeature {
                 source, mapping, ..
             } => Self::resolve_texture_view(ctx.resource_manager, source, *mapping),
             BackgroundMode::Procedural(_) => {
-                // Use the baked cubemap registered by AtmosphereFeature.
-                // The renderer sets source_env_map = Attachment(cube_view_id, Cube)
-                // before Phase 1, so extracted_scene has the correct value.
-                if let Some(TextureSource::Attachment(id, _)) =
-                    ctx.extracted_scene.envvironment.source_env_map
-                {
-                    ctx.resource_manager.internal_resources.get(&id)
-                } else {
-                    None
-                }
+                ctx.resource_manager
+                    .gpu_environment(ctx.extracted_scene.scene_id)
+                    .map(|gpu_env| &*gpu_env.base_cube_view)
             }
             _ => None,
         };

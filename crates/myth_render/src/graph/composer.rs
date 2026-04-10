@@ -48,7 +48,7 @@
 //! ```
 
 use crate::core::binding::GlobalBindGroupCache;
-use crate::core::gpu::Tracked;
+use crate::core::gpu::{CubeSourceType, Tracked};
 use crate::core::{ResourceManager, WgpuContext};
 use crate::graph::ExtractedScene;
 use crate::graph::RenderState;
@@ -61,10 +61,10 @@ use crate::graph::core::{
 use crate::graph::frame::{PreparedSkyboxDraw, RenderLists};
 use crate::graph::passes::utils::add_msaa_resolve_pass;
 use crate::graph::passes::{
-    AtmosphereFeature, BloomFeature, BrdfLutFeature, CasFeature, FxaaFeature, IblComputeFeature,
-    MsaaSyncFeature, OpaqueFeature, PrepassFeature, ShadowFeature, SimpleForwardFeature,
-    SkyboxFeature, SsaoFeature, SsssFeature, TaaFeature, ToneMappingFeature,
-    TransmissionCopyFeature, TransparentFeature,
+    AtmosphereFeature, BloomFeature, BrdfLutFeature, CasFeature, EquirectToCubeFeature,
+    FxaaFeature, IblComputeFeature, MsaaSyncFeature, OpaqueFeature, PrepassFeature,
+    ShadowFeature, SimpleForwardFeature, SkyboxFeature, SsaoFeature, SsssFeature,
+    TaaFeature, ToneMappingFeature, TransmissionCopyFeature, TransparentFeature,
 };
 use crate::pipeline::PipelineCache;
 use crate::pipeline::ShaderManager;
@@ -119,6 +119,7 @@ pub struct ComposerContext<'a> {
     // Shadow + Compute
     pub shadow_pass: &'a mut ShadowFeature,
     pub brdf_pass: &'a mut BrdfLutFeature,
+    pub equirect_to_cube_pass: &'a mut EquirectToCubeFeature,
     pub ibl_pass: &'a mut IblComputeFeature,
     pub atmosphere_pass: &'a mut AtmosphereFeature,
 
@@ -154,6 +155,44 @@ impl GraphBuilderContext<'_, '_> {
     {
         f(self)
     }
+}
+
+struct SceneEnvironmentGraphResources<'a> {
+    base_cube: crate::graph::core::TextureNodeId,
+    pmrem: crate::graph::core::TextureNodeId,
+    base_cube_texture: &'a wgpu::Texture,
+    pmrem_texture: &'a wgpu::Texture,
+    source_type: CubeSourceType,
+    source_ready: bool,
+    needs_compute: bool,
+}
+
+fn base_cube_desc(texture: &wgpu::Texture) -> TextureDesc {
+    TextureDesc::new(
+        texture.width(),
+        texture.height(),
+        6,
+        texture.mip_level_count(),
+        1,
+        wgpu::TextureDimension::D2,
+        crate::HDR_TEXTURE_FORMAT,
+        wgpu::TextureUsages::STORAGE_BINDING
+            | wgpu::TextureUsages::TEXTURE_BINDING
+            | wgpu::TextureUsages::RENDER_ATTACHMENT,
+    )
+}
+
+fn pmrem_desc(texture: &wgpu::Texture) -> TextureDesc {
+    TextureDesc::new(
+        texture.width(),
+        texture.height(),
+        6,
+        texture.mip_level_count(),
+        1,
+        wgpu::TextureDimension::D2,
+        crate::HDR_TEXTURE_FORMAT,
+        wgpu::TextureUsages::STORAGE_BINDING | wgpu::TextureUsages::TEXTURE_BINDING,
+    )
 }
 
 /// Frame Composer
@@ -304,6 +343,8 @@ impl<'a> FrameComposer<'a> {
             return;
         }
 
+        let resource_manager_ptr = self.ctx.resource_manager as *mut ResourceManager;
+
         // ━━━ 2. Build Unified RDG ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 
         let mut graph = RenderGraph::new(self.ctx.graph_storage, self.ctx.frame_arena);
@@ -362,8 +403,42 @@ impl<'a> FrameComposer<'a> {
         let ssss_enabled = self.ctx.scene.screen_space.enable_sss;
         let has_transmission = self.ctx.render_lists.use_transmission;
         let bloom_enabled = self.ctx.scene.bloom.enabled && is_high_fidelity;
+        let has_active_environment = matches!(
+            self.ctx.scene.background.mode,
+            myth_scene::background::BackgroundMode::Procedural(_)
+        ) || self.ctx.scene.environment.has_env_map();
         // let fxaa_enabled = self.ctx.wgpu_ctx.fxaa_enabled && is_high_fidelity;
         // let taa_enabled = self.ctx.wgpu_ctx.taa_enabled && is_high_fidelity;
+
+        let scene_environment_updated = {
+
+        let scene_environment_resources = if has_active_environment {
+            self.ctx.resource_manager.gpu_environment(self.ctx.scene.id()).map(|gpu_env| {
+                SceneEnvironmentGraphResources {
+                    base_cube: graph_ctx.graph.import_external_resource(
+                        "Scene_Environment_BaseCube",
+                        base_cube_desc(&gpu_env.base_cube_texture),
+                        &gpu_env.base_cube_view,
+                    ),
+                    pmrem: graph_ctx.graph.import_external_resource(
+                        "Scene_Environment_PMREM",
+                        pmrem_desc(&gpu_env.pmrem_texture),
+                        &gpu_env.pmrem_view,
+                    ),
+                    base_cube_texture: &gpu_env.base_cube_texture,
+                    pmrem_texture: &gpu_env.pmrem_texture,
+                    source_type: gpu_env.source_type,
+                    source_ready: gpu_env.source_ready,
+                    needs_compute: gpu_env.needs_compute,
+                }
+            })
+        } else {
+            None
+        };
+
+        let mut env_dependency_base = None;
+        let mut env_dependency_pmrem = None;
+        let mut scene_environment_updated = false;
 
         // ── 2c. Wire Compute + Shadow Passes ───────────────────────────
         graph_ctx.with_group("Compute", |c| {
@@ -371,8 +446,63 @@ impl<'a> FrameComposer<'a> {
                 self.ctx.brdf_pass.add_to_graph(c);
             }
 
-            if let Some(source) = self.ctx.resource_manager.pending_ibl_source.take() {
-                self.ctx.ibl_pass.add_to_graph(c, source);
+            if let Some(env) = scene_environment_resources.as_ref()
+                && env.needs_compute
+                && env.source_ready
+            {
+                let base_cube_ready = match env.source_type {
+                    CubeSourceType::Procedural => {
+                        if let myth_scene::background::BackgroundMode::Procedural(params) =
+                            &self.ctx.scene.background.mode
+                        {
+                            self.ctx.atmosphere_pass.add_bake_node(
+                                c,
+                                params,
+                                env.base_cube,
+                                env.base_cube_texture,
+                            );
+                            true
+                        } else {
+                            false
+                        }
+                    }
+                    CubeSourceType::Equirectangular | CubeSourceType::Cubemap => {
+                        self.ctx
+                            .scene
+                            .environment
+                            .source_env_map()
+                            .and_then(|source| {
+                                EquirectToCubeFeature::resolve_source_view(
+                                    self.ctx.resource_manager,
+                                    source,
+                                )
+                                .map(|source_view| (source_view, env.source_type))
+                            })
+                            .is_some_and(|(source_view, source_type)| {
+                                self.ctx.equirect_to_cube_pass.add_to_graph(
+                                    c,
+                                    source_type,
+                                    source_view,
+                                    env.base_cube,
+                                    env.base_cube_texture,
+                                );
+                                true
+                            })
+                    }
+                };
+
+                if base_cube_ready {
+                    self.ctx.ibl_pass.add_to_graph(
+                        c,
+                        env.base_cube,
+                        env.pmrem,
+                        env.base_cube_texture,
+                        env.pmrem_texture,
+                    );
+                    env_dependency_base = Some(env.base_cube);
+                    env_dependency_pmrem = Some(env.pmrem);
+                    scene_environment_updated = true;
+                }
             }
         });
 
@@ -458,6 +588,8 @@ impl<'a> FrameComposer<'a> {
                     ssao_output,
                     shadow_output.shadow_2d,
                     shadow_output.shadow_cube,
+                    env_dependency_base,
+                    env_dependency_pmrem,
                 );
 
                 let mut active_color = opaque_out.active_color;
@@ -669,9 +801,13 @@ impl<'a> FrameComposer<'a> {
                     prepared_skybox,
                     shadow_output.shadow_2d,
                     shadow_output.shadow_cube,
+                    env_dependency_base,
+                    env_dependency_pmrem,
                 );
             });
         }
+
+        drop(graph_ctx);
 
         // ── After-Post-Process Hooks (UI, debug overlays) ──────────────
         {
@@ -775,6 +911,17 @@ impl<'a> FrameComposer<'a> {
         // ━━━ 4. Submit & Present ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 
         self.ctx.wgpu_ctx.queue.submit(Some(encoder.finish()));
+        scene_environment_updated
+        };
+
+        if scene_environment_updated {
+            let scene_id = self.ctx.scene.id();
+            // SAFETY: all graph-scoped immutable borrows of ResourceManager
+            // environment textures ended with the render block above.
+            unsafe {
+                (*resource_manager_ptr).mark_scene_environment_clean(scene_id);
+            }
+        }
 
         if let Some(output) = surface_output {
             output.present();

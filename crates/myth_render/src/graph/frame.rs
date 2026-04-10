@@ -447,7 +447,12 @@ impl RenderFrame {
             .extract_into(scene, camera, assets, resource_manager);
 
         // ── 2. Resolve GPU environment + BRDF LUT ─────────────────────
-        let env_max_mip = resource_manager.resolve_gpu_environment(assets, &scene.environment);
+        let env_max_mip = resource_manager.resolve_gpu_environment(
+            scene.id(),
+            assets,
+            &scene.environment,
+            &scene.background.mode,
+        );
         resource_manager.ensure_brdf_lut();
 
         {

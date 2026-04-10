@@ -6,6 +6,24 @@
 
 use myth_resources::texture::TextureSource;
 
+pub const DEFAULT_ENV_BASE_CUBE_SIZE: u32 = 1024;
+pub const DEFAULT_ENV_PMREM_SIZE: u32 = 512;
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct EnvironmentMapConfig {
+    pub base_cube_size: u32,
+    pub pmrem_size: u32,
+}
+
+impl Default for EnvironmentMapConfig {
+    fn default() -> Self {
+        Self {
+            base_cube_size: DEFAULT_ENV_BASE_CUBE_SIZE,
+            pmrem_size: DEFAULT_ENV_PMREM_SIZE,
+        }
+    }
+}
+
 /// IBL environment map configuration
 #[derive(Clone, Debug)]
 pub struct Environment {
@@ -19,8 +37,14 @@ pub struct Environment {
     /// Environment ambient light
     pub ambient: glam::Vec3,
 
+    /// Persistent GPU environment texture sizing.
+    pub map_config: EnvironmentMapConfig,
+
     /// Version number (used to track changes affecting Pipeline)
     version: u64,
+
+    /// Version number for source-driven GPU recomputation.
+    source_version: u64,
 }
 
 impl Default for Environment {
@@ -35,6 +59,7 @@ impl PartialEq for Environment {
             && self.intensity == other.intensity
             && self.rotation == other.rotation
             && self.ambient == other.ambient
+            && self.map_config == other.map_config
     }
 }
 
@@ -46,7 +71,9 @@ impl Environment {
             intensity: 1.0,
             rotation: 0.0,
             ambient: glam::Vec3::ZERO,
+            map_config: EnvironmentMapConfig::default(),
             version: 0,
+            source_version: 0,
         }
     }
 
@@ -57,6 +84,13 @@ impl Environment {
         self.version
     }
 
+    /// Gets the source version used by GPU environment baking.
+    #[inline]
+    #[must_use]
+    pub fn source_version(&self) -> u64 {
+        self.source_version
+    }
+
     /// Sets the environment map
     pub fn set_env_map(&mut self, texture_handle: Option<impl Into<TextureSource>>) {
         let was_some = self.source_env_map.is_some();
@@ -65,6 +99,7 @@ impl Environment {
         let texture_handle = texture_handle.map(std::convert::Into::into);
         if self.source_env_map != texture_handle {
             self.source_env_map = texture_handle;
+            self.source_version = self.source_version.wrapping_add(1);
 
             // Presence/absence state change affects shader_defines
             if was_some != is_some {
@@ -81,6 +116,28 @@ impl Environment {
     /// Sets the environment ambient light
     pub fn set_ambient_light(&mut self, color: glam::Vec3) {
         self.ambient = color;
+    }
+
+    pub fn set_base_cube_size(&mut self, size: u32) {
+        let size = size.max(1);
+        if self.map_config.base_cube_size != size {
+            self.map_config.base_cube_size = size;
+            self.source_version = self.source_version.wrapping_add(1);
+        }
+    }
+
+    pub fn set_pmrem_size(&mut self, size: u32) {
+        let size = size.max(1);
+        if self.map_config.pmrem_size != size {
+            self.map_config.pmrem_size = size;
+            self.source_version = self.source_version.wrapping_add(1);
+        }
+    }
+
+    #[inline]
+    #[must_use]
+    pub fn map_config(&self) -> EnvironmentMapConfig {
+        self.map_config
     }
 
     /// Whether there is a valid environment map

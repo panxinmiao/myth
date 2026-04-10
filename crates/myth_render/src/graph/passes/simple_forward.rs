@@ -55,6 +55,8 @@ impl SimpleForwardFeature {
         prepared_skybox: Option<PreparedSkyboxDraw<'a>>,
         shadow_tex: Option<TextureNodeId>,
         shadow_cube_tex: Option<TextureNodeId>,
+        env_map_tex: Option<TextureNodeId>,
+        pmrem_tex: Option<TextureNodeId>,
     ) {
         let fc = ctx.frame_config;
 
@@ -78,6 +80,12 @@ impl SimpleForwardFeature {
             }
             if let Some(shadow_cube) = shadow_cube_tex {
                 builder.read_texture(shadow_cube);
+            }
+            if let Some(env_map) = env_map_tex {
+                builder.read_texture(env_map);
+            }
+            if let Some(pmrem) = pmrem_tex {
+                builder.read_texture(pmrem);
             }
 
             let msaa_view = if fc.msaa_samples > 1 {

@@ -2,246 +2,294 @@ use wgpu::TextureViewDimension;
 
 use myth_assets::AssetServer;
 use myth_resources::texture::TextureSource;
+use myth_scene::background::BackgroundMode;
+use myth_scene::environment::Environment;
 
-use crate::core::gpu::ResourceState;
+use crate::core::gpu::{ResourceState, Tracked};
 
-use super::{ResourceManager, generate_gpu_resource_id};
+use super::ResourceManager;
 
-const EQUIRECT_CUBE_SIZE: u32 = 1024;
-pub const PMREM_SIZE: u32 = 512;
 pub const BRDF_LUT_SIZE: u32 = 128;
 
-/// How the environment source needs to be processed by `IBLComputePass`.
+/// How the scene environment source must be converted before PMREM filtering.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum CubeSourceType {
-    /// 2D equirectangular HDR → `equirect_to_cube` + `mipmap_gen` + PMREM
+    /// Procedural atmosphere bake populates the base cube directly.
+    Procedural,
+    /// 2D equirectangular HDR panorama.
     Equirectangular,
-    /// Cube map without mipmaps → blit to owned cube + `mipmap_gen` + PMREM
-    CubeNoMipmaps,
-    /// Cube map with mipmaps → PMREM only (uses source cube directly)
-    CubeWithMipmaps,
+    /// Cubemap source texture.
+    Cubemap,
 }
 
-/// GPU-side environment map resources.
+/// Persistent GPU environment resources owned by a scene.
 ///
-/// Created during `resolve_gpu_environment` (prepare phase) and written by
-/// `IBLComputePass` (compute phase). The pass only writes into pre-created
-/// textures; it never creates or removes cache entries.
+/// The texture objects and tracked views stay stable across source changes so
+/// downstream bind-group caches can keep hitting without rebuilds.
 #[derive(Debug)]
 pub struct GpuEnvironment {
-    /// Version of the source texture when this entry was last (re)created
-    pub source_version: u32,
-    /// Whether compute pass needs to (re)generate the textures
-    pub needs_compute: bool,
-    /// How the source needs to be processed
-    pub source_type: CubeSourceType,
-    /// Cube texture (owned; created when source is 2D or cube without mipmaps)
-    pub cube_texture: Option<wgpu::Texture>,
-    /// PMREM texture (always owned)
+    pub base_cube_texture: wgpu::Texture,
     pub pmrem_texture: wgpu::Texture,
-    /// Resource ID for the cube view registered in `internal_resources`
-    pub cube_view_id: u64,
-    /// Resource ID for the PMREM view registered in `internal_resources`
-    pub pmrem_view_id: u64,
-    /// Maximum mip level (`mip_levels - 1`) for roughness LOD
-    pub env_map_max_mip_level: f32,
+    pub base_cube_view: Tracked<wgpu::TextureView>,
+    pub pmrem_view: Tracked<wgpu::TextureView>,
+    pub source_version: u64,
+    pub needs_compute: bool,
+    pub source_type: CubeSourceType,
+    pub source_key: Option<TextureSource>,
+    pub source_ready: bool,
+    pub last_used_frame: u64,
+}
+
+impl GpuEnvironment {
+    #[inline]
+    #[must_use]
+    pub fn env_map_max_mip_level(&self) -> f32 {
+        (self.pmrem_texture.mip_level_count() - 1) as f32
+    }
+}
+
+struct ResolvedEnvironmentSource {
+    source_type: CubeSourceType,
+    source_key: Option<TextureSource>,
+    source_version: u64,
+    source_ready: bool,
 }
 
 impl ResourceManager {
-    /// Resolve (or create) the `GpuEnvironment` for the current scene environment.
+    /// Resolve or create the persistent GPU environment state for a scene.
     ///
-    /// This must be called before `prepare_global` so that the uniform buffer
-    /// can be populated with the correct `env_map_max_mip_level`, and so that
-    /// real resource IDs are available for `BindGroup` creation.
-    ///
-    /// All GPU textures (cube, PMREM) are created here; `IBLComputePass` only
-    /// writes into them — it never creates or removes cache entries.
-    ///
-    /// Returns the resolved `env_map_max_mip_level` (0.0 if no env map).
-    #[allow(clippy::too_many_lines)]
+    /// This stage only updates CPU-side dirty flags and guarantees stable
+    /// texture ownership. Actual cube conversion / atmosphere bake / PMREM
+    /// generation is deferred to RenderGraph pass nodes.
     pub fn resolve_gpu_environment(
         &mut self,
+        scene_id: u32,
         assets: &AssetServer,
-        environment: &myth_scene::environment::Environment,
+        environment: &Environment,
+        background: &BackgroundMode,
     ) -> f32 {
-        let Some(source) = environment.source_env_map else {
-            return 0.0;
-        };
+        let config = environment.map_config();
 
-        let mut current_version: u32 = 0;
-        let mut source_pending = false;
-        if let TextureSource::Asset(handle) = &source {
-            let state = self.prepare_texture(assets, *handle);
-            if matches!(state, ResourceState::Pending) {
-                source_pending = true;
-            }
-            if let Some(tex) = assets.textures.get(*handle) {
-                current_version = assets.images.get_version(tex.image).unwrap_or(0);
-            }
-        }
-
-        // If the source texture is still loading and we already have a cached
-        // entry, return the cached value without modification.
-        if source_pending && let Some(gpu_env) = self.environment_map_cache.get(&source) {
-            return gpu_env.env_map_max_mip_level;
-
-            // No cache entry yet — fall through to create one with defaults.
-            // The compute pass will regenerate once the texture arrives.
-        }
-
-        // --- Check existing cache entry ---
-        if let Some(gpu_env) = self.environment_map_cache.get_mut(&source) {
-            if gpu_env.source_version == current_version && !gpu_env.needs_compute {
-                return gpu_env.env_map_max_mip_level;
-            }
-            if gpu_env.source_version != current_version {
-                // Source texture content changed — need to regenerate
-                gpu_env.source_version = current_version;
-                gpu_env.needs_compute = true;
-                self.pending_ibl_source = Some(source);
-            }
-            return gpu_env.env_map_max_mip_level;
-        }
-
-        // --- No cached entry — determine source type ---
-        let (is_2d_source, source_cube_size, source_mip_count) = match &source {
-            TextureSource::Asset(handle) => {
-                if let Some(binding) = self.texture_bindings.get(*handle) {
-                    if let Some(img) = self.gpu_images.get(binding.image_handle) {
-                        let is_2d = img.default_view_dimension == TextureViewDimension::D2;
-                        (is_2d, img.size.width, img.mip_level_count)
-                    } else {
-                        (true, EQUIRECT_CUBE_SIZE, 1)
+        let resolved = match background {
+            BackgroundMode::Procedural(params) => ResolvedEnvironmentSource {
+                source_type: CubeSourceType::Procedural,
+                source_key: None,
+                source_version: params.version(),
+                source_ready: true,
+            },
+            _ => {
+                let Some(source) = environment.source_env_map().cloned() else {
+                    if let Some(gpu_env) = self.scene_gpu_environments.get_mut(&scene_id) {
+                        gpu_env.needs_compute = false;
+                        gpu_env.source_key = None;
+                        gpu_env.source_ready = false;
+                        gpu_env.last_used_frame = self.frame_index;
                     }
-                } else {
-                    (true, EQUIRECT_CUBE_SIZE, 1)
+                    return 0.0;
+                };
+
+                let mut source_version = environment.source_version();
+                let mut source_ready = true;
+
+                if let TextureSource::Asset(handle) = &source {
+                    let state = self.prepare_texture(assets, *handle);
+                    source_ready = !matches!(state, ResourceState::Pending | ResourceState::Unknown);
+
+                    if source_ready
+                        && let Some(tex) = assets.textures.get(*handle)
+                    {
+                        source_version = source_version.wrapping_shl(32)
+                            ^ u64::from(assets.images.get_version(tex.image).unwrap_or(0));
+                    }
                 }
-            }
-            TextureSource::Attachment(_, dim) => {
-                let is_2d = *dim == TextureViewDimension::D2;
-                // Cannot determine mip count for attachments; assume cube has mipmaps
-                (is_2d, EQUIRECT_CUBE_SIZE, if is_2d { 1 } else { 2 })
-            }
-        };
 
-        let source_type = if is_2d_source {
-            CubeSourceType::Equirectangular
-        } else if source_mip_count <= 1 {
-            CubeSourceType::CubeNoMipmaps
-        } else {
-            CubeSourceType::CubeWithMipmaps
-        };
-
-        // --- Create owned cube texture (Equirectangular & CubeNoMipmaps) ---
-        let needs_owned_cube = matches!(
-            source_type,
-            CubeSourceType::Equirectangular | CubeSourceType::CubeNoMipmaps
-        );
-
-        let owned_cube_size = match source_type {
-            CubeSourceType::Equirectangular => EQUIRECT_CUBE_SIZE,
-            CubeSourceType::CubeNoMipmaps => source_cube_size,
-            CubeSourceType::CubeWithMipmaps => 0, // unused
-        };
-
-        let cube_texture = if needs_owned_cube {
-            let mip_levels = (owned_cube_size as f32).log2().floor() as u32 + 1;
-            Some(self.device.create_texture(&wgpu::TextureDescriptor {
-                label: Some("Env Cube (Owned)"),
-                size: wgpu::Extent3d {
-                    width: owned_cube_size,
-                    height: owned_cube_size,
-                    depth_or_array_layers: 6,
-                },
-                dimension: wgpu::TextureDimension::D2,
-                format: wgpu::TextureFormat::Rgba16Float,
-                usage: wgpu::TextureUsages::STORAGE_BINDING
-                    | wgpu::TextureUsages::TEXTURE_BINDING
-                    | wgpu::TextureUsages::RENDER_ATTACHMENT,
-                mip_level_count: mip_levels,
-                sample_count: 1,
-                view_formats: &[],
-            }))
-        } else {
-            None
-        };
-
-        // --- Register cube view ---
-        let cube_view_id = if let Some(ref cube_tex) = cube_texture {
-            let view = cube_tex.create_view(&wgpu::TextureViewDescriptor {
-                dimension: Some(TextureViewDimension::Cube),
-                ..Default::default()
-            });
-            let id = generate_gpu_resource_id();
-            self.internal_resources.insert(id, view);
-            id
-        } else {
-            // CubeWithMipmaps — resolve from the asset
-            match &source {
-                TextureSource::Asset(handle) => {
-                    if let Some(binding) = self.texture_bindings.get(*handle) {
-                        if let Some(img) = self.gpu_images.get(binding.image_handle) {
-                            let view = img.texture.create_view(&wgpu::TextureViewDescriptor {
-                                dimension: Some(TextureViewDimension::Cube),
-                                ..Default::default()
-                            });
-                            let id = generate_gpu_resource_id();
-                            self.internal_resources.insert(id, view);
-                            id
+                let source_type = match &source {
+                    TextureSource::Asset(handle) => self
+                        .texture_bindings
+                        .get(*handle)
+                        .and_then(|binding| self.gpu_images.get(binding.image_handle))
+                        .map_or(CubeSourceType::Equirectangular, |img| {
+                            if img.default_view_dimension == TextureViewDimension::D2 {
+                                CubeSourceType::Equirectangular
+                            } else {
+                                CubeSourceType::Cubemap
+                            }
+                        }),
+                    TextureSource::Attachment(_, dim) => {
+                        if *dim == TextureViewDimension::D2 {
+                            CubeSourceType::Equirectangular
                         } else {
-                            self.system_textures.black_cube.id()
+                            CubeSourceType::Cubemap
                         }
-                    } else {
-                        self.system_textures.black_cube.id()
                     }
+                };
+
+                ResolvedEnvironmentSource {
+                    source_type,
+                    source_key: Some(source),
+                    source_version,
+                    source_ready,
                 }
-                TextureSource::Attachment(id, _) => *id,
             }
         };
 
-        // --- Create PMREM texture ---
-        let pmrem_mip_levels = (PMREM_SIZE as f32).log2().floor() as u32 + 1;
-        let pmrem_texture = self.device.create_texture(&wgpu::TextureDescriptor {
-            label: Some("PMREM Cubemap"),
+        let needs_recreate = self
+            .scene_gpu_environments
+            .get(&scene_id)
+            .is_none_or(|gpu_env| {
+                gpu_env.base_cube_texture.width() != config.base_cube_size
+                    || gpu_env.pmrem_texture.width() != config.pmrem_size
+            });
+
+        if needs_recreate {
+            self.recreate_scene_gpu_environment(scene_id, config.base_cube_size, config.pmrem_size);
+        }
+
+        let gpu_env = self
+            .scene_gpu_environments
+            .get_mut(&scene_id)
+            .expect("scene gpu environment must exist after recreation");
+
+        gpu_env.last_used_frame = self.frame_index;
+
+        let source_changed = gpu_env.source_version != resolved.source_version
+            || gpu_env.source_type != resolved.source_type
+            || gpu_env.source_key != resolved.source_key
+            || gpu_env.source_ready != resolved.source_ready;
+
+        if source_changed {
+            gpu_env.source_version = resolved.source_version;
+            gpu_env.source_type = resolved.source_type;
+            gpu_env.source_key = resolved.source_key;
+            gpu_env.source_ready = resolved.source_ready;
+            gpu_env.needs_compute = resolved.source_ready;
+        } else if !resolved.source_ready {
+            gpu_env.needs_compute = false;
+        }
+
+        gpu_env.env_map_max_mip_level()
+    }
+
+    fn recreate_scene_gpu_environment(
+        &mut self,
+        scene_id: u32,
+        base_cube_size: u32,
+        pmrem_size: u32,
+    ) {
+        if let Some(old) = self.scene_gpu_environments.remove(&scene_id) {
+            self.internal_resources.remove(&old.base_cube_view.id());
+            self.internal_resources.remove(&old.pmrem_view.id());
+        }
+
+        let base_cube_mips = (base_cube_size as f32).log2().floor() as u32 + 1;
+        let base_cube_texture = self.device.create_texture(&wgpu::TextureDescriptor {
+            label: Some("Scene Environment Base Cube"),
             size: wgpu::Extent3d {
-                width: PMREM_SIZE,
-                height: PMREM_SIZE,
+                width: base_cube_size,
+                height: base_cube_size,
                 depth_or_array_layers: 6,
             },
-            mip_level_count: pmrem_mip_levels,
+            mip_level_count: base_cube_mips,
+            sample_count: 1,
+            dimension: wgpu::TextureDimension::D2,
+            format: wgpu::TextureFormat::Rgba16Float,
+            usage: wgpu::TextureUsages::STORAGE_BINDING
+                | wgpu::TextureUsages::TEXTURE_BINDING
+                | wgpu::TextureUsages::RENDER_ATTACHMENT,
+            view_formats: &[],
+        });
+        let base_cube_view = Tracked::new(base_cube_texture.create_view(&wgpu::TextureViewDescriptor {
+            label: Some("Scene Environment Base Cube View"),
+            dimension: Some(TextureViewDimension::Cube),
+            ..Default::default()
+        }));
+        self.internal_resources
+            .insert(base_cube_view.id(), (*base_cube_view).clone());
+
+        let pmrem_mips = (pmrem_size as f32).log2().floor() as u32 + 1;
+        let pmrem_texture = self.device.create_texture(&wgpu::TextureDescriptor {
+            label: Some("Scene Environment PMREM"),
+            size: wgpu::Extent3d {
+                width: pmrem_size,
+                height: pmrem_size,
+                depth_or_array_layers: 6,
+            },
+            mip_level_count: pmrem_mips,
             sample_count: 1,
             dimension: wgpu::TextureDimension::D2,
             format: wgpu::TextureFormat::Rgba16Float,
             usage: wgpu::TextureUsages::STORAGE_BINDING | wgpu::TextureUsages::TEXTURE_BINDING,
             view_formats: &[],
         });
-
-        // Register PMREM view
-        let pmrem_view = pmrem_texture.create_view(&wgpu::TextureViewDescriptor {
-            label: Some("PMREM Cube View"),
+        let pmrem_view = Tracked::new(pmrem_texture.create_view(&wgpu::TextureViewDescriptor {
+            label: Some("Scene Environment PMREM View"),
             dimension: Some(TextureViewDimension::Cube),
             ..Default::default()
-        });
-        let pmrem_view_id = generate_gpu_resource_id();
-        self.internal_resources.insert(pmrem_view_id, pmrem_view);
+        }));
+        self.internal_resources
+            .insert(pmrem_view.id(), (*pmrem_view).clone());
 
-        let env_map_max_mip_level = (pmrem_mip_levels - 1) as f32;
+        self.scene_gpu_environments.insert(
+            scene_id,
+            GpuEnvironment {
+                base_cube_texture,
+                pmrem_texture,
+                base_cube_view,
+                pmrem_view,
+                source_version: u64::MAX,
+                needs_compute: true,
+                source_type: CubeSourceType::Equirectangular,
+                source_key: None,
+                source_ready: false,
+                last_used_frame: self.frame_index,
+            },
+        );
+    }
 
-        let gpu_env = GpuEnvironment {
-            source_version: current_version,
-            needs_compute: true,
-            source_type,
-            cube_texture,
-            pmrem_texture,
-            cube_view_id,
-            pmrem_view_id,
-            env_map_max_mip_level,
-        };
+    #[inline]
+    #[must_use]
+    pub fn gpu_environment(&self, scene_id: u32) -> Option<&GpuEnvironment> {
+        self.scene_gpu_environments.get(&scene_id)
+    }
 
-        self.pending_ibl_source = Some(source);
-        self.environment_map_cache.insert(source, gpu_env);
+    #[inline]
+    #[must_use]
+    pub fn gpu_environment_mut(&mut self, scene_id: u32) -> Option<&mut GpuEnvironment> {
+        self.scene_gpu_environments.get_mut(&scene_id)
+    }
 
-        env_map_max_mip_level
+    #[inline]
+    #[must_use]
+    pub fn scene_environment_ready(&self, scene_id: u32) -> bool {
+        self.scene_gpu_environments
+            .get(&scene_id)
+            .is_some_and(|gpu_env| !gpu_env.needs_compute)
+    }
+
+    #[inline]
+    #[must_use]
+    pub fn scene_environment_source_ready(&self, scene_id: u32) -> bool {
+        self.scene_gpu_environments
+            .get(&scene_id)
+            .is_some_and(|gpu_env| match gpu_env.source_type {
+                CubeSourceType::Procedural => true,
+                _ => gpu_env.source_ready,
+            })
+    }
+
+    #[inline]
+    pub fn mark_scene_environment_clean(&mut self, scene_id: u32) {
+        if let Some(gpu_env) = self.scene_gpu_environments.get_mut(&scene_id) {
+            gpu_env.needs_compute = false;
+        }
+    }
+
+    #[inline]
+    #[must_use]
+    pub fn get_env_map_max_mip_level(&self, scene_id: u32) -> f32 {
+        self.scene_gpu_environments
+            .get(&scene_id)
+            .map_or(0.0, GpuEnvironment::env_map_max_mip_level)
     }
 
     /// Ensure the global BRDF LUT texture exists.
@@ -276,15 +324,5 @@ impl ResourceManager {
         self.needs_brdf_compute = true;
 
         id
-    }
-
-    /// Get the `env_map_max_mip_level` for a given environment source.
-    pub fn get_env_map_max_mip_level(&self, source: Option<TextureSource>) -> f32 {
-        if let Some(src) = source
-            && let Some(gpu_env) = self.environment_map_cache.get(&src)
-        {
-            return gpu_env.env_map_max_mip_level;
-        }
-        0.0
     }
 }

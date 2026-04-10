@@ -440,6 +440,9 @@ impl ResourceManager {
         scene: &Scene,
         render_state: &RenderState,
     ) -> u32 {
+        let has_active_environment = matches!(scene.background.mode, myth_scene::background::BackgroundMode::Procedural(_))
+            || scene.environment.has_env_map();
+
         // === Ensure: upload all buffers, obtain physical resource IDs ===
         let (_, camera_result) = self.ensure_buffer(render_state.uniforms());
         let (_, env_result) = self.ensure_buffer(&scene.uniforms_buffer);
@@ -449,23 +452,19 @@ impl ResourceManager {
         // Resolve environment texture IDs from GpuEnvironment cache.
         // resolve_gpu_environment runs before prepare_global and always creates
         // cache entries, so a miss here should not happen in normal operation.
-        let (processed_env_map_id, pmrem_map_id) =
-            if let Some(source) = scene.environment.source_env_map {
-                if let Some(gpu_env) = self.environment_map_cache.get(&source) {
-                    (gpu_env.cube_view_id, gpu_env.pmrem_view_id)
-                } else {
-                    log::warn!("GpuEnvironment cache miss in prepare_global");
-                    (
-                        self.system_textures.black_cube.id(),
-                        self.system_textures.black_cube.id(),
-                    )
-                }
-            } else {
-                (
+        let (processed_env_map_id, pmrem_map_id) = if has_active_environment {
+            self.gpu_environment(scene.id())
+                .map(|gpu_env| (gpu_env.base_cube_view.id(), gpu_env.pmrem_view.id()))
+                .unwrap_or((
                     self.system_textures.black_cube.id(),
                     self.system_textures.black_cube.id(),
-                )
-            };
+                ))
+        } else {
+            (
+                self.system_textures.black_cube.id(),
+                self.system_textures.black_cube.id(),
+            )
+        };
 
         let brdf_lut_id = self
             .brdf_lut_view_id
@@ -576,19 +575,21 @@ impl ResourceManager {
         );
 
         // Resolve env_map from GpuEnvironment cache
-        let env_map_source = scene
-            .environment
-            .source_env_map
-            .and_then(|src| self.environment_map_cache.get(&src))
-            .map_or_else(
+        let env_map_source = if matches!(scene.background.mode, myth_scene::background::BackgroundMode::Procedural(_))
+            || scene.environment.has_env_map()
+        {
+            self.gpu_environment(scene.id()).map_or_else(
                 || TextureHandle::dummy_env_map().into(),
                 |gpu_env| {
                     TextureSource::Attachment(
-                        gpu_env.cube_view_id,
+                        gpu_env.base_cube_view.id(),
                         wgpu::TextureViewDimension::Cube,
                     )
                 },
-            );
+            )
+        } else {
+            TextureHandle::dummy_env_map().into()
+        };
 
         builder.add_texture(
             "env_map",
@@ -599,13 +600,15 @@ impl ResourceManager {
         );
 
         // Resolve pmrem_map from GpuEnvironment cache
-        let pmrem_source = scene
-            .environment
-            .source_env_map
-            .and_then(|src| self.environment_map_cache.get(&src))
-            .map(|gpu_env| {
-                TextureSource::Attachment(gpu_env.pmrem_view_id, wgpu::TextureViewDimension::Cube)
-            });
+        let pmrem_source = if matches!(scene.background.mode, myth_scene::background::BackgroundMode::Procedural(_))
+            || scene.environment.has_env_map()
+        {
+            self.gpu_environment(scene.id()).map(|gpu_env| {
+                TextureSource::Attachment(gpu_env.pmrem_view.id(), wgpu::TextureViewDimension::Cube)
+            })
+        } else {
+            None
+        };
 
         builder.add_texture(
             "pmrem_map",

@@ -5,7 +5,9 @@ pub mod compute;
 #[cfg(feature = "debug_view")]
 pub mod debug_view;
 pub mod draw;
+pub mod equirect_to_cube;
 pub mod fxaa;
+pub mod ibl_compute;
 pub mod msaa_sync;
 pub mod opaque;
 pub mod prepass;
@@ -23,10 +25,12 @@ pub mod utils;
 pub use atmosphere::AtmosphereFeature;
 pub use bloom::BloomFeature;
 pub use cas::CasFeature;
-pub use compute::{BrdfLutFeature, IblComputeFeature};
+pub use compute::BrdfLutFeature;
 #[cfg(feature = "debug_view")]
 pub use debug_view::DebugViewFeature;
+pub use equirect_to_cube::EquirectToCubeFeature;
 pub use fxaa::FxaaFeature;
+pub use ibl_compute::IblComputeFeature;
 pub use msaa_sync::MsaaSyncFeature;
 pub use opaque::OpaqueFeature;
 pub use prepass::PrepassFeature;

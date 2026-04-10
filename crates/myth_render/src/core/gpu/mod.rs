@@ -50,8 +50,6 @@ pub(crate) use crate::core::gpu::texture::{GpuImage, ResourceState, TextureBindi
 use crate::pipeline::vertex::VertexLayoutSignature;
 
 use myth_resources::buffer::{CpuBuffer, GpuData};
-use myth_resources::texture::TextureSource;
-
 pub use crate::core::gpu::mipmap::MipmapGenerator;
 pub use allocator::ModelBufferAllocator;
 pub use resource_ids::{
@@ -142,13 +140,11 @@ pub struct ResourceManager {
     pub(crate) object_bind_group_cache: FxHashMap<ObjectBindGroupKey, BindGroupContext>,
     pub(crate) bind_group_id_lookup: FxHashMap<u64, BindGroupContext>,
 
-    // === Environment Map Cache ===
-    pub(crate) environment_map_cache: FxHashMap<TextureSource, GpuEnvironment>,
+    // === Scene Environment Cache ===
+    pub(crate) scene_gpu_environments: FxHashMap<u32, GpuEnvironment>,
     pub(crate) brdf_lut_texture: Option<wgpu::Texture>,
     pub(crate) brdf_lut_view_id: Option<u64>,
     pub(crate) needs_brdf_compute: bool,
-    /// Source that needs IBL compute this frame (set by `resolve_gpu_environment`)
-    pub(crate) pending_ibl_source: Option<TextureSource>,
 
     /// Stores internally generated texture views (Render Targets / Attachments)
     /// Key: Resource ID (u64)
@@ -200,11 +196,10 @@ impl ResourceManager {
             model_allocator,
             object_bind_group_cache: FxHashMap::default(),
             bind_group_id_lookup: FxHashMap::default(),
-            environment_map_cache: FxHashMap::default(),
+            scene_gpu_environments: FxHashMap::default(),
             brdf_lut_texture: None,
             brdf_lut_view_id: None,
             needs_brdf_compute: false,
-            pending_ibl_source: None,
             internal_resources: FxHashMap::default(),
             internal_name_lookup: FxHashMap::default(),
             system_textures,
@@ -262,6 +257,21 @@ impl ResourceManager {
             return;
         }
         let cutoff = self.frame_index - ttl_frames;
+
+        let stale_scene_envs: Vec<u32> = self
+            .scene_gpu_environments
+            .iter()
+            .filter_map(|(scene_id, gpu_env)| {
+                (gpu_env.last_used_frame < cutoff).then_some(*scene_id)
+            })
+            .collect();
+
+        for scene_id in stale_scene_envs {
+            if let Some(gpu_env) = self.scene_gpu_environments.remove(&scene_id) {
+                self.internal_resources.remove(&gpu_env.base_cube_view.id());
+                self.internal_resources.remove(&gpu_env.pmrem_view.id());
+            }
+        }
 
         self.gpu_geometries
             .retain(|_, v| v.last_used_frame >= cutoff);

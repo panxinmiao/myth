@@ -74,6 +74,8 @@ impl OpaqueFeature {
         ssao_tex: Option<TextureNodeId>,
         shadow_tex: Option<TextureNodeId>,
         shadow_cube_tex: Option<TextureNodeId>,
+        env_map_tex: Option<TextureNodeId>,
+        pmrem_tex: Option<TextureNodeId>,
     ) -> OpaqueOutputs {
         let fc = ctx.frame_config;
         let is_msaa = fc.msaa_samples > 1;
@@ -163,6 +165,12 @@ impl OpaqueFeature {
             }
             if let Some(shadow_cube) = shadow_cube_tex {
                 builder.read_texture(shadow_cube);
+            }
+            if let Some(env_map) = env_map_tex {
+                builder.read_texture(env_map);
+            }
+            if let Some(pmrem) = pmrem_tex {
+                builder.read_texture(pmrem);
             }
 
             let node = OpaquePassNode::new(
