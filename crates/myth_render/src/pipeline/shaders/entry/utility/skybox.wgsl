@@ -92,13 +92,14 @@ fn disk_mask(view_dir: vec3<f32>, body_dir: vec3<f32>, angular_size_deg: f32, sm
 }
 
 fn sun_disk(dir: vec3<f32>) -> vec3<f32> {
-    let mask = disk_mask(dir, u_bake_params.sun_direction, u_bake_params.sun_disk_size, 0.00002);
+    let mask = disk_mask(dir, u_bake_params.sun_direction, u_bake_params.sun_disk_size, 0.0001);
     if mask <= 0.0 {
         return vec3<f32>(0.0);
     }
 
     let transmittance = sample_direction_transmittance(u_bake_params.sun_direction);
-    return transmittance * (mask * u_bake_params.sun_intensity);
+    let visual_sun_intensity = u_bake_params.sun_intensity * 200.0;
+    return transmittance * (mask * visual_sun_intensity);
 }
 
 fn moon_disk(dir: vec3<f32>, view_transmittance: vec3<f32>) -> vec3<f32> {
@@ -145,9 +146,11 @@ fn sample_starbox(dir: vec3<f32>) -> vec3<f32> {
 $$ if SKYBOX_PROCEDURAL_STAR_EQUIRECT
     let star_uv = equirectangular_uv(dir);
     let wrapped_uv = vec2<f32>(fract(star_uv.x), clamp(star_uv.y, 0.0, 1.0));
-    return textureSampleLevel(t_starbox_2d, s_skybox, wrapped_uv, 0.0).rgb;
+    let color = textureSampleLevel(t_starbox_2d, s_skybox, wrapped_uv, 0.0).rgb;
+    return pow(color, vec3<f32>(3.0));
 $$ elif SKYBOX_PROCEDURAL_STAR_CUBE
-    return textureSampleLevel(t_starbox_cube, s_skybox, dir, 0.0).rgb;
+    let color = textureSampleLevel(t_starbox_2d, s_skybox, wrapped_uv, 0.0).rgb;
+    return pow(color, vec3<f32>(3.0));
 $$ else
     return vec3<f32>(0.0);
 $$ endif

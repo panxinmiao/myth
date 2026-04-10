@@ -24,7 +24,7 @@ impl AppHandler for ProceduralSkyDemo {
         let mut sky = ProceduralSkyParams::sunset();
         sky.set_starbox_texture(Some(starbox.into()));
         sky.set_star_intensity(1.0);
-        sky.set_moon_intensity(0.18);
+        sky.set_moon_intensity(0.35);
         scene
             .background
             .set_mode(BackgroundMode::procedural_with(sky));
@@ -70,6 +70,11 @@ impl AppHandler for ProceduralSkyDemo {
             GltfLoader::load(gltf_path, engine.assets.clone()).expect("Failed to load glTF model");
         let root = scene.instantiate(&prefab);
         scene.node(&root).set_position(0.0, 0.0, 0.0);
+
+        scene.bloom.set_enabled(true);
+        scene.bloom.set_strength(0.002);
+        scene.bloom.set_radius(0.005);
+        scene.bloom.set_karis_average(true);
 
         // Camera
         let cam_node_id = scene.add_camera(Camera::new_perspective(45.0, 1280.0 / 720.0, 0.1));

@@ -163,7 +163,7 @@ impl ProceduralSkyParams {
             star_axis: Vec3::Y,
             sun_disk_size: 0.53,
             moon_disk_size: 0.52,
-            sun_intensity: 20.0,
+            sun_intensity: 30.0,
             moon_intensity: 0.35,
             rayleigh_scattering: Vec3::new(5.802e-6, 13.558e-6, 33.1e-6),
             rayleigh_scale_height: 8000.0,
@@ -176,7 +176,7 @@ impl ProceduralSkyParams {
             atmosphere_radius: 6_460_000.0,
             exposure: 10.0,
             starbox_texture: None,
-            star_intensity: 50.0,
+            star_intensity: 1.0,
             star_rotation: 0.0,
             version: 0,
         }
