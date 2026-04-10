@@ -81,6 +81,47 @@ fn hash_vec3<H: Hasher>(hasher: &mut H, value: Vec3) {
     hash_f32(hasher, value.z);
 }
 
+fn resolved_procedural_starbox_hash(
+    resource_manager: &mut ResourceManager,
+    assets: &AssetServer,
+    params: &ProceduralSkyParams,
+) -> u64 {
+    let mut hasher = rustc_hash::FxHasher::default();
+
+    let Some(source) = params.starbox_texture else {
+        0u8.hash(&mut hasher);
+        return hasher.finish();
+    };
+
+    source.hash(&mut hasher);
+
+    match source {
+        TextureSource::Asset(handle) => {
+            let state = resource_manager.prepare_texture(assets, handle);
+            match state {
+                ResourceState::Ready => {
+                    if let Some(texture) = assets.textures.get(handle) {
+                        u64::from(assets.images.get_version(texture.image).unwrap_or(0))
+                            .hash(&mut hasher);
+                    }
+                    if let Some(binding) = resource_manager.texture_bindings.get(handle) {
+                        binding.view_id.hash(&mut hasher);
+                    }
+                }
+                ResourceState::Pending | ResourceState::Unknown => {
+                    0u8.hash(&mut hasher);
+                }
+            }
+        }
+        TextureSource::Attachment(id, dim) => {
+            id.hash(&mut hasher);
+            dim.hash(&mut hasher);
+        }
+    }
+
+    hasher.finish()
+}
+
 fn procedural_physics_hash(params: &ProceduralSkyParams) -> u64 {
     let mut hasher = rustc_hash::FxHasher::default();
     hash_vec3(&mut hasher, params.rayleigh_scattering);
@@ -95,11 +136,16 @@ fn procedural_physics_hash(params: &ProceduralSkyParams) -> u64 {
     hasher.finish()
 }
 
-fn procedural_bake_hash(params: &ProceduralSkyParams) -> u64 {
+fn procedural_bake_hash(params: &ProceduralSkyParams, starbox_hash: u64) -> u64 {
     let mut hasher = rustc_hash::FxHasher::default();
     hash_f32(&mut hasher, params.sun_intensity);
     hash_f32(&mut hasher, params.sun_disk_size);
+    hash_f32(&mut hasher, params.moon_intensity);
+    hash_f32(&mut hasher, params.moon_disk_size);
     hash_f32(&mut hasher, params.exposure);
+    hash_f32(&mut hasher, params.star_intensity);
+    hash_vec3(&mut hasher, params.star_axis);
+    starbox_hash.hash(&mut hasher);
     hasher.finish()
 }
 
@@ -150,6 +196,11 @@ impl ResourceManager {
         }
 
         if let BackgroundMode::Procedural(params) = background {
+            // Intentionally exclude `star_rotation` from PMREM rebake hashing:
+            // the day/night system updates it every frame, and rebaking IBL at
+            // that cadence would be too expensive. Static night-sky changes and
+            // starbox asset changes still trigger rebakes through `bake_hash`.
+            let starbox_hash = resolved_procedural_starbox_hash(self, assets, params);
             let gpu_env = self
                 .scene_gpu_environments
                 .get_mut(&scene_id)
@@ -158,7 +209,7 @@ impl ResourceManager {
             gpu_env.last_used_frame = self.frame_index;
 
             let physics_hash = procedural_physics_hash(params);
-            let bake_hash = procedural_bake_hash(params);
+            let bake_hash = procedural_bake_hash(params, starbox_hash);
             let source_kind_changed = gpu_env.source_type != CubeSourceType::Procedural
                 || gpu_env.source_key.is_some()
                 || !gpu_env.source_ready;

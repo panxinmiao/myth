@@ -131,10 +131,10 @@ impl SkyboxVariant {
             match starbox_kind {
                 ProceduralStarboxKind::None => {}
                 ProceduralStarboxKind::Equirectangular => {
-                    defines.set("SKYBOX_PROCEDURAL_STAR_EQUIRECT", "1");
+                    defines.set("CELESTIAL_STARBOX_EQUIRECT", "1");
                 }
                 ProceduralStarboxKind::Cube => {
-                    defines.set("SKYBOX_PROCEDURAL_STAR_CUBE", "1");
+                    defines.set("CELESTIAL_STARBOX_CUBE", "1");
                 }
             }
         }
@@ -292,7 +292,7 @@ fn create_procedural_texture_layout(
                 count: None,
             },
             wgpu::BindGroupLayoutEntry {
-                binding: 4,
+                binding: 5,
                 visibility: wgpu::ShaderStages::FRAGMENT,
                 ty: wgpu::BindingType::Texture {
                     sample_type: wgpu::TextureSampleType::Float { filterable: true },
@@ -691,7 +691,7 @@ impl SkyboxFeature {
                                 ),
                             },
                             wgpu::BindGroupEntry {
-                                binding: 4,
+                                binding: 5,
                                 resource: wgpu::BindingResource::TextureView(starbox.view),
                             },
                         ],

@@ -16,7 +16,7 @@ use std::sync::atomic::{AtomicU64, Ordering};
 use rustc_hash::FxHashMap;
 
 use crate::core::binding::BindGroupKey;
-use crate::core::gpu::Tracked;
+use crate::core::gpu::{ResourceState, Tracked};
 use crate::graph::composer::GraphBuilderContext;
 use crate::graph::core::{
     ExecuteContext, ExtractContext, PassNode, PrepareContext, TextureDesc, TextureNodeId,
@@ -24,6 +24,8 @@ use crate::graph::core::{
 use crate::pipeline::{
     ComputePipelineId, ComputePipelineKey, ShaderCompilationOptions, ShaderSource,
 };
+use myth_resources::shader_defines::ShaderDefines;
+use myth_resources::texture::TextureSource;
 use myth_scene::background::ProceduralSkyParams;
 
 const TRANSMITTANCE_WIDTH: u32 = 256;
@@ -32,6 +34,41 @@ const MULTI_SCATTER_SIZE: u32 = 32;
 const SKY_VIEW_WIDTH: u32 = 192;
 const SKY_VIEW_HEIGHT: u32 = 108;
 const SCENE_CACHE_TTL: u64 = 120;
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+enum AtmosphereStarboxKind {
+    None,
+    Equirectangular,
+    Cube,
+}
+
+impl AtmosphereStarboxKind {
+    fn from_view_dimension(view_dimension: wgpu::TextureViewDimension) -> Option<Self> {
+        match view_dimension {
+            wgpu::TextureViewDimension::D2 => Some(Self::Equirectangular),
+            wgpu::TextureViewDimension::Cube => Some(Self::Cube),
+            _ => None,
+        }
+    }
+
+    fn apply_shader_defines(self, defines: &mut ShaderDefines) {
+        match self {
+            Self::None => {}
+            Self::Equirectangular => {
+                defines.set("CELESTIAL_STARBOX_EQUIRECT", "1");
+            }
+            Self::Cube => {
+                defines.set("CELESTIAL_STARBOX_CUBE", "1");
+            }
+        }
+    }
+}
+
+struct ResolvedAtmosphereStarbox {
+    view: wgpu::TextureView,
+    resource_id: u64,
+    kind: AtmosphereStarboxKind,
+}
 
 #[repr(C)]
 #[derive(Clone, Copy, bytemuck::Pod, bytemuck::Zeroable)]
@@ -124,6 +161,7 @@ struct AtmosphereSceneState {
     physics_dirty: bool,
     uploaded_version: AtomicU64,
     last_used_frame: u64,
+    starbox: Option<ResolvedAtmosphereStarbox>,
 }
 
 #[derive(Clone, Copy)]
@@ -195,11 +233,13 @@ pub struct AtmosphereFeature {
     transmittance_pipeline: Option<ComputePipelineId>,
     multi_scatter_pipeline: Option<ComputePipelineId>,
     sky_view_pipeline: Option<ComputePipelineId>,
-    sky_to_cube_pipeline: Option<ComputePipelineId>,
+    sky_to_cube_pipelines: FxHashMap<AtmosphereStarboxKind, ComputePipelineId>,
     transmittance_layout: Option<Tracked<wgpu::BindGroupLayout>>,
     multi_scatter_layout: Option<Tracked<wgpu::BindGroupLayout>>,
     sky_view_layout: Option<Tracked<wgpu::BindGroupLayout>>,
     sky_to_cube_layout: Option<Tracked<wgpu::BindGroupLayout>>,
+    sky_to_cube_eq_layout: Option<Tracked<wgpu::BindGroupLayout>>,
+    sky_to_cube_cube_layout: Option<Tracked<wgpu::BindGroupLayout>>,
     sampler: Option<wgpu::Sampler>,
     scene_states: FxHashMap<u32, AtmosphereSceneState>,
 }
@@ -217,11 +257,13 @@ impl AtmosphereFeature {
             transmittance_pipeline: None,
             multi_scatter_pipeline: None,
             sky_view_pipeline: None,
-            sky_to_cube_pipeline: None,
+            sky_to_cube_pipelines: FxHashMap::default(),
             transmittance_layout: None,
             multi_scatter_layout: None,
             sky_view_layout: None,
             sky_to_cube_layout: None,
+            sky_to_cube_eq_layout: None,
+            sky_to_cube_cube_layout: None,
             sampler: None,
             scene_states: FxHashMap::default(),
         }
@@ -237,6 +279,7 @@ impl AtmosphereFeature {
         self.ensure_sampler(ctx.device);
         self.ensure_pipelines(ctx);
         self.ensure_scene_state(ctx, scene_id, params);
+        self.update_starbox_state(ctx, scene_id, params);
         self.prune_scene_states(ctx.resource_manager.frame_index());
     }
 
@@ -292,8 +335,14 @@ impl AtmosphereFeature {
             .sky_view_pipeline
             .map(|id| ctx.pipeline_cache.get_compute_pipeline(id))
             .expect("atmosphere sky view pipeline must exist");
+        let sky_to_cube_kind = state
+            .starbox
+            .as_ref()
+            .map_or(AtmosphereStarboxKind::None, |starbox| starbox.kind);
         let sky_to_cube_pipeline = self
-            .sky_to_cube_pipeline
+            .sky_to_cube_pipelines
+            .get(&sky_to_cube_kind)
+            .copied()
             .map(|id| ctx.pipeline_cache.get_compute_pipeline(id))
             .expect("atmosphere sky-to-cube pipeline must exist");
 
@@ -312,10 +361,7 @@ impl AtmosphereFeature {
             .sky_view_layout
             .as_ref()
             .expect("atmosphere sky-view layout must exist");
-        let sky_to_cube_layout = self
-            .sky_to_cube_layout
-            .as_ref()
-            .expect("atmosphere sky-to-cube layout must exist");
+        let sky_to_cube_layout = self.sky_to_cube_layout_for_kind(sky_to_cube_kind);
         let sampler = self
             .sampler
             .as_ref()
@@ -439,6 +485,7 @@ impl AtmosphereFeature {
                         layout: sky_to_cube_layout,
                         sampler,
                         base_cube_storage_view,
+                        starbox: state.starbox.as_ref(),
                         bind_group: None,
                     };
                     (node, ())
@@ -541,6 +588,7 @@ impl AtmosphereFeature {
                 physics_dirty: true,
                 uploaded_version: AtomicU64::new(u64::MAX),
                 last_used_frame: frame_index,
+                starbox: None,
             }
         });
 
@@ -557,6 +605,54 @@ impl AtmosphereFeature {
         self.scene_states.retain(|_, state| {
             current_frame.saturating_sub(state.last_used_frame) <= SCENE_CACHE_TTL
         });
+    }
+
+    fn update_starbox_state(
+        &mut self,
+        ctx: &mut ExtractContext,
+        scene_id: u32,
+        params: &ProceduralSkyParams,
+    ) {
+        let starbox = params
+            .starbox_texture
+            .and_then(|source| Self::resolve_starbox(ctx, &source));
+
+        if let Some(state) = self.scene_states.get_mut(&scene_id) {
+            state.starbox = starbox;
+        }
+    }
+
+    fn resolve_starbox(
+        ctx: &mut ExtractContext,
+        source: &TextureSource,
+    ) -> Option<ResolvedAtmosphereStarbox> {
+        match source {
+            TextureSource::Asset(handle) => {
+                let state = ctx.resource_manager.prepare_texture(ctx.assets, *handle);
+                if !matches!(state, ResourceState::Ready) {
+                    return None;
+                }
+
+                let binding = ctx.resource_manager.texture_bindings.get(*handle)?;
+                let image = ctx.resource_manager.gpu_images.get(binding.image_handle)?;
+                let kind =
+                    AtmosphereStarboxKind::from_view_dimension(image.default_view_dimension)?;
+                Some(ResolvedAtmosphereStarbox {
+                    view: image.default_view.clone(),
+                    resource_id: binding.view_id,
+                    kind,
+                })
+            }
+            TextureSource::Attachment(id, dimension) => {
+                let kind = AtmosphereStarboxKind::from_view_dimension(*dimension)?;
+                let view = ctx.resource_manager.internal_resources.get(id)?.clone();
+                Some(ResolvedAtmosphereStarbox {
+                    view,
+                    resource_id: *id,
+                    kind,
+                })
+            }
+        }
     }
 
     fn ensure_sampler(&mut self, device: &wgpu::Device) {
@@ -711,59 +807,32 @@ impl AtmosphereFeature {
             },
         )));
 
-        self.sky_to_cube_layout = Some(Tracked::new(device.create_bind_group_layout(
-            &wgpu::BindGroupLayoutDescriptor {
-                label: Some("Atmo Sky-to-Cube BGL"),
-                entries: &[
-                    wgpu::BindGroupLayoutEntry {
-                        binding: 0,
-                        visibility: wgpu::ShaderStages::COMPUTE,
-                        ty: wgpu::BindingType::Texture {
-                            sample_type: wgpu::TextureSampleType::Float { filterable: true },
-                            view_dimension: wgpu::TextureViewDimension::D2,
-                            multisampled: false,
-                        },
-                        count: None,
-                    },
-                    wgpu::BindGroupLayoutEntry {
-                        binding: 1,
-                        visibility: wgpu::ShaderStages::COMPUTE,
-                        ty: wgpu::BindingType::Sampler(wgpu::SamplerBindingType::Filtering),
-                        count: None,
-                    },
-                    wgpu::BindGroupLayoutEntry {
-                        binding: 2,
-                        visibility: wgpu::ShaderStages::COMPUTE,
-                        ty: wgpu::BindingType::Buffer {
-                            ty: wgpu::BufferBindingType::Uniform,
-                            has_dynamic_offset: false,
-                            min_binding_size: None,
-                        },
-                        count: None,
-                    },
-                    wgpu::BindGroupLayoutEntry {
-                        binding: 3,
-                        visibility: wgpu::ShaderStages::COMPUTE,
-                        ty: wgpu::BindingType::StorageTexture {
-                            access: wgpu::StorageTextureAccess::WriteOnly,
-                            format: wgpu::TextureFormat::Rgba16Float,
-                            view_dimension: wgpu::TextureViewDimension::D2Array,
-                        },
-                        count: None,
-                    },
-                    wgpu::BindGroupLayoutEntry {
-                        binding: 4,
-                        visibility: wgpu::ShaderStages::COMPUTE,
-                        ty: wgpu::BindingType::Texture {
-                            sample_type: wgpu::TextureSampleType::Float { filterable: true },
-                            view_dimension: wgpu::TextureViewDimension::D2,
-                            multisampled: false,
-                        },
-                        count: None,
-                    },
-                ],
-            },
+        self.sky_to_cube_layout = Some(Tracked::new(create_sky_to_cube_layout(
+            device,
+            None,
+            "Atmo Sky-to-Cube BGL",
         )));
+        self.sky_to_cube_eq_layout = Some(Tracked::new(create_sky_to_cube_layout(
+            device,
+            Some(wgpu::TextureViewDimension::D2),
+            "Atmo Sky-to-Cube Eq BGL",
+        )));
+        self.sky_to_cube_cube_layout = Some(Tracked::new(create_sky_to_cube_layout(
+            device,
+            Some(wgpu::TextureViewDimension::Cube),
+            "Atmo Sky-to-Cube Cube BGL",
+        )));
+    }
+
+    fn sky_to_cube_layout_for_kind(
+        &self,
+        kind: AtmosphereStarboxKind,
+    ) -> &Tracked<wgpu::BindGroupLayout> {
+        match kind {
+            AtmosphereStarboxKind::None => self.sky_to_cube_layout.as_ref().unwrap(),
+            AtmosphereStarboxKind::Equirectangular => self.sky_to_cube_eq_layout.as_ref().unwrap(),
+            AtmosphereStarboxKind::Cube => self.sky_to_cube_cube_layout.as_ref().unwrap(),
+        }
     }
 
     fn ensure_pipelines(&mut self, ctx: &mut ExtractContext) {
@@ -837,20 +906,28 @@ impl AtmosphereFeature {
             "Atmo Sky-View Pipeline",
         ));
 
-        let (sky_to_cube_module, sky_to_cube_hash) = ctx.shader_manager.get_or_compile(
-            ctx.device,
-            ShaderSource::File("entry/utility/atmosphere/sky_to_cube"),
-            &opts,
-        );
-        let sky_to_cube_layout =
-            ctx.device
-                .create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
-                    label: Some("Atmo Sky-to-Cube PL"),
-                    bind_group_layouts: &[Some(self.sky_to_cube_layout.as_deref().unwrap())],
-                    immediate_size: 0,
-                });
-        self.sky_to_cube_pipeline = Some(
-            ctx.pipeline_cache.get_or_create_compute(
+        for kind in [
+            AtmosphereStarboxKind::None,
+            AtmosphereStarboxKind::Equirectangular,
+            AtmosphereStarboxKind::Cube,
+        ] {
+            let mut sky_to_cube_opts = ShaderCompilationOptions::default();
+            kind.apply_shader_defines(&mut sky_to_cube_opts.defines);
+            let (sky_to_cube_module, sky_to_cube_hash) = ctx.shader_manager.get_or_compile(
+                ctx.device,
+                ShaderSource::File("entry/utility/atmosphere/sky_to_cube"),
+                &sky_to_cube_opts,
+            );
+            let sky_to_cube_bind_group_layout: &wgpu::BindGroupLayout =
+                self.sky_to_cube_layout_for_kind(kind);
+            let sky_to_cube_layout =
+                ctx.device
+                    .create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
+                        label: Some("Atmo Sky-to-Cube PL"),
+                        bind_group_layouts: &[Some(sky_to_cube_bind_group_layout)],
+                        immediate_size: 0,
+                    });
+            let pipeline = ctx.pipeline_cache.get_or_create_compute(
                 ctx.device,
                 sky_to_cube_module,
                 &sky_to_cube_layout,
@@ -858,9 +935,83 @@ impl AtmosphereFeature {
                     .with_compilation_options(&compilation_options),
                 &compilation_options,
                 "Atmo Sky-to-Cube Pipeline",
-            ),
-        );
+            );
+            self.sky_to_cube_pipelines.insert(kind, pipeline);
+        }
     }
+}
+
+fn create_sky_to_cube_layout(
+    device: &wgpu::Device,
+    starbox_view_dimension: Option<wgpu::TextureViewDimension>,
+    label: &str,
+) -> wgpu::BindGroupLayout {
+    let mut entries = vec![
+        wgpu::BindGroupLayoutEntry {
+            binding: 0,
+            visibility: wgpu::ShaderStages::COMPUTE,
+            ty: wgpu::BindingType::Texture {
+                sample_type: wgpu::TextureSampleType::Float { filterable: true },
+                view_dimension: wgpu::TextureViewDimension::D2,
+                multisampled: false,
+            },
+            count: None,
+        },
+        wgpu::BindGroupLayoutEntry {
+            binding: 1,
+            visibility: wgpu::ShaderStages::COMPUTE,
+            ty: wgpu::BindingType::Sampler(wgpu::SamplerBindingType::Filtering),
+            count: None,
+        },
+        wgpu::BindGroupLayoutEntry {
+            binding: 2,
+            visibility: wgpu::ShaderStages::COMPUTE,
+            ty: wgpu::BindingType::Buffer {
+                ty: wgpu::BufferBindingType::Uniform,
+                has_dynamic_offset: false,
+                min_binding_size: None,
+            },
+            count: None,
+        },
+        wgpu::BindGroupLayoutEntry {
+            binding: 3,
+            visibility: wgpu::ShaderStages::COMPUTE,
+            ty: wgpu::BindingType::StorageTexture {
+                access: wgpu::StorageTextureAccess::WriteOnly,
+                format: wgpu::TextureFormat::Rgba16Float,
+                view_dimension: wgpu::TextureViewDimension::D2Array,
+            },
+            count: None,
+        },
+        wgpu::BindGroupLayoutEntry {
+            binding: 4,
+            visibility: wgpu::ShaderStages::COMPUTE,
+            ty: wgpu::BindingType::Texture {
+                sample_type: wgpu::TextureSampleType::Float { filterable: true },
+                view_dimension: wgpu::TextureViewDimension::D2,
+                multisampled: false,
+            },
+            count: None,
+        },
+    ];
+
+    if let Some(view_dimension) = starbox_view_dimension {
+        entries.push(wgpu::BindGroupLayoutEntry {
+            binding: 5,
+            visibility: wgpu::ShaderStages::COMPUTE,
+            ty: wgpu::BindingType::Texture {
+                sample_type: wgpu::TextureSampleType::Float { filterable: true },
+                view_dimension,
+                multisampled: false,
+            },
+            count: None,
+        });
+    }
+
+    device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
+        label: Some(label),
+        entries: &entries,
+    })
 }
 
 trait AtmosphereNodeState {
@@ -1133,6 +1284,7 @@ struct AtmosphereSkyToCubeNode<'a> {
     layout: &'a Tracked<wgpu::BindGroupLayout>,
     sampler: &'a wgpu::Sampler,
     base_cube_storage_view: &'a Tracked<wgpu::TextureView>,
+    starbox: Option<&'a ResolvedAtmosphereStarbox>,
     bind_group: Option<&'a wgpu::BindGroup>,
 }
 
@@ -1167,8 +1319,44 @@ impl<'a> PassNode<'a> for AtmosphereSkyToCubeNode<'a> {
             .with_resource(self.base_cube_storage_view.id())
             .with_resource(transmittance_view.id());
 
-        let bg = cache.get_or_create_bg(key, || {
-            device.create_bind_group(&wgpu::BindGroupDescriptor {
+        let key = if let Some(starbox) = self.starbox {
+            key.with_resource(starbox.resource_id)
+        } else {
+            key
+        };
+
+        let bg = cache.get_or_create_bg(key, || match self.starbox {
+            Some(starbox) => device.create_bind_group(&wgpu::BindGroupDescriptor {
+                label: Some("Atmo Sky-to-Cube BG + Starbox"),
+                layout: self.layout,
+                entries: &[
+                    wgpu::BindGroupEntry {
+                        binding: 0,
+                        resource: wgpu::BindingResource::TextureView(sky_view),
+                    },
+                    wgpu::BindGroupEntry {
+                        binding: 1,
+                        resource: wgpu::BindingResource::Sampler(self.sampler),
+                    },
+                    wgpu::BindGroupEntry {
+                        binding: 2,
+                        resource: self.state.bake_params_buffer.as_entire_binding(),
+                    },
+                    wgpu::BindGroupEntry {
+                        binding: 3,
+                        resource: wgpu::BindingResource::TextureView(self.base_cube_storage_view),
+                    },
+                    wgpu::BindGroupEntry {
+                        binding: 4,
+                        resource: wgpu::BindingResource::TextureView(transmittance_view),
+                    },
+                    wgpu::BindGroupEntry {
+                        binding: 5,
+                        resource: wgpu::BindingResource::TextureView(&starbox.view),
+                    },
+                ],
+            }),
+            None => device.create_bind_group(&wgpu::BindGroupDescriptor {
                 label: Some("Atmo Sky-to-Cube BG"),
                 layout: self.layout,
                 entries: &[
@@ -1193,7 +1381,7 @@ impl<'a> PassNode<'a> for AtmosphereSkyToCubeNode<'a> {
                         resource: wgpu::BindingResource::TextureView(transmittance_view),
                     },
                 ],
-            })
+            }),
         });
         self.bind_group = Some(bg);
     }

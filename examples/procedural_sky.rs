@@ -23,7 +23,7 @@ impl AppHandler for ProceduralSkyDemo {
 
         let mut sky = ProceduralSkyParams::sunset();
         sky.set_starbox_texture(Some(starbox.into()));
-        sky.set_star_intensity(1.0);
+        sky.set_star_intensity(0.1);
         sky.set_moon_intensity(0.35);
         scene
             .background

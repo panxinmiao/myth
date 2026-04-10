@@ -1218,4 +1218,47 @@ mod tests {
             "sun motion beyond the bake threshold should trigger a procedural environment rebake"
         );
     }
+
+    #[test]
+    fn procedural_starbox_triggers_environment_rebake() {
+        let mut renderer = init_headless_renderer();
+        let assets = AssetServer::new();
+        let mut scene = Scene::new();
+        scene.background.set_mode(BackgroundMode::procedural());
+        let camera = make_camera();
+
+        render_frame(&mut renderer, &mut scene, &camera, &assets, 0);
+
+        let scene_id = scene.id();
+        let initial_source_version = renderer
+            .context
+            .as_ref()
+            .expect("renderer state missing")
+            .resource_manager
+            .gpu_environment(scene_id)
+            .expect("scene gpu environment missing after first render")
+            .source_version;
+
+        let starbox = assets.checkerboard(32, 8);
+        if let BackgroundMode::Procedural(params) = &mut scene.background.mode {
+            params.set_starbox_texture(Some(starbox.into()));
+            params.set_star_intensity(2.0);
+        }
+
+        render_frame(&mut renderer, &mut scene, &camera, &assets, 1);
+
+        let updated_source_version = renderer
+            .context
+            .as_ref()
+            .expect("renderer state missing")
+            .resource_manager
+            .gpu_environment(scene_id)
+            .expect("scene gpu environment missing after starbox update")
+            .source_version;
+
+        assert_ne!(
+            initial_source_version, updated_source_version,
+            "adding a procedural starbox should trigger an environment rebake"
+        );
+    }
 }

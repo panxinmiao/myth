@@ -28,19 +28,29 @@ struct BakeParams {
 };
 
 @group(0) @binding(0)
-var sky_view_lut: texture_2d<f32>;
+var t_sky_view: texture_2d<f32>;
 
 @group(0) @binding(1)
-var lut_sampler: sampler;
+var s_skybox: sampler;
 
 @group(0) @binding(2)
-var<uniform> params: BakeParams;
+var<uniform> u_bake_params: BakeParams;
 
 @group(0) @binding(3)
 var dest: texture_storage_2d_array<rgba16float, write>;
 
 @group(0) @binding(4)
-var transmittance_lut: texture_2d<f32>;
+var t_transmittance: texture_2d<f32>;
+
+$$ if CELESTIAL_STARBOX_EQUIRECT
+@group(0) @binding(5) var t_starbox_2d: texture_2d<f32>;
+$$ endif
+
+$$ if CELESTIAL_STARBOX_CUBE
+@group(0) @binding(5) var t_starbox_cube: texture_cube<f32>;
+$$ endif
+
+{$ include "entry/utility/atmosphere/celestial_bodies" $}
 
 /// Compute cubemap face direction from texel coordinates.
 fn get_cube_direction(face: u32, uv_: vec2<f32>) -> vec3<f32> {
@@ -54,47 +64,6 @@ fn get_cube_direction(face: u32, uv_: vec2<f32>) -> vec3<f32> {
         case 5u: { return vec3<f32>(-uv.x, -uv.y, -1.0); } // -Z
         default: { return vec3<f32>(0.0); }
     }
-}
-
-/// Approximate sun disk rendering.
-fn sun_disk(dir: vec3<f32>, sun_dir: vec3<f32>, sun_size_deg: f32) -> vec3<f32> {
-    let cos_angle = dot(dir, sun_dir);
-    // The input is the diameter, so we divide by 2 to get the radius
-    let sun_angular_radius = (sun_size_deg * 0.5) * PI / 180.0;
-    let sun_cos = cos(sun_angular_radius);
-
-    // fix smoothstep edge case: shrink the smoothing range inward to avoid exceeding 1.0
-    let smoothing = 0.00002; 
-    let t = smoothstep(sun_cos - smoothing, sun_cos + smoothing, cos_angle);
-    
-    if t > 0.0 {
-        // Calculate the transmittance of sunlight through the atmosphere
-        // Assume we are observing from 1.0 meters above the ground
-        let altitude = 1.0; 
-        let d_planet = ray_sphere_intersect(
-            vec3<f32>(0.0, params.planet_radius + altitude, 0.0),
-            sun_dir,
-            params.planet_radius
-        );
-        // If the sunlight is blocked by the Earth, do not display the sun (transmittance is 0)
-        if d_planet.y > 0.0 {
-            return vec3<f32>(0.0);
-        }
-        let sun_cos_zenith = sun_dir.y;
-        
-        let trans_uv = transmittance_lut_uv(
-            altitude,
-            sun_cos_zenith,
-            params.planet_radius,
-            params.atmosphere_radius,
-        );
-        let transmittance = textureSampleLevel(transmittance_lut, lut_sampler, trans_uv, 0.0).rgb;
-
-        // The sun's apparent brightness is modulated by the atmospheric transmittance, which accounts for the dimming effect of the atmosphere, especially near the horizon.
-        return transmittance * (t * params.sun_intensity);
-    }
-    
-    return vec3<f32>(0.0);
 }
 
 @compute
@@ -111,13 +80,12 @@ fn main(@builtin(global_invocation_id) id: vec3<u32>) {
 
     // Sample sky-view LUT
     let sky_uv = direction_to_sky_view_uv(dir);
-    var color = textureSampleLevel(sky_view_lut, lut_sampler, sky_uv, 0.0).rgb;
-
-    // Add sun disk contribution
-    color += sun_disk(dir, params.sun_direction, params.sun_disk_size);
+    var color = textureSampleLevel(t_sky_view, s_skybox, sky_uv, 0.0).rgb;
+    let view_transmittance = sample_direction_transmittance(dir);
+    color += compute_celestial_lighting(dir, view_transmittance, 0.0);
 
     // Apply exposure
-    color *= params.exposure;
+    color *= u_bake_params.exposure;
 
     let safe_color = clamp(color, vec3<f32>(0.0), vec3<f32>(65000.0));
     textureStore(dest, vec2<u32>(id.xy), face, vec4<f32>(safe_color, 1.0));
