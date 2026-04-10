@@ -597,11 +597,11 @@ impl BackgroundSettings {
                 p.rotation = *rotation;
                 p.intensity = *intensity;
             }
-            BackgroundMode::Procedural(params) => {
+            BackgroundMode::Procedural(_) => {
                 p.color_top = Vec4::ZERO;
                 p.color_bottom = Vec4::ZERO;
                 p.rotation = 0.0;
-                p.intensity = params.exposure;
+                p.intensity = 1.0;
             }
         }
     }

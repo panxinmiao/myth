@@ -88,9 +88,15 @@ impl AppHandler for ProceduralSkyDemo {
         }
 
         // Keep the directional light pointing opposite the sun direction
-        if let Some(node) = scene.get_node_mut(self.light_node_id) {
+        if let Some((light, node)) = scene.get_light_bundle(self.light_node_id) {
             node.transform.position = sun_dir * 10.0;
             node.transform.look_at(Vec3::ZERO, Vec3::Y);
+
+            if elevation > 0.0 {
+                light.intensity = 3.0 * elevation;
+            } else {
+                light.intensity = 0.0;
+            }
         }
 
         // Orbit camera

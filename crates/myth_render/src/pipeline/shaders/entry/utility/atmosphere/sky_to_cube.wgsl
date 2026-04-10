@@ -114,7 +114,17 @@ fn sun_disk(dir: vec3<f32>, sun_dir: vec3<f32>, sun_size_deg: f32) -> vec3<f32> 
     if t > 0.0 {
         // 计算阳光穿过大气的透射率 (Transmittance)
         // 假设我们在地表上方 1.0 米处观察
+        let planet_radius = 6360000.0;
         let altitude = 1.0; 
+        let d_planet = ray_sphere_intersect(
+            vec3<f32>(0.0, planet_radius + altitude, 0.0),
+            sun_dir,
+            planet_radius
+        );
+        // 如果阳光被地球遮挡了，那么就不显示太阳 (透射率为 0)
+        if d_planet.y > 0.0 {
+            return vec3<f32>(0.0);
+        }
         let sun_cos_zenith = sun_dir.y;
         
         let trans_uv = transmittance_lut_uv(altitude, sun_cos_zenith);
