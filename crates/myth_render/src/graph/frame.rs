@@ -17,6 +17,7 @@ use glam::Mat4;
 use rustc_hash::FxHashMap;
 
 use crate::core::{BindGroupContext, RenderView, ResourceManager};
+use crate::graph::core::TextureNodeId;
 use crate::pipeline::RenderPipelineId;
 use crate::renderer::FrameTime;
 use myth_assets::{AssetServer, GeometryHandle, MaterialHandle};
@@ -175,11 +176,14 @@ pub struct ShadowLightInstance {
 /// Populated by [`SkyboxPass::prepare()`] and consumed by
 /// [`SimpleForwardPass::run()`] to draw the skybox between
 /// opaque and transparent objects within a single render pass.
+#[derive(Clone, Copy)]
 pub struct PreparedSkyboxDraw<'a> {
     /// Pre-resolved skybox render pipeline reference.
     pub pipeline: &'a wgpu::RenderPipeline,
     /// The skybox bind group (uniforms + optional texture/sampler).
     pub bind_group: &'a wgpu::BindGroup,
+    /// Optional graph dependencies for textures sampled by the skybox.
+    pub sampled_textures: [Option<TextureNodeId>; 2],
 }
 
 impl<'a> PreparedSkyboxDraw<'a> {

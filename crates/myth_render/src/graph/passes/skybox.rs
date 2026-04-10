@@ -28,6 +28,7 @@ use crate::graph::composer::GraphBuilderContext;
 use crate::graph::core::{
     ExecuteContext, ExtractContext, PassNode, RenderTargetOps, TextureNodeId,
 };
+use crate::graph::passes::atmosphere::ProceduralSkyboxResources;
 use crate::pipeline::{
     ColorTargetKey, DepthStencilKey, FullscreenPipelineKey, MultisampleKey, RenderPipelineId,
     ShaderCompilationOptions, ShaderSource,
@@ -71,6 +72,7 @@ enum SkyboxVariant {
     Cube,
     Equirectangular,
     Planar,
+    Procedural,
 }
 
 impl SkyboxVariant {
@@ -83,7 +85,7 @@ impl SkyboxVariant {
                 BackgroundMapping::Equirectangular => Some(Self::Equirectangular),
                 BackgroundMapping::Planar => Some(Self::Planar),
             },
-            BackgroundMode::Procedural(_) => Some(Self::Cube),
+            BackgroundMode::Procedural(_) => Some(Self::Procedural),
         }
     }
 
@@ -93,6 +95,7 @@ impl SkyboxVariant {
             Self::Cube => "SKYBOX_CUBE",
             Self::Equirectangular => "SKYBOX_EQUIRECT",
             Self::Planar => "SKYBOX_PLANAR",
+            Self::Procedural => "SKYBOX_PROCEDURAL",
         }
     }
 
@@ -157,6 +160,50 @@ fn create_texture_layout(
     })
 }
 
+fn create_procedural_layout(device: &wgpu::Device) -> wgpu::BindGroupLayout {
+    device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
+        label: Some("Skybox Layout (Procedural)"),
+        entries: &[
+            wgpu::BindGroupLayoutEntry {
+                binding: 0,
+                visibility: wgpu::ShaderStages::FRAGMENT,
+                ty: wgpu::BindingType::Buffer {
+                    ty: wgpu::BufferBindingType::Uniform,
+                    has_dynamic_offset: false,
+                    min_binding_size: None,
+                },
+                count: None,
+            },
+            wgpu::BindGroupLayoutEntry {
+                binding: 1,
+                visibility: wgpu::ShaderStages::FRAGMENT,
+                ty: wgpu::BindingType::Texture {
+                    sample_type: wgpu::TextureSampleType::Float { filterable: true },
+                    view_dimension: wgpu::TextureViewDimension::D2,
+                    multisampled: false,
+                },
+                count: None,
+            },
+            wgpu::BindGroupLayoutEntry {
+                binding: 2,
+                visibility: wgpu::ShaderStages::FRAGMENT,
+                ty: wgpu::BindingType::Sampler(wgpu::SamplerBindingType::Filtering),
+                count: None,
+            },
+            wgpu::BindGroupLayoutEntry {
+                binding: 3,
+                visibility: wgpu::ShaderStages::FRAGMENT,
+                ty: wgpu::BindingType::Texture {
+                    sample_type: wgpu::TextureSampleType::Float { filterable: true },
+                    view_dimension: wgpu::TextureViewDimension::D2,
+                    multisampled: false,
+                },
+                count: None,
+            },
+        ],
+    })
+}
+
 // ─── RDG Skybox Pass ──────────────────────────────────────────────────────────
 
 /// Skybox / Background rendering feature.
@@ -172,6 +219,9 @@ pub struct SkyboxFeature {
     layout_gradient: Option<Tracked<wgpu::BindGroupLayout>>,
     layout_cube: Option<Tracked<wgpu::BindGroupLayout>>,
     layout_2d: Option<Tracked<wgpu::BindGroupLayout>>,
+    layout_procedural: Option<Tracked<wgpu::BindGroupLayout>>,
+
+    procedural_sampler: Option<Tracked<wgpu::Sampler>>,
 
     // ─── Pipeline Cache ────────────────────────────────────────────
     local_cache: FxHashMap<SkyboxPipelineKey, RenderPipelineId>,
@@ -196,6 +246,8 @@ impl SkyboxFeature {
             layout_gradient: None,
             layout_cube: None,
             layout_2d: None,
+            layout_procedural: None,
+            procedural_sampler: None,
             local_cache: FxHashMap::default(),
             current_bind_group: None,
             current_pipeline: None,
@@ -218,6 +270,21 @@ impl SkyboxFeature {
             wgpu::TextureViewDimension::D2,
             "Skybox Layout (2D)",
         )));
+        self.layout_procedural = Some(Tracked::new(create_procedural_layout(device)));
+        self.procedural_sampler = Some(Tracked::new(device.create_sampler(&wgpu::SamplerDescriptor {
+            label: Some("Skybox Procedural Sampler"),
+            address_mode_u: wgpu::AddressMode::ClampToEdge,
+            address_mode_v: wgpu::AddressMode::ClampToEdge,
+            address_mode_w: wgpu::AddressMode::ClampToEdge,
+            mag_filter: wgpu::FilterMode::Linear,
+            min_filter: wgpu::FilterMode::Linear,
+            mipmap_filter: wgpu::MipmapFilterMode::Linear,
+            lod_min_clamp: 0.0,
+            lod_max_clamp: 32.0,
+            compare: None,
+            anisotropy_clamp: 1,
+            border_color: None,
+        })));
     }
 
     fn layout_for_variant(&self, variant: SkyboxVariant) -> &Tracked<wgpu::BindGroupLayout> {
@@ -227,6 +294,7 @@ impl SkyboxFeature {
             SkyboxVariant::Equirectangular | SkyboxVariant::Planar => {
                 self.layout_2d.as_ref().unwrap()
             }
+            SkyboxVariant::Procedural => self.layout_procedural.as_ref().unwrap(),
         }
     }
 
@@ -339,13 +407,14 @@ impl SkyboxFeature {
     ///
     /// Called **before** the render graph is built. Caches bind groups and
     /// pipelines so the ephemeral [`SkyboxPassNode`] only carries lightweight IDs.
-    pub fn extract_and_prepare(
+    pub(crate) fn extract_and_prepare(
         &mut self,
         ctx: &mut ExtractContext,
         background_mode: &BackgroundMode,
         bg_uniforms: &CpuBuffer<SkyboxParamsUniforms>,
         global_state_key: (u32, u32),
         color_format: wgpu::TextureFormat,
+        procedural_resources: Option<ProceduralSkyboxResources<'_>>,
     ) {
         self.ensure_layouts(ctx.device);
 
@@ -388,11 +457,7 @@ impl SkyboxFeature {
             BackgroundMode::Texture {
                 source, mapping, ..
             } => Self::resolve_texture_view(ctx.resource_manager, source, *mapping),
-            BackgroundMode::Procedural(_) => {
-                ctx.resource_manager
-                    .gpu_environment(ctx.extracted_scene.scene_id)
-                    .map(|gpu_env| &*gpu_env.base_cube_view)
-            }
+            BackgroundMode::Procedural(_) => procedural_resources.map(|resources| &**resources.sky_view_view),
             _ => None,
         };
 
@@ -405,7 +470,52 @@ impl SkyboxFeature {
             .get_sampler_by_index(sampler_id)
             .expect("Skybox sampler index must be valid");
 
-        let bind_group = if variant.needs_texture() {
+        let bind_group = if variant == SkyboxVariant::Procedural {
+            let Some(resources) = procedural_resources else {
+                self.current_bind_group = None;
+                self.current_pipeline = None;
+                return;
+            };
+            let sampler = self
+                .procedural_sampler
+                .as_ref()
+                .expect("procedural skybox sampler must exist");
+
+            let key = BindGroupKey::new(layout_id)
+                .with_resource(resources.bake_params_buffer.id())
+                .with_resource(resources.sky_view_view.id())
+                .with_resource(resources.transmittance_view.id())
+                .with_resource(sampler.id());
+
+            if let Some(cached) = ctx.global_bind_group_cache.get(&key) {
+                cached.clone()
+            } else {
+                let bg = ctx.device.create_bind_group(&wgpu::BindGroupDescriptor {
+                    label: Some("Skybox BG (Procedural)"),
+                    layout,
+                    entries: &[
+                        wgpu::BindGroupEntry {
+                            binding: 0,
+                            resource: resources.bake_params_buffer.as_entire_binding(),
+                        },
+                        wgpu::BindGroupEntry {
+                            binding: 1,
+                            resource: wgpu::BindingResource::TextureView(resources.sky_view_view),
+                        },
+                        wgpu::BindGroupEntry {
+                            binding: 2,
+                            resource: wgpu::BindingResource::Sampler(sampler),
+                        },
+                        wgpu::BindGroupEntry {
+                            binding: 3,
+                            resource: wgpu::BindingResource::TextureView(resources.transmittance_view),
+                        },
+                    ],
+                });
+                ctx.global_bind_group_cache.insert(key, bg.clone());
+                bg
+            }
+        } else if variant.needs_texture() {
             let Some(tex_view) = texture_view else {
                 self.current_bind_group = None;
                 self.current_pipeline = None;
@@ -495,6 +605,7 @@ impl SkyboxFeature {
         ctx: &mut GraphBuilderContext<'a, '_>,
         scene_color: TextureNodeId,
         scene_depth: TextureNodeId,
+        dependency_textures: [Option<TextureNodeId>; 2],
     ) -> TextureNodeId {
         let pipeline = self
             .current_pipeline
@@ -503,6 +614,9 @@ impl SkyboxFeature {
         ctx.graph.add_pass("Skybox_Pass", |builder| {
             let out_color = builder.mutate_texture(scene_color, "Scene_Color_Skybox");
             builder.read_texture(scene_depth);
+            for dependency in dependency_textures.into_iter().flatten() {
+                builder.read_texture(dependency);
+            }
             let node = SkyboxPassNode {
                 out_color,
                 scene_depth,

@@ -87,6 +87,11 @@ impl SimpleForwardFeature {
             if let Some(pmrem) = pmrem_tex {
                 builder.read_texture(pmrem);
             }
+            if let Some(skybox) = prepared_skybox {
+                for dependency in skybox.sampled_textures.into_iter().flatten() {
+                    builder.read_texture(dependency);
+                }
+            }
 
             let msaa_view = if fc.msaa_samples > 1 {
                 let desc = TextureDesc::new(

@@ -266,6 +266,7 @@ impl EquirectToCubeFeature {
         }
 
         let options = ShaderCompilationOptions::default();
+        let compilation_options = wgpu::PipelineCompilationOptions::default();
 
         let (equirect_module, equirect_hash) = ctx.shader_manager.get_or_compile(
             ctx.device,
@@ -283,9 +284,9 @@ impl EquirectToCubeFeature {
             ctx.device,
             equirect_module,
             &equirect_layout,
-            &ComputePipelineKey {
-                shader_hash: equirect_hash,
-            },
+            &ComputePipelineKey::new(equirect_hash)
+                .with_compilation_options(&compilation_options),
+            &compilation_options,
             "Environment EquirectToCube Pipeline",
         ));
 
@@ -305,9 +306,9 @@ impl EquirectToCubeFeature {
             ctx.device,
             cubemap_module,
             &cubemap_layout,
-            &ComputePipelineKey {
-                shader_hash: cubemap_hash,
-            },
+            &ComputePipelineKey::new(cubemap_hash)
+                .with_compilation_options(&compilation_options),
+            &compilation_options,
             "Environment CubeToCube Pipeline",
         ));
     }

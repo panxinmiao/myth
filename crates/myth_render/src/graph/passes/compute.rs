@@ -54,6 +54,8 @@ impl BrdfLutFeature {
             return;
         }
 
+        let compilation_options = wgpu::PipelineCompilationOptions::default();
+
         let (module, shader_hash) = ctx.shader_manager.get_or_compile(
             ctx.device,
             ShaderSource::File("entry/utility/brdf_lut"),
@@ -72,7 +74,8 @@ impl BrdfLutFeature {
             ctx.device,
             module,
             &layout,
-            &ComputePipelineKey { shader_hash },
+            &ComputePipelineKey::new(shader_hash).with_compilation_options(&compilation_options),
+            &compilation_options,
             "BRDF LUT Pipeline",
         ));
     }

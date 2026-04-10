@@ -250,6 +250,27 @@ impl FullscreenPipelineKey {
 pub struct ComputePipelineKey {
     /// xxh3-128 hash of the final WGSL source code.
     pub shader_hash: u128,
+    /// Hash of pipeline compilation options such as overridable constants.
+    pub compilation_hash: u64,
+}
+
+impl ComputePipelineKey {
+    #[must_use]
+    pub fn new(shader_hash: u128) -> Self {
+        Self {
+            shader_hash,
+            compilation_hash: 0,
+        }
+    }
+
+    #[must_use]
+    pub fn with_compilation_options(
+        mut self,
+        options: &wgpu::PipelineCompilationOptions<'_>,
+    ) -> Self {
+        self.compilation_hash = hash_pipeline_compilation_options(options);
+        self
+    }
 }
 
 // ─── Simple Geometry Pipeline Key ─────────────────────────────────────────────
@@ -285,5 +306,19 @@ pub struct SimpleGeometryPipelineKey {
 pub fn fx_hash_key<K: Hash>(key: &K) -> u64 {
     let mut hasher = rustc_hash::FxHasher::default();
     key.hash(&mut hasher);
+    hasher.finish()
+}
+
+/// Compute a stable hash for `wgpu` pipeline compilation options.
+#[inline]
+pub fn hash_pipeline_compilation_options(
+    options: &wgpu::PipelineCompilationOptions<'_>,
+) -> u64 {
+    let mut hasher = rustc_hash::FxHasher::default();
+    options.zero_initialize_workgroup_memory.hash(&mut hasher);
+    for (name, value) in options.constants {
+        name.hash(&mut hasher);
+        value.to_bits().hash(&mut hasher);
+    }
     hasher.finish()
 }

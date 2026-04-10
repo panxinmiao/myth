@@ -17,11 +17,20 @@ use crate::pipeline::{
 };
 
 const SCENE_CACHE_TTL: u64 = 120;
+const STATIC_PMREM_SAMPLE_COUNT: u32 = 4096;
+const DYNAMIC_PMREM_SAMPLE_COUNT: u32 = 64;
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+enum IblPipelineVariant {
+    Static,
+    Dynamic,
+}
 
 struct IblSceneState {
     base_cube_view_id: u64,
     pmrem_view_ids: Vec<u64>,
     pmrem_size: u32,
+    pipeline_variant: IblPipelineVariant,
     _params_buffers: Vec<Tracked<wgpu::Buffer>>,
     source_bind_groups: Vec<wgpu::BindGroup>,
     dest_bind_groups: Vec<wgpu::BindGroup>,
@@ -29,7 +38,7 @@ struct IblSceneState {
 }
 
 pub struct IblComputeFeature {
-    pipeline_id: Option<ComputePipelineId>,
+    pipeline_ids: FxHashMap<IblPipelineVariant, ComputePipelineId>,
     source_layout: wgpu::BindGroupLayout,
     dest_layout: wgpu::BindGroupLayout,
     sampler: wgpu::Sampler,
@@ -101,7 +110,7 @@ impl IblComputeFeature {
         });
 
         Self {
-            pipeline_id: None,
+            pipeline_ids: FxHashMap::default(),
             source_layout,
             dest_layout,
             sampler,
@@ -110,8 +119,18 @@ impl IblComputeFeature {
     }
 
     pub fn extract_and_prepare(&mut self, ctx: &mut ExtractContext, scene_id: u32) {
-        self.ensure_pipeline(ctx);
         self.prune_scene_states(ctx.resource_manager.frame_index());
+
+        let Some(pipeline_variant) = ctx
+            .resource_manager
+            .gpu_environment(scene_id)
+            .map(|gpu_env| Self::pipeline_variant(gpu_env.source_type))
+        else {
+            self.scene_states.remove(&scene_id);
+            return;
+        };
+
+        self.ensure_pipeline(ctx, pipeline_variant);
 
         let Some(gpu_env) = ctx.resource_manager.gpu_environment(scene_id) else {
             self.scene_states.remove(&scene_id);
@@ -128,6 +147,7 @@ impl IblComputeFeature {
             state.base_cube_view_id != gpu_env.base_cube_view.id()
                 || state.pmrem_size != gpu_env.pmrem_texture.width()
                 || state.pmrem_view_ids != pmrem_view_ids
+                || state.pipeline_variant != pipeline_variant
         });
 
         if needs_rebuild {
@@ -191,6 +211,7 @@ impl IblComputeFeature {
                     base_cube_view_id: gpu_env.base_cube_view.id(),
                     pmrem_view_ids,
                     pmrem_size,
+                    pipeline_variant,
                     _params_buffers: params_buffers,
                     source_bind_groups,
                     dest_bind_groups,
@@ -202,8 +223,23 @@ impl IblComputeFeature {
         }
     }
 
-    fn ensure_pipeline(&mut self, ctx: &mut ExtractContext) {
-        if self.pipeline_id.is_some() {
+    fn pipeline_variant(source_type: crate::core::gpu::CubeSourceType) -> IblPipelineVariant {
+        match source_type {
+            crate::core::gpu::CubeSourceType::Procedural => IblPipelineVariant::Dynamic,
+            crate::core::gpu::CubeSourceType::Equirectangular
+            | crate::core::gpu::CubeSourceType::Cubemap => IblPipelineVariant::Static,
+        }
+    }
+
+    fn sample_count(variant: IblPipelineVariant) -> u32 {
+        match variant {
+            IblPipelineVariant::Static => STATIC_PMREM_SAMPLE_COUNT,
+            IblPipelineVariant::Dynamic => DYNAMIC_PMREM_SAMPLE_COUNT,
+        }
+    }
+
+    fn ensure_pipeline(&mut self, ctx: &mut ExtractContext, variant: IblPipelineVariant) {
+        if self.pipeline_ids.contains_key(&variant) {
             return;
         }
 
@@ -221,13 +257,26 @@ impl IblComputeFeature {
                 immediate_size: 0,
             });
 
-        self.pipeline_id = Some(ctx.pipeline_cache.get_or_create_compute(
+        let sample_count = Self::sample_count(variant);
+        let constants = [("SAMPLE_COUNT", f64::from(sample_count))];
+        let compilation_options = wgpu::PipelineCompilationOptions {
+            constants: &constants,
+            ..Default::default()
+        };
+
+        let pipeline_id = ctx.pipeline_cache.get_or_create_compute(
             ctx.device,
             module,
             &layout,
-            &ComputePipelineKey { shader_hash },
-            "IBL Compute Pipeline",
-        ));
+            &ComputePipelineKey::new(shader_hash).with_compilation_options(&compilation_options),
+            &compilation_options,
+            match variant {
+                IblPipelineVariant::Static => "IBL Compute Pipeline (Static)",
+                IblPipelineVariant::Dynamic => "IBL Compute Pipeline (Dynamic)",
+            },
+        );
+
+        self.pipeline_ids.insert(variant, pipeline_id);
     }
 
     fn prune_scene_states(&mut self, current_frame: u64) {
@@ -243,13 +292,14 @@ impl IblComputeFeature {
         base_cube: TextureNodeId,
         pmrem: TextureNodeId,
     ) {
-        let pipeline = self
-            .pipeline_id
-            .map(|id| ctx.pipeline_cache.get_compute_pipeline(id));
         let state = self
             .scene_states
             .get(&scene_id)
             .expect("scene IBL state must be prepared before graph build");
+        let pipeline = self
+            .pipeline_ids
+            .get(&state.pipeline_variant)
+            .map(|&id| ctx.pipeline_cache.get_compute_pipeline(id));
 
         ctx.graph.add_pass("IBL_Compute", |builder| {
             builder.read_texture(base_cube);

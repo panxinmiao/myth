@@ -16,8 +16,8 @@ struct BakeParams {
     sun_intensity: f32,
     sun_disk_size: f32,
     exposure: f32,
-    _pad0: f32,
-    _pad1: f32,
+    planet_radius: f32,
+    atmosphere_radius: f32,
 };
 
 @group(0) @binding(0)
@@ -82,18 +82,16 @@ fn ray_sphere_intersect(o: vec3<f32>, d: vec3<f32>, radius: f32) -> vec2<f32> {
     return vec2<f32>((-b - sq) / (2.0 * a), (-b + sq) / (2.0 * a));
 }
 
-// 【新增】透射率 UV 映射（Hillaire 模型标准）
+// Transmittance LUT UV mapping based on Hillaire's atmospheric scattering model.
 fn transmittance_lut_uv(altitude: f32, cos_zenith: f32) -> vec2<f32> {
-    let planet_radius = 6360000.0;
-    let atmosphere_radius = 6460000.0;
-    let H = sqrt(max(0.0, atmosphere_radius * atmosphere_radius - planet_radius * planet_radius));
-    let rho = sqrt(max(0.0, (planet_radius + altitude) * (planet_radius + altitude) - planet_radius * planet_radius));
+    let H = sqrt(max(0.0, params.atmosphere_radius * params.atmosphere_radius - params.planet_radius * params.planet_radius));
+    let rho = sqrt(max(0.0, (params.planet_radius + altitude) * (params.planet_radius + altitude) - params.planet_radius * params.planet_radius));
     let d = ray_sphere_intersect(
-        vec3<f32>(0.0, planet_radius + altitude, 0.0),
+        vec3<f32>(0.0, params.planet_radius + altitude, 0.0),
         vec3<f32>(0.0, cos_zenith, sqrt(max(0.0, 1.0 - cos_zenith * cos_zenith))),
-        atmosphere_radius
+        params.atmosphere_radius
     ).y;
-    let d_min = atmosphere_radius - planet_radius - altitude;
+    let d_min = params.atmosphere_radius - params.planet_radius - altitude;
     let d_max = rho + H;
     let x_mu = (d - d_min) / (d_max - d_min);
     let x_r = rho / H;
@@ -103,25 +101,24 @@ fn transmittance_lut_uv(altitude: f32, cos_zenith: f32) -> vec2<f32> {
 /// Approximate sun disk rendering.
 fn sun_disk(dir: vec3<f32>, sun_dir: vec3<f32>, sun_size_deg: f32) -> vec3<f32> {
     let cos_angle = dot(dir, sun_dir);
-    // 注意：输入是直径，必须除以 2 变成半径
+    // The input is the diameter, so we divide by 2 to get the radius
     let sun_angular_radius = (sun_size_deg * 0.5) * PI / 180.0;
     let sun_cos = cos(sun_angular_radius);
-    
-    // 修复 smoothstep 越界问题：平滑范围向内收缩，避免超过 1.0
+
+    // fix smoothstep edge case: shrink the smoothing range inward to avoid exceeding 1.0
     let smoothing = 0.00002; 
     let t = smoothstep(sun_cos - smoothing, sun_cos + smoothing, cos_angle);
     
     if t > 0.0 {
-        // 计算阳光穿过大气的透射率 (Transmittance)
-        // 假设我们在地表上方 1.0 米处观察
-        let planet_radius = 6360000.0;
+        // Calculate the transmittance of sunlight through the atmosphere
+        // Assume we are observing from 1.0 meters above the ground
         let altitude = 1.0; 
         let d_planet = ray_sphere_intersect(
-            vec3<f32>(0.0, planet_radius + altitude, 0.0),
+            vec3<f32>(0.0, params.planet_radius + altitude, 0.0),
             sun_dir,
-            planet_radius
+            params.planet_radius
         );
-        // 如果阳光被地球遮挡了，那么就不显示太阳 (透射率为 0)
+        // If the sunlight is blocked by the Earth, do not display the sun (transmittance is 0)
         if d_planet.y > 0.0 {
             return vec3<f32>(0.0);
         }
@@ -129,8 +126,8 @@ fn sun_disk(dir: vec3<f32>, sun_dir: vec3<f32>, sun_size_deg: f32) -> vec3<f32> 
         
         let trans_uv = transmittance_lut_uv(altitude, sun_cos_zenith);
         let transmittance = textureSampleLevel(transmittance_lut, lut_sampler, trans_uv, 0.0).rgb;
-        
-        // 只有未被地球遮挡时才显示太阳 (利用 transmittance 自然归零)
+
+        // The sun's apparent brightness is modulated by the atmospheric transmittance, which accounts for the dimming effect of the atmosphere, especially near the horizon.
         return transmittance * (t * params.sun_intensity);
     }
     

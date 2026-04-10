@@ -436,6 +436,7 @@ impl<'a> FrameComposer<'a> {
 
         let mut env_dependency_base = None;
         let mut env_dependency_pmrem = None;
+        let mut procedural_skybox_dependencies = [None, None];
         let mut scene_environment_updated = false;
 
         // ── 2c. Wire Compute + Shadow Passes ───────────────────────────
@@ -446,44 +447,49 @@ impl<'a> FrameComposer<'a> {
 
             if let (Some(env), Some(gpu_env)) =
                 (scene_environment_resources.as_ref(), scene_gpu_environment)
-                && env.needs_compute
-                && env.source_ready
             {
-                let base_cube_ready = match env.source_type {
+                match env.source_type {
                     CubeSourceType::Procedural => {
                         if let myth_scene::background::BackgroundMode::Procedural(params) =
                             &self.ctx.scene.background.mode
                         {
-                            self.ctx.atmosphere_pass.add_to_graph(
+                            let bake_environment = env.needs_compute && env.source_ready;
+                            let atmosphere_output = self.ctx.atmosphere_pass.add_to_graph(
                                 c,
                                 scene_id,
                                 params,
                                 env.base_cube,
                                 &gpu_env.base_cube_storage_view,
+                                bake_environment,
                             );
-                            true
-                        } else {
-                            false
+                            procedural_skybox_dependencies = atmosphere_output.skybox_dependencies();
+
+                            if bake_environment {
+                                self.ctx
+                                    .ibl_pass
+                                    .add_to_graph(c, scene_id, env.base_cube, env.pmrem);
+                                env_dependency_base = Some(env.base_cube);
+                                env_dependency_pmrem = Some(env.pmrem);
+                                scene_environment_updated = true;
+                            }
                         }
                     }
                     CubeSourceType::Equirectangular | CubeSourceType::Cubemap => {
-                        self.ctx.equirect_to_cube_pass.add_to_graph(
-                            c,
-                            scene_id,
-                            env.source_type,
-                            env.base_cube,
-                        );
-                        true
+                        if env.needs_compute && env.source_ready {
+                            self.ctx.equirect_to_cube_pass.add_to_graph(
+                                c,
+                                scene_id,
+                                env.source_type,
+                                env.base_cube,
+                            );
+                            self.ctx
+                                .ibl_pass
+                                .add_to_graph(c, scene_id, env.base_cube, env.pmrem);
+                            env_dependency_base = Some(env.base_cube);
+                            env_dependency_pmrem = Some(env.pmrem);
+                            scene_environment_updated = true;
+                        }
                     }
-                };
-
-                if base_cube_ready {
-                    self.ctx
-                        .ibl_pass
-                        .add_to_graph(c, scene_id, env.base_cube, env.pmrem);
-                    env_dependency_base = Some(env.base_cube);
-                    env_dependency_pmrem = Some(env.pmrem);
-                    scene_environment_updated = true;
                 }
             }
         });
@@ -612,7 +618,12 @@ impl<'a> FrameComposer<'a> {
                     active_color =
                         self.ctx
                             .skybox_pass
-                            .add_to_graph(c, active_color, opaque_out.active_depth);
+                            .add_to_graph(
+                                c,
+                                active_color,
+                                opaque_out.active_depth,
+                                procedural_skybox_dependencies,
+                            );
                 }
 
                 // ── 6. TAA Resolve ────────────────────────────────────────────
@@ -767,6 +778,7 @@ impl<'a> FrameComposer<'a> {
                     Some(PreparedSkyboxDraw {
                         pipeline: self.ctx.pipeline_cache.get_render_pipeline(pipeline_id),
                         bind_group: bg,
+                        sampled_textures: procedural_skybox_dependencies,
                     })
                 } else {
                     None

@@ -431,11 +431,14 @@ impl Renderer {
             state.shadow_pass.extract_and_prepare(&mut extract_ctx);
 
             // Procedural atmosphere (LUT + cubemap + PMREM compute)
-            if let BackgroundMode::Procedural(_) = scene.background.mode {
+            let procedural_skybox_resources = if let BackgroundMode::Procedural(params) = &scene.background.mode {
                 state
                     .atmosphere_pass
-                    .extract_and_prepare(&mut extract_ctx, scene.id());
-            }
+                    .extract_and_prepare(&mut extract_ctx, scene.id(), params);
+                state.atmosphere_pass.procedural_skybox_resources(scene.id())
+            } else {
+                None
+            };
 
             // Skybox (both pipelines)
             if needs_skybox {
@@ -450,6 +453,7 @@ impl Renderer {
                     &scene.background.uniforms,
                     global_state_key,
                     color_format,
+                    procedural_skybox_resources,
                 );
             }
 
@@ -982,7 +986,7 @@ impl Renderer {
 mod tests {
     use super::*;
 
-    use glam::{Affine3A, Vec3};
+    use glam::{Affine3A, Quat, Vec3};
     use myth_assets::AssetServer;
     use myth_scene::background::BackgroundMode;
     use myth_scene::camera::Camera;
@@ -1139,5 +1143,74 @@ mod tests {
         );
         assert_eq!(256, resized_env.base_cube_texture.width());
         assert_eq!(128, resized_env.pmrem_texture.width());
+    }
+
+    #[test]
+    fn small_sun_rotation_does_not_rebake_procedural_environment() {
+        let mut renderer = init_headless_renderer();
+        let assets = AssetServer::new();
+        let mut scene = Scene::new();
+        scene.background.set_mode(BackgroundMode::procedural());
+        let camera = make_camera();
+
+        render_frame(&mut renderer, &mut scene, &camera, &assets, 0);
+
+        let scene_id = scene.id();
+        let initial_source_version = renderer
+            .context
+            .as_ref()
+            .expect("renderer state missing")
+            .resource_manager
+            .gpu_environment(scene_id)
+            .expect("scene gpu environment missing after first render")
+            .source_version;
+
+        let initial_sun_direction = if let BackgroundMode::Procedural(params) = &scene.background.mode {
+            params.sun_direction
+        } else {
+            panic!("expected procedural background");
+        };
+
+        if let BackgroundMode::Procedural(params) = &mut scene.background.mode {
+            let slight_rotation = Quat::from_rotation_x(0.1_f32.to_radians());
+            params.set_sun_direction((slight_rotation * initial_sun_direction).normalize());
+        }
+
+        render_frame(&mut renderer, &mut scene, &camera, &assets, 1);
+
+        let after_small_rotation = renderer
+            .context
+            .as_ref()
+            .expect("renderer state missing")
+            .resource_manager
+            .gpu_environment(scene_id)
+            .expect("scene gpu environment missing after small sun rotation")
+            .source_version;
+
+        assert_eq!(
+            initial_source_version, after_small_rotation,
+            "sub-threshold sun motion should not trigger a procedural environment rebake"
+        );
+
+        if let BackgroundMode::Procedural(params) = &mut scene.background.mode {
+            let larger_rotation = Quat::from_rotation_x(1.0_f32.to_radians());
+            params.set_sun_direction((larger_rotation * initial_sun_direction).normalize());
+        }
+
+        render_frame(&mut renderer, &mut scene, &camera, &assets, 2);
+
+        let after_large_rotation = renderer
+            .context
+            .as_ref()
+            .expect("renderer state missing")
+            .resource_manager
+            .gpu_environment(scene_id)
+            .expect("scene gpu environment missing after large sun rotation")
+            .source_version;
+
+        assert_ne!(
+            after_small_rotation, after_large_rotation,
+            "sun motion beyond the bake threshold should trigger a procedural environment rebake"
+        );
     }
 }

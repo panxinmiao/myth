@@ -607,6 +607,7 @@ impl PipelineCache {
         shader_module: &wgpu::ShaderModule,
         pipeline_layout: &wgpu::PipelineLayout,
         canonical_key: &ComputePipelineKey,
+        compilation_options: &wgpu::PipelineCompilationOptions<'_>,
         label: &str,
     ) -> ComputePipelineId {
         let hash = fx_hash_key(canonical_key);
@@ -619,7 +620,7 @@ impl PipelineCache {
             layout: Some(pipeline_layout),
             module: shader_module,
             entry_point: Some("main"),
-            compilation_options: wgpu::PipelineCompilationOptions::default(),
+            compilation_options: compilation_options.clone(),
             cache: None,
         });
 

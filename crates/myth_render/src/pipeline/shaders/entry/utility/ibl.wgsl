@@ -16,7 +16,7 @@ var<uniform> params: Params;
 var destTex: texture_storage_2d_array<rgba16float, write>;
 
 const PI: f32 = 3.141592653589793;
-const SAMPLE_COUNT: u32 = 4096;
+override SAMPLE_COUNT: u32 = 4096u;
 
 //compute the direction vector for a given cube map face and texel coordinate
 fn getCubeDirection(face: u32, uv_: vec2<f32>) -> vec3<f32> {

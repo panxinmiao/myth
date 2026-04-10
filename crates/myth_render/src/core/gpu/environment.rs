@@ -1,8 +1,11 @@
+use std::hash::{Hash, Hasher};
+
+use glam::Vec3;
 use wgpu::TextureViewDimension;
 
 use myth_assets::AssetServer;
 use myth_resources::texture::TextureSource;
-use myth_scene::background::BackgroundMode;
+use myth_scene::background::{BackgroundMode, ProceduralSkyParams};
 use myth_scene::environment::Environment;
 
 use crate::core::gpu::{ResourceState, Tracked};
@@ -10,6 +13,7 @@ use crate::core::gpu::{ResourceState, Tracked};
 use super::ResourceManager;
 
 pub const BRDF_LUT_SIZE: u32 = 128;
+const PROCEDURAL_IBL_SUN_UPDATE_THRESHOLD_DEGREES: f32 = 0.5;
 
 /// How the scene environment source must be converted before PMREM filtering.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -39,6 +43,10 @@ pub struct GpuEnvironment {
     pub source_type: CubeSourceType,
     pub source_key: Option<TextureSource>,
     pub source_ready: bool,
+    pub last_baked_sun_direction: Option<Vec3>,
+    pending_bake_sun_direction: Option<Vec3>,
+    procedural_physics_hash: u64,
+    procedural_bake_hash: u64,
     pub last_used_frame: u64,
 }
 
@@ -63,6 +71,59 @@ struct ResolvedEnvironmentSource {
     source_ready: bool,
 }
 
+fn hash_f32<H: Hasher>(hasher: &mut H, value: f32) {
+    value.to_bits().hash(hasher);
+}
+
+fn hash_vec3<H: Hasher>(hasher: &mut H, value: Vec3) {
+    hash_f32(hasher, value.x);
+    hash_f32(hasher, value.y);
+    hash_f32(hasher, value.z);
+}
+
+fn procedural_physics_hash(params: &ProceduralSkyParams) -> u64 {
+    let mut hasher = rustc_hash::FxHasher::default();
+    hash_vec3(&mut hasher, params.rayleigh_scattering);
+    hash_f32(&mut hasher, params.rayleigh_scale_height);
+    hash_f32(&mut hasher, params.mie_scattering);
+    hash_f32(&mut hasher, params.mie_absorption);
+    hash_f32(&mut hasher, params.mie_scale_height);
+    hash_f32(&mut hasher, params.mie_anisotropy);
+    hash_vec3(&mut hasher, params.ozone_absorption);
+    hash_f32(&mut hasher, params.planet_radius);
+    hash_f32(&mut hasher, params.atmosphere_radius);
+    hasher.finish()
+}
+
+fn procedural_bake_hash(params: &ProceduralSkyParams) -> u64 {
+    let mut hasher = rustc_hash::FxHasher::default();
+    hash_f32(&mut hasher, params.sun_intensity);
+    hash_f32(&mut hasher, params.sun_disk_size);
+    hash_f32(&mut hasher, params.exposure);
+    hasher.finish()
+}
+
+fn procedural_source_version(
+    physics_hash: u64,
+    bake_hash: u64,
+    sun_direction: Vec3,
+) -> u64 {
+    let mut hasher = rustc_hash::FxHasher::default();
+    physics_hash.hash(&mut hasher);
+    bake_hash.hash(&mut hasher);
+    hash_vec3(&mut hasher, sun_direction);
+    hasher.finish()
+}
+
+fn sun_direction_requires_rebake(last_baked: Option<Vec3>, current: Vec3) -> bool {
+    let Some(last_baked) = last_baked else {
+        return true;
+    };
+
+    let threshold_cos = PROCEDURAL_IBL_SUN_UPDATE_THRESHOLD_DEGREES.to_radians().cos();
+    last_baked.normalize().dot(current.normalize()) <= threshold_cos
+}
+
 impl ResourceManager {
     /// Resolve or create the persistent GPU environment state for a scene.
     ///
@@ -78,19 +139,71 @@ impl ResourceManager {
     ) -> f32 {
         let config = environment.map_config();
 
+        let needs_recreate = self
+            .scene_gpu_environments
+            .get(&scene_id)
+            .is_none_or(|gpu_env| {
+                gpu_env.base_cube_texture.width() != config.base_cube_size
+                    || gpu_env.pmrem_texture.width() != config.pmrem_size
+            });
+
+        if needs_recreate {
+            self.recreate_scene_gpu_environment(scene_id, config.base_cube_size, config.pmrem_size);
+        }
+
+        if let BackgroundMode::Procedural(params) = background {
+            let gpu_env = self
+                .scene_gpu_environments
+                .get_mut(&scene_id)
+                .expect("scene gpu environment must exist after recreation");
+
+            gpu_env.last_used_frame = self.frame_index;
+
+            let physics_hash = procedural_physics_hash(params);
+            let bake_hash = procedural_bake_hash(params);
+            let source_kind_changed = gpu_env.source_type != CubeSourceType::Procedural
+                || gpu_env.source_key.is_some()
+                || !gpu_env.source_ready;
+            let physics_changed = gpu_env.procedural_physics_hash != physics_hash;
+            let bake_changed = gpu_env.procedural_bake_hash != bake_hash;
+            let sun_changed = sun_direction_requires_rebake(
+                gpu_env.last_baked_sun_direction,
+                params.sun_direction,
+            );
+
+            let needs_rebake = gpu_env.needs_compute
+                || source_kind_changed
+                || physics_changed
+                || bake_changed
+                || sun_changed;
+
+            gpu_env.source_type = CubeSourceType::Procedural;
+            gpu_env.source_key = None;
+            gpu_env.source_ready = true;
+            gpu_env.procedural_physics_hash = physics_hash;
+            gpu_env.procedural_bake_hash = bake_hash;
+
+            if needs_rebake {
+                gpu_env.source_version =
+                    procedural_source_version(physics_hash, bake_hash, params.sun_direction);
+                gpu_env.pending_bake_sun_direction = Some(params.sun_direction);
+                gpu_env.needs_compute = true;
+            } else {
+                gpu_env.pending_bake_sun_direction = None;
+            }
+
+            return gpu_env.env_map_max_mip_level();
+        }
+
         let resolved = match background {
-            BackgroundMode::Procedural(params) => ResolvedEnvironmentSource {
-                source_type: CubeSourceType::Procedural,
-                source_key: None,
-                source_version: params.version(),
-                source_ready: true,
-            },
+            BackgroundMode::Procedural(_) => unreachable!("procedural backgrounds are handled above"),
             _ => {
                 let Some(source) = environment.source_env_map().cloned() else {
                     if let Some(gpu_env) = self.scene_gpu_environments.get_mut(&scene_id) {
                         gpu_env.needs_compute = false;
                         gpu_env.source_key = None;
                         gpu_env.source_ready = false;
+                        gpu_env.pending_bake_sun_direction = None;
                         gpu_env.last_used_frame = self.frame_index;
                     }
                     return 0.0;
@@ -141,18 +254,6 @@ impl ResourceManager {
             }
         };
 
-        let needs_recreate = self
-            .scene_gpu_environments
-            .get(&scene_id)
-            .is_none_or(|gpu_env| {
-                gpu_env.base_cube_texture.width() != config.base_cube_size
-                    || gpu_env.pmrem_texture.width() != config.pmrem_size
-            });
-
-        if needs_recreate {
-            self.recreate_scene_gpu_environment(scene_id, config.base_cube_size, config.pmrem_size);
-        }
-
         let gpu_env = self
             .scene_gpu_environments
             .get_mut(&scene_id)
@@ -170,9 +271,11 @@ impl ResourceManager {
             gpu_env.source_type = resolved.source_type;
             gpu_env.source_key = resolved.source_key;
             gpu_env.source_ready = resolved.source_ready;
+            gpu_env.pending_bake_sun_direction = None;
             gpu_env.needs_compute = resolved.source_ready;
         } else if !resolved.source_ready {
             gpu_env.needs_compute = false;
+            gpu_env.pending_bake_sun_direction = None;
         }
 
         gpu_env.env_map_max_mip_level()
@@ -278,6 +381,10 @@ impl ResourceManager {
                 source_type: CubeSourceType::Equirectangular,
                 source_key: None,
                 source_ready: false,
+                last_baked_sun_direction: None,
+                pending_bake_sun_direction: None,
+                procedural_physics_hash: u64::MAX,
+                procedural_bake_hash: u64::MAX,
                 last_used_frame: self.frame_index,
             },
         );
@@ -317,6 +424,9 @@ impl ResourceManager {
     #[inline]
     pub fn mark_scene_environment_clean(&mut self, scene_id: u32) {
         if let Some(gpu_env) = self.scene_gpu_environments.get_mut(&scene_id) {
+            if gpu_env.source_type == CubeSourceType::Procedural {
+                gpu_env.last_baked_sun_direction = gpu_env.pending_bake_sun_direction.take();
+            }
             gpu_env.needs_compute = false;
         }
     }
