@@ -421,14 +421,20 @@ impl Renderer {
             // Always: compute + shadow
             state.brdf_pass.extract_and_prepare(&mut extract_ctx);
             if scene.environment.has_env_map() {
-                state.equirect_to_cube_pass.extract_and_prepare(&mut extract_ctx);
+                state
+                    .equirect_to_cube_pass
+                    .extract_and_prepare(&mut extract_ctx, scene);
             }
-            state.ibl_pass.extract_and_prepare(&mut extract_ctx);
+            state
+                .ibl_pass
+                .extract_and_prepare(&mut extract_ctx, scene.id());
             state.shadow_pass.extract_and_prepare(&mut extract_ctx);
 
             // Procedural atmosphere (LUT + cubemap + PMREM compute)
             if let BackgroundMode::Procedural(_) = scene.background.mode {
-                state.atmosphere_pass.extract_and_prepare(&mut extract_ctx);
+                state
+                    .atmosphere_pass
+                    .extract_and_prepare(&mut extract_ctx, scene.id());
             }
 
             // Skybox (both pipelines)
@@ -969,5 +975,169 @@ impl Renderer {
         self.context
             .as_ref()
             .and_then(|s| s.wgpu_ctx.headless_texture.as_ref())
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    use glam::{Affine3A, Vec3};
+    use myth_assets::AssetServer;
+    use myth_scene::background::BackgroundMode;
+    use myth_scene::camera::Camera;
+    use myth_scene::Scene;
+
+    fn init_headless_renderer() -> Renderer {
+        let mut renderer = Renderer::new(RendererInitConfig::default(), RendererSettings::default());
+        pollster::block_on(renderer.init_headless(128, 128, None))
+            .expect("headless renderer init failed");
+        renderer
+    }
+
+    fn make_camera() -> RenderCamera {
+        let mut camera = Camera::new_perspective(45.0, 1.0, 0.1);
+        camera.update_view_projection(&Affine3A::from_translation(Vec3::new(0.0, 0.0, 5.0)));
+        camera.extract_render_camera()
+    }
+
+    fn render_frame(
+        renderer: &mut Renderer,
+        scene: &mut Scene,
+        camera: &RenderCamera,
+        assets: &AssetServer,
+        frame_index: u64,
+    ) {
+        renderer
+            .begin_frame(
+                scene,
+                camera,
+                assets,
+                FrameTime {
+                    time: frame_index as f32 / 60.0,
+                    delta_time: 1.0 / 60.0,
+                    frame_count: frame_index,
+                },
+            )
+            .expect("frame composer must exist")
+            .render();
+    }
+
+    #[test]
+    fn procedural_environment_updates_keep_global_bind_group_stable() {
+        let mut renderer = init_headless_renderer();
+        let assets = AssetServer::new();
+        let mut scene = Scene::new();
+        scene.background.set_mode(BackgroundMode::procedural());
+        let camera = make_camera();
+
+        render_frame(&mut renderer, &mut scene, &camera, &assets, 0);
+
+        let state = renderer.context.as_ref().expect("renderer state missing");
+        let scene_id = scene.id();
+        let render_state_id = state.render_frame.render_state.id;
+        let global_state = state
+            .resource_manager
+            .get_global_state(render_state_id, scene_id)
+            .expect("global state missing after first render");
+        let first_bind_group_id = global_state.bind_group_id;
+        let first_env = state
+            .resource_manager
+            .gpu_environment(scene_id)
+            .expect("scene gpu environment missing after first render");
+        let first_base_cube_id = first_env.base_cube_view.id();
+        let first_pmrem_id = first_env.pmrem_view.id();
+
+        if let BackgroundMode::Procedural(params) = &mut scene.background.mode {
+            params.set_exposure(12.0);
+            params.set_sun_intensity(25.0);
+        } else {
+            panic!("expected procedural background");
+        }
+
+        render_frame(&mut renderer, &mut scene, &camera, &assets, 1);
+
+        let state = renderer.context.as_ref().expect("renderer state missing");
+        let global_state = state
+            .resource_manager
+            .get_global_state(render_state_id, scene_id)
+            .expect("global state missing after procedural update");
+        let updated_env = state
+            .resource_manager
+            .gpu_environment(scene_id)
+            .expect("scene gpu environment missing after procedural update");
+
+        assert_eq!(
+            first_bind_group_id, global_state.bind_group_id,
+            "procedural parameter changes should not rebuild the global bind group"
+        );
+        assert_eq!(
+            first_base_cube_id,
+            updated_env.base_cube_view.id(),
+            "procedural parameter changes should keep the persistent base cube view stable"
+        );
+        assert_eq!(
+            first_pmrem_id,
+            updated_env.pmrem_view.id(),
+            "procedural parameter changes should keep the persistent PMREM view stable"
+        );
+    }
+
+    #[test]
+    fn resizing_environment_maps_recreates_persistent_views() {
+        let mut renderer = init_headless_renderer();
+        let assets = AssetServer::new();
+        let mut scene = Scene::new();
+        scene.background.set_mode(BackgroundMode::procedural());
+        let camera = make_camera();
+
+        render_frame(&mut renderer, &mut scene, &camera, &assets, 0);
+
+        let state = renderer.context.as_ref().expect("renderer state missing");
+        let scene_id = scene.id();
+        let render_state_id = state.render_frame.render_state.id;
+        let global_state = state
+            .resource_manager
+            .get_global_state(render_state_id, scene_id)
+            .expect("global state missing after first render");
+        let first_bind_group_id = global_state.bind_group_id;
+        let first_env = state
+            .resource_manager
+            .gpu_environment(scene_id)
+            .expect("scene gpu environment missing after first render");
+        let first_base_cube_id = first_env.base_cube_view.id();
+        let first_pmrem_id = first_env.pmrem_view.id();
+
+        scene.environment.set_base_cube_size(256);
+        scene.environment.set_pmrem_size(128);
+
+        render_frame(&mut renderer, &mut scene, &camera, &assets, 1);
+
+        let state = renderer.context.as_ref().expect("renderer state missing");
+        let global_state = state
+            .resource_manager
+            .get_global_state(render_state_id, scene_id)
+            .expect("global state missing after resize");
+        let resized_env = state
+            .resource_manager
+            .gpu_environment(scene_id)
+            .expect("scene gpu environment missing after resize");
+
+        assert_ne!(
+            first_bind_group_id, global_state.bind_group_id,
+            "environment map resizing should rebuild the global bind group"
+        );
+        assert_ne!(
+            first_base_cube_id,
+            resized_env.base_cube_view.id(),
+            "base cube resize should recreate the persistent base cube view"
+        );
+        assert_ne!(
+            first_pmrem_id,
+            resized_env.pmrem_view.id(),
+            "PMREM resize should recreate the persistent PMREM view"
+        );
+        assert_eq!(256, resized_env.base_cube_texture.width());
+        assert_eq!(128, resized_env.pmrem_texture.width());
     }
 }

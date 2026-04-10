@@ -157,11 +157,9 @@ impl GraphBuilderContext<'_, '_> {
     }
 }
 
-struct SceneEnvironmentGraphResources<'a> {
+struct SceneEnvironmentGraphResources {
     base_cube: crate::graph::core::TextureNodeId,
     pmrem: crate::graph::core::TextureNodeId,
-    base_cube_texture: &'a wgpu::Texture,
-    pmrem_texture: &'a wgpu::Texture,
     source_type: CubeSourceType,
     source_ready: bool,
     needs_compute: bool,
@@ -411,30 +409,30 @@ impl<'a> FrameComposer<'a> {
         // let taa_enabled = self.ctx.wgpu_ctx.taa_enabled && is_high_fidelity;
 
         let scene_environment_updated = {
-
-        let scene_environment_resources = if has_active_environment {
-            self.ctx.resource_manager.gpu_environment(self.ctx.scene.id()).map(|gpu_env| {
-                SceneEnvironmentGraphResources {
-                    base_cube: graph_ctx.graph.import_external_resource(
-                        "Scene_Environment_BaseCube",
-                        base_cube_desc(&gpu_env.base_cube_texture),
-                        &gpu_env.base_cube_view,
-                    ),
-                    pmrem: graph_ctx.graph.import_external_resource(
-                        "Scene_Environment_PMREM",
-                        pmrem_desc(&gpu_env.pmrem_texture),
-                        &gpu_env.pmrem_view,
-                    ),
-                    base_cube_texture: &gpu_env.base_cube_texture,
-                    pmrem_texture: &gpu_env.pmrem_texture,
-                    source_type: gpu_env.source_type,
-                    source_ready: gpu_env.source_ready,
-                    needs_compute: gpu_env.needs_compute,
-                }
-            })
+        let scene_id = self.ctx.scene.id();
+        let scene_gpu_environment = if has_active_environment {
+            self.ctx.resource_manager.gpu_environment(scene_id)
         } else {
             None
         };
+
+        let scene_environment_resources = scene_gpu_environment.map(|gpu_env| {
+            SceneEnvironmentGraphResources {
+                base_cube: graph_ctx.graph.import_external_resource(
+                    "Scene_Environment_BaseCube",
+                    base_cube_desc(&gpu_env.base_cube_texture),
+                    &gpu_env.base_cube_view,
+                ),
+                pmrem: graph_ctx.graph.import_external_resource(
+                    "Scene_Environment_PMREM",
+                    pmrem_desc(&gpu_env.pmrem_texture),
+                    &gpu_env.pmrem_view,
+                ),
+                source_type: gpu_env.source_type,
+                source_ready: gpu_env.source_ready,
+                needs_compute: gpu_env.needs_compute,
+            }
+        });
 
         let mut env_dependency_base = None;
         let mut env_dependency_pmrem = None;
@@ -446,7 +444,8 @@ impl<'a> FrameComposer<'a> {
                 self.ctx.brdf_pass.add_to_graph(c);
             }
 
-            if let Some(env) = scene_environment_resources.as_ref()
+            if let (Some(env), Some(gpu_env)) =
+                (scene_environment_resources.as_ref(), scene_gpu_environment)
                 && env.needs_compute
                 && env.source_ready
             {
@@ -455,11 +454,12 @@ impl<'a> FrameComposer<'a> {
                         if let myth_scene::background::BackgroundMode::Procedural(params) =
                             &self.ctx.scene.background.mode
                         {
-                            self.ctx.atmosphere_pass.add_bake_node(
+                            self.ctx.atmosphere_pass.add_to_graph(
                                 c,
+                                scene_id,
                                 params,
                                 env.base_cube,
-                                env.base_cube_texture,
+                                &gpu_env.base_cube_storage_view,
                             );
                             true
                         } else {
@@ -467,38 +467,20 @@ impl<'a> FrameComposer<'a> {
                         }
                     }
                     CubeSourceType::Equirectangular | CubeSourceType::Cubemap => {
-                        self.ctx
-                            .scene
-                            .environment
-                            .source_env_map()
-                            .and_then(|source| {
-                                EquirectToCubeFeature::resolve_source_view(
-                                    self.ctx.resource_manager,
-                                    source,
-                                )
-                                .map(|source_view| (source_view, env.source_type))
-                            })
-                            .is_some_and(|(source_view, source_type)| {
-                                self.ctx.equirect_to_cube_pass.add_to_graph(
-                                    c,
-                                    source_type,
-                                    source_view,
-                                    env.base_cube,
-                                    env.base_cube_texture,
-                                );
-                                true
-                            })
+                        self.ctx.equirect_to_cube_pass.add_to_graph(
+                            c,
+                            scene_id,
+                            env.source_type,
+                            env.base_cube,
+                        );
+                        true
                     }
                 };
 
                 if base_cube_ready {
-                    self.ctx.ibl_pass.add_to_graph(
-                        c,
-                        env.base_cube,
-                        env.pmrem,
-                        env.base_cube_texture,
-                        env.pmrem_texture,
-                    );
+                    self.ctx
+                        .ibl_pass
+                        .add_to_graph(c, scene_id, env.base_cube, env.pmrem);
                     env_dependency_base = Some(env.base_cube);
                     env_dependency_pmrem = Some(env.pmrem);
                     scene_environment_updated = true;

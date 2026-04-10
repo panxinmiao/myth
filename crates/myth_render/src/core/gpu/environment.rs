@@ -31,7 +31,9 @@ pub struct GpuEnvironment {
     pub base_cube_texture: wgpu::Texture,
     pub pmrem_texture: wgpu::Texture,
     pub base_cube_view: Tracked<wgpu::TextureView>,
+    pub base_cube_storage_view: Tracked<wgpu::TextureView>,
     pub pmrem_view: Tracked<wgpu::TextureView>,
+    pub pmrem_storage_views: Vec<Tracked<wgpu::TextureView>>,
     pub source_version: u64,
     pub needs_compute: bool,
     pub source_type: CubeSourceType,
@@ -45,6 +47,12 @@ impl GpuEnvironment {
     #[must_use]
     pub fn env_map_max_mip_level(&self) -> f32 {
         (self.pmrem_texture.mip_level_count() - 1) as f32
+    }
+
+    #[inline]
+    #[must_use]
+    pub fn pmrem_mip_view(&self, mip: u32) -> &Tracked<wgpu::TextureView> {
+        &self.pmrem_storage_views[mip as usize]
     }
 }
 
@@ -203,6 +211,18 @@ impl ResourceManager {
             dimension: Some(TextureViewDimension::Cube),
             ..Default::default()
         }));
+        let base_cube_storage_view = Tracked::new(base_cube_texture.create_view(
+            &wgpu::TextureViewDescriptor {
+                label: Some("Scene Environment Base Cube Mip0"),
+                dimension: Some(TextureViewDimension::D2Array),
+                base_mip_level: 0,
+                mip_level_count: Some(1),
+                base_array_layer: 0,
+                array_layer_count: Some(6),
+                usage: Some(wgpu::TextureUsages::STORAGE_BINDING),
+                ..Default::default()
+            },
+        ));
         self.internal_resources
             .insert(base_cube_view.id(), (*base_cube_view).clone());
 
@@ -226,6 +246,21 @@ impl ResourceManager {
             dimension: Some(TextureViewDimension::Cube),
             ..Default::default()
         }));
+        let pmrem_storage_views = (0..pmrem_mips)
+            .map(|mip| {
+                Tracked::new(pmrem_texture.create_view(&wgpu::TextureViewDescriptor {
+                    label: Some("Scene Environment PMREM Mip"),
+                    format: Some(wgpu::TextureFormat::Rgba16Float),
+                    dimension: Some(TextureViewDimension::D2Array),
+                    aspect: wgpu::TextureAspect::All,
+                    base_mip_level: mip,
+                    mip_level_count: Some(1),
+                    base_array_layer: 0,
+                    array_layer_count: Some(6),
+                    usage: Some(wgpu::TextureUsages::STORAGE_BINDING),
+                }))
+            })
+            .collect();
         self.internal_resources
             .insert(pmrem_view.id(), (*pmrem_view).clone());
 
@@ -235,7 +270,9 @@ impl ResourceManager {
                 base_cube_texture,
                 pmrem_texture,
                 base_cube_view,
+                base_cube_storage_view,
                 pmrem_view,
+                pmrem_storage_views,
                 source_version: u64::MAX,
                 needs_compute: true,
                 source_type: CubeSourceType::Equirectangular,
