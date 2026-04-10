@@ -292,7 +292,7 @@ fn create_procedural_texture_layout(
                 count: None,
             },
             wgpu::BindGroupLayoutEntry {
-                binding: 5,
+                binding: 4,
                 visibility: wgpu::ShaderStages::FRAGMENT,
                 ty: wgpu::BindingType::Texture {
                     sample_type: wgpu::TextureSampleType::Float { filterable: true },
@@ -691,7 +691,7 @@ impl SkyboxFeature {
                                 ),
                             },
                             wgpu::BindGroupEntry {
-                                binding: 5,
+                                binding: 4,
                                 resource: wgpu::BindingResource::TextureView(starbox.view),
                             },
                         ],

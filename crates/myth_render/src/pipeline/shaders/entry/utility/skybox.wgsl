@@ -42,10 +42,10 @@ struct BakeParams {
 @group(1) @binding(2) var s_skybox: sampler;
 @group(1) @binding(3) var t_transmittance: texture_2d<f32>;
 $$ if CELESTIAL_STARBOX_EQUIRECT
-@group(1) @binding(5) var t_starbox_2d: texture_2d<f32>;
+@group(1) @binding(4) var t_starbox_2d: texture_2d<f32>;
 $$ endif
 $$ if CELESTIAL_STARBOX_CUBE
-@group(1) @binding(5) var t_starbox_cube: texture_cube<f32>;
+@group(1) @binding(4) var t_starbox_cube: texture_cube<f32>;
 $$ endif
 $$ else
 @group(1) @binding(0) var<uniform> u_params: SkyboxParams;
