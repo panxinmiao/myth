@@ -23,9 +23,8 @@ impl AppHandler for ProceduralSkyDemo {
             true,
         );
 
-        let mut sky = ProceduralSkyParams::sunset();
+        let mut sky = ProceduralSkyParams::golden_hour();
         sky.set_starbox_texture(Some(starbox.into()));
-        sky.set_star_intensity(0.8);
         sky.set_moon_intensity(0.35);
         scene
             .background
@@ -82,9 +81,6 @@ impl AppHandler for ProceduralSkyDemo {
             .tone_mapping
             .set_mode(myth::ToneMappingMode::AgX(myth::AgxLook::Punchy));
 
-        scene
-            .tone_mapping
-            .set_exposure(15.0);
 
         // Camera
         let mut camera = Camera::new_perspective(45.0, 1280.0 / 720.0, 0.1);

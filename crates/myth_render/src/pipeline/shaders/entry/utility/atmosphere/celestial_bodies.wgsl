@@ -31,7 +31,7 @@ fn disk_mask(
     return smoothstep(disk_cos - smoothing, disk_cos + smoothing, cos_angle);
 }
 
-fn sun_disk(dir: vec3<f32>, view_transmittance: vec3<f32>) -> vec3<f32> {
+fn _sun_disk(dir: vec3<f32>, view_transmittance: vec3<f32>) -> vec3<f32> {
     let dynamic_sun_size = u_bake_params.sun_disk_size
         * mix(3.0, 1.0, smoothstep(0.0, 0.5, u_bake_params.sun_direction.y));
 
@@ -48,20 +48,19 @@ fn sun_disk(dir: vec3<f32>, view_transmittance: vec3<f32>) -> vec3<f32> {
 
 // Another disk function
 // todo: which one is better?
-fn _sun_disk(dir: vec3<f32>, view_transmittance: vec3<f32>) -> vec3<f32> {
+fn sun_disk(dir: vec3<f32>, view_transmittance: vec3<f32>) -> vec3<f32> {
     let sun_size = u_bake_params.sun_disk_size * 1.05; 
 
+    let horizon_fade = smoothstep(-0.02, 0.5, u_bake_params.sun_direction.y);
+
+    let dynamic_smooth = mix(0.00015, 0.00005, horizon_fade);
     // edge softening
-    let mask = disk_mask(dir, u_bake_params.sun_direction, sun_size, 0.0002);
+    let mask = disk_mask(dir, u_bake_params.sun_direction, sun_size, dynamic_smooth);
     if mask <= 0.0 {
         return vec3<f32>(0.0);
     }
 
-    let low_angle_boost = 1.0 - smoothstep(0.0, 0.2, u_bake_params.sun_direction.y);
-    
-    // energy boost
-    let boost_factor = 1.0 + (low_angle_boost * 4.0); 
-    let visual_sun_intensity = u_bake_params.sun_intensity * 200.0 * boost_factor;
+    let visual_sun_intensity = u_bake_params.sun_intensity * 200.0;
 
     return view_transmittance * (mask * visual_sun_intensity);
 }
@@ -70,7 +69,7 @@ fn moon_disk(dir: vec3<f32>, view_transmittance: vec3<f32>) -> vec3<f32> {
     let mask = disk_mask(
         dir,
         u_bake_params.moon_direction,
-        u_bake_params.moon_disk_size * 1.2,
+        u_bake_params.moon_disk_size * 1.05,
         0.00005,
     );
     if mask <= 0.0 {
@@ -78,7 +77,7 @@ fn moon_disk(dir: vec3<f32>, view_transmittance: vec3<f32>) -> vec3<f32> {
     }
 
     let moon_color = vec3<f32>(0.92, 0.94, 1.0);
-    return moon_color * view_transmittance * (mask * u_bake_params.moon_intensity);
+    return moon_color * view_transmittance * (mask * u_bake_params.moon_intensity * 10.0);
 }
 
 fn hash13(p: vec3<f32>) -> f32 {

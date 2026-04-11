@@ -184,7 +184,6 @@ impl ProceduralSkyParams {
         let sun_elevation = 70.0_f32.to_radians();
         Self {
             sun_direction: Vec3::new(0.0, sun_elevation.sin(), -sun_elevation.cos()).normalize(),
-            sun_intensity: 20.0,
             ..Self::golden_hour()
         }
     }
@@ -196,7 +195,6 @@ impl ProceduralSkyParams {
         let base = Self::golden_hour();
         Self {
             sun_direction: Vec3::new(0.3, sun_elevation.sin(), -sun_elevation.cos()).normalize(),
-            sun_intensity: 1.0,
 
             ozone_absorption: base.ozone_absorption * 2.8,
 

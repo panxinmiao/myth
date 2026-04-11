@@ -94,7 +94,7 @@ impl DayNightCycle {
         Vec3::new(
             -hour_angle.sin(),
             latitude.cos() * hour_angle.cos(),
-            -latitude.sin() * hour_angle.cos(),
+            latitude.sin() * hour_angle.cos(),
         )
         .normalize_or_zero()
     }
@@ -109,7 +109,7 @@ impl DayNightCycle {
     #[must_use]
     pub fn compute_star_axis(&self) -> Vec3 {
         let latitude = self.latitude.to_radians();
-        Vec3::new(0.0, latitude.sin(), latitude.cos()).normalize_or_zero()
+        Vec3::new(0.0, latitude.sin(), -latitude.cos()).normalize_or_zero()
     }
 
     /// Computes the star-field rotation angle in radians.
