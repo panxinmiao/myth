@@ -20,6 +20,8 @@ use crate::scene::{Scene, SceneLogic};
 pub struct DayNightCycle {
     /// Local solar time in hours.
     pub time_of_day: f32,
+    /// Total days elapsed since the start of the simulation.
+    pub day_count: f32,
     /// Observer latitude in degrees (`-90..=90`).
     pub latitude: f32,
     /// Whether time advances automatically in `update()`.
@@ -46,6 +48,7 @@ impl DayNightCycle {
     pub fn new(time_of_day: f32, latitude: f32) -> Self {
         Self {
             time_of_day: wrap_time_of_day(time_of_day),
+            day_count: 0.0,
             latitude: latitude.clamp(-90.0, 90.0),
             auto_tick: true,
             time_speed: 0.25,
@@ -102,7 +105,25 @@ impl DayNightCycle {
     /// Computes the normalized world-space direction toward the moon.
     #[must_use]
     pub fn compute_moon_direction(&self) -> Vec3 {
-        (-self.compute_sun_direction()).normalize_or_zero()
+        // (-self.compute_sun_direction()).normalize_or_zero()
+
+
+        let latitude = self.latitude.to_radians();
+
+        // The moon's phase progression relative to the sun (0.0 = new moon, 0.5 = full moon, 1.0 = new moon)
+        // Assuming a synodic month of 29.5 days
+        let lunar_progress = self.day_count / 29.5; 
+
+        // Moon's independent hour angle: solar hour angle minus the offset of the moon's orbit
+        let moon_hour_angle = self.solar_hour_angle() - (lunar_progress * std::f32::consts::TAU);
+
+        // Calculates the moon's direction in the sky (using the corrected positive Z-axis logic)
+        Vec3::new(
+            -moon_hour_angle.sin(),
+            latitude.cos() * moon_hour_angle.cos(),
+            latitude.sin() * moon_hour_angle.cos(), 
+        )
+        .normalize_or_zero()
     }
 
     /// Computes the celestial pole axis used to rotate the star field.
@@ -115,7 +136,13 @@ impl DayNightCycle {
     /// Computes the star-field rotation angle in radians.
     #[must_use]
     pub fn compute_star_rotation_angle(&self) -> f32 {
-        wrap_time_of_day(self.time_of_day) / 24.0 * TAU
+        // wrap_time_of_day(self.time_of_day) / 24.0 * TAU
+
+        let solar_rotation = wrap_time_of_day(self.time_of_day) / 24.0 * TAU;
+        // Star drift: completes a full 360-degree (TAU) rotation every year (365.25 days)
+        let sidereal_drift = (self.day_count / 365.25) * TAU;
+        
+        solar_rotation + sidereal_drift
     }
 
     #[must_use]
@@ -162,7 +189,16 @@ impl DayNightCycle {
 impl SceneLogic for DayNightCycle {
     fn update(&mut self, scene: &mut Scene, _input: &Input, dt: f32) {
         if self.auto_tick {
-            self.time_of_day = wrap_time_of_day(self.time_of_day + dt * self.time_speed);
+            // self.time_of_day = wrap_time_of_day(self.time_of_day + dt * self.time_speed);
+            self.time_of_day += dt * self.time_speed;
+
+            if self.time_of_day >= 24.0 {
+                self.time_of_day -= 24.0;
+                self.day_count += 1.0;
+            } else if self.time_of_day < 0.0 {
+                self.time_of_day += 24.0;
+                self.day_count -= 1.0;
+            }
         }
 
         let sun_direction = self.compute_sun_direction();

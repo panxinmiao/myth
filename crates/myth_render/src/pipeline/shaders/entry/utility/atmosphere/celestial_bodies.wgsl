@@ -2,6 +2,8 @@
 // Shared Celestial Bodies
 // ============================================================================
 
+{$ include "entry/utility/noise" $}
+
 fn sample_direction_transmittance(direction: vec3<f32>) -> vec3<f32> {
     let altitude = 1.0;
     let origin = vec3<f32>(0.0, u_bake_params.planet_radius + altitude, 0.0);
@@ -65,7 +67,7 @@ fn sun_disk(dir: vec3<f32>, view_transmittance: vec3<f32>) -> vec3<f32> {
     return view_transmittance * (mask * visual_sun_intensity);
 }
 
-fn moon_disk(dir: vec3<f32>, view_transmittance: vec3<f32>) -> vec3<f32> {
+fn _moon_disk(dir: vec3<f32>, view_transmittance: vec3<f32>) -> vec3<f32> {
     let mask = disk_mask(
         dir,
         u_bake_params.moon_direction,
@@ -80,10 +82,37 @@ fn moon_disk(dir: vec3<f32>, view_transmittance: vec3<f32>) -> vec3<f32> {
     return moon_color * view_transmittance * (mask * u_bake_params.moon_intensity * 10.0);
 }
 
-fn hash13(p: vec3<f32>) -> f32 {
-    var p3 = fract(p * 0.1031);
-    p3 += dot(p3, p3.zyx + 33.33);
-    return fract((p3.x + p3.y) * p3.z);
+fn moon_disk(dir: vec3<f32>, view_transmittance: vec3<f32>) -> vec3<f32> {
+    // 1. Determine if the direction is within the moon disk
+    let cos_angle = dot(dir, u_bake_params.moon_direction);
+    let angular_radius = (u_bake_params.moon_disk_size * 2.5 * 0.5) * PI / 180.0;
+    let cos_alpha = cos(angular_radius);
+    
+    if (cos_angle < cos_alpha - 0.0001) {
+        return vec3<f32>(0.0);
+    }
+
+    // 2. Compute the intersection point on the moon's sphere (world space)
+    let sq = max(0.0, cos_angle * cos_angle - cos_alpha * cos_alpha);
+    let t_prime = cos_angle - sqrt(sq);
+    let sphere_normal = normalize(dir * t_prime - u_bake_params.moon_direction);
+
+    let phase_shading = max(0.0, dot(sphere_normal, u_bake_params.sun_direction)) + 0.03;
+
+    // Add surface details (todo: replace this with a real moon texture)
+
+    let dark_color = vec3<f32>(0.08, 0.08, 0.10);
+    let bright_color = vec3<f32>(0.92, 0.94, 0.98);
+
+    let moon_noise = fbm3D(sphere_normal * 4.0);
+
+    let surface_albedo = mix(dark_color, bright_color, moon_noise);
+
+    // 7. Combine final color
+    // Edge anti-aliasing mask
+    let mask = smoothstep(cos_alpha - 0.00005, cos_alpha + 0.00005, cos_angle);
+    
+    return surface_albedo * phase_shading * view_transmittance * (mask * u_bake_params.moon_intensity * 20.0);
 }
 
 // Energy-Conserving Analytical Anti-Aliasing

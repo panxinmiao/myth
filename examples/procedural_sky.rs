@@ -57,10 +57,10 @@ impl AppHandler for ProceduralSkyDemo {
             node.transform.look_at(Vec3::ZERO, Vec3::Y);
         }
 
-        let cycle = DayNightCycle::new(11.5, 35.0)
+        let cycle = DayNightCycle::new(16.5, 35.0)
             .with_sun(sun_light_node)
             .with_moon(moon_light_node)
-            .with_time_speed(0.35);
+            .with_time_speed(3.0);
 
         // scene.add_logic(cycle);
 
