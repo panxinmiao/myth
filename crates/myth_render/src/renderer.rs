@@ -1057,7 +1057,6 @@ mod tests {
         let first_pmrem_id = first_env.pmrem_view.id();
 
         if let BackgroundMode::Procedural(params) = &mut scene.background.mode {
-            params.set_exposure(12.0);
             params.set_sun_intensity(25.0);
         } else {
             panic!("expected procedural background");

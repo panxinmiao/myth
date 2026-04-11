@@ -207,10 +207,10 @@ pub use myth_resources::primitives::{
     PlaneOptions, SphereOptions, create_box, create_plane, create_sphere,
 };
 pub use myth_resources::{
-    AlphaMode, AntiAliasingMode, Attribute, FxaaQuality, FxaaSettings, Geometry, Image,
+    AgxLook, AlphaMode, AntiAliasingMode, Attribute, FxaaQuality, FxaaSettings, Geometry, Image,
     IndexFormat, Material, MaterialTrait, MaterialType, Mesh, PhongMaterial, PhysicalMaterial,
     RenderableMaterialTrait, ShaderDefines, Side, TaaSettings, Texture, TextureSlot,
-    TextureTransform, ToneMappingMode, AgxLook, ToneMappingSettings, UnlitMaterial, VertexFormat,
+    TextureTransform, ToneMappingMode, ToneMappingSettings, UnlitMaterial, VertexFormat,
 };
 
 // Assets

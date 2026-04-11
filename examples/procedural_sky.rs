@@ -1,5 +1,6 @@
 use myth::prelude::*;
 use myth::utils::FpsCounter;
+use myth_resources::Key;
 
 /// Procedural Sky Demo
 ///
@@ -9,6 +10,7 @@ struct ProceduralSkyDemo {
     cam_node_id: NodeHandle,
     controls: OrbitControls,
     fps_counter: FpsCounter,
+    cycle: DayNightCycle,
 }
 
 impl AppHandler for ProceduralSkyDemo {
@@ -23,7 +25,7 @@ impl AppHandler for ProceduralSkyDemo {
 
         let mut sky = ProceduralSkyParams::sunset();
         sky.set_starbox_texture(Some(starbox.into()));
-        sky.set_star_intensity(0.2);
+        sky.set_star_intensity(0.8);
         sky.set_moon_intensity(0.35);
         scene
             .background
@@ -56,13 +58,12 @@ impl AppHandler for ProceduralSkyDemo {
             node.transform.look_at(Vec3::ZERO, Vec3::Y);
         }
 
-        scene.add_logic(
-            DayNightCycle::new(18.5, 35.0)
-                .with_sun(sun_light_node)
-                .with_moon(moon_light_node)
-                .with_time_speed(0.35)
-                .with_auto_tick(false),
-        );
+        let cycle = DayNightCycle::new(11.5, 35.0)
+            .with_sun(sun_light_node)
+            .with_moon(moon_light_node)
+            .with_time_speed(0.35);
+
+        // scene.add_logic(cycle);
 
         // Load the DamagedHelmet model as a reference object
         let gltf_path =
@@ -77,8 +78,13 @@ impl AppHandler for ProceduralSkyDemo {
         scene.bloom.set_radius(0.005);
         scene.bloom.set_karis_average(true);
 
-        scene.tone_mapping
+        scene
+            .tone_mapping
             .set_mode(myth::ToneMappingMode::AgX(myth::AgxLook::Punchy));
+
+        scene
+            .tone_mapping
+            .set_exposure(15.0);
 
         // Camera
         let mut camera = Camera::new_perspective(45.0, 1280.0 / 720.0, 0.1);
@@ -95,6 +101,7 @@ impl AppHandler for ProceduralSkyDemo {
             cam_node_id,
             controls: OrbitControls::new(Vec3::new(0.0, 0.5, 4.0), Vec3::ZERO),
             fps_counter: FpsCounter::new(),
+            cycle,
         }
     }
 
@@ -108,6 +115,12 @@ impl AppHandler for ProceduralSkyDemo {
             self.controls
                 .update(&mut cam_node.transform, &engine.input, 45.0, frame.dt);
         }
+
+        if engine.input.get_key_down(Key::Space) {
+            self.cycle.auto_tick = !self.cycle.auto_tick;
+        }
+
+        self.cycle.update(scene, &engine.input, frame.dt);
 
         if let Some(fps) = self.fps_counter.update() {
             window.set_title(&format!("Procedural Sky Day/Night - FPS: {:.0}", fps));

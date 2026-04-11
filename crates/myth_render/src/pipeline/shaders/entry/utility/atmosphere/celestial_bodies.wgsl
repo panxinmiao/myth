@@ -31,30 +31,46 @@ fn disk_mask(
     return smoothstep(disk_cos - smoothing, disk_cos + smoothing, cos_angle);
 }
 
-fn sun_disk(dir: vec3<f32>) -> vec3<f32> {
+fn sun_disk(dir: vec3<f32>, view_transmittance: vec3<f32>) -> vec3<f32> {
     let dynamic_sun_size = u_bake_params.sun_disk_size
-        * mix(2.5, 1.0, smoothstep(0.0, 0.5, u_bake_params.sun_direction.y));
+        * mix(3.0, 1.0, smoothstep(0.0, 0.5, u_bake_params.sun_direction.y));
 
     let mask = disk_mask(dir, u_bake_params.sun_direction, dynamic_sun_size, 0.00005);
     if mask <= 0.0 {
         return vec3<f32>(0.0);
     }
 
-    let transmittance = sample_direction_transmittance(u_bake_params.sun_direction);
-    // let height_fade = smoothstep(-0.05, 0.2, u_bake_params.sun_direction.y);
-    // let visual_sun_intensity = u_bake_params.sun_intensity * mix(20.0, 200.0, height_fade);
-
     let horizon_fade = smoothstep(-0.02, 0.15, u_bake_params.sun_direction.y);
     let visual_sun_intensity = mix(1.2, u_bake_params.sun_intensity * 200.0, horizon_fade);
 
-    return transmittance * (mask * visual_sun_intensity);
+    return view_transmittance * (mask * visual_sun_intensity);
+}
+
+// Another disk function
+// todo: which one is better?
+fn _sun_disk(dir: vec3<f32>, view_transmittance: vec3<f32>) -> vec3<f32> {
+    let sun_size = u_bake_params.sun_disk_size * 1.05; 
+
+    // edge softening
+    let mask = disk_mask(dir, u_bake_params.sun_direction, sun_size, 0.0002);
+    if mask <= 0.0 {
+        return vec3<f32>(0.0);
+    }
+
+    let low_angle_boost = 1.0 - smoothstep(0.0, 0.2, u_bake_params.sun_direction.y);
+    
+    // energy boost
+    let boost_factor = 1.0 + (low_angle_boost * 4.0); 
+    let visual_sun_intensity = u_bake_params.sun_intensity * 200.0 * boost_factor;
+
+    return view_transmittance * (mask * visual_sun_intensity);
 }
 
 fn moon_disk(dir: vec3<f32>, view_transmittance: vec3<f32>) -> vec3<f32> {
     let mask = disk_mask(
         dir,
         u_bake_params.moon_direction,
-        u_bake_params.moon_disk_size,
+        u_bake_params.moon_disk_size * 1.2,
         0.00005,
     );
     if mask <= 0.0 {
@@ -72,13 +88,15 @@ fn hash13(p: vec3<f32>) -> f32 {
 }
 
 // Energy-Conserving Analytical Anti-Aliasing
+// todo: We should skip the AA in the skybox area in TAA and FXAA.
+// Skybox itself does not require AA, while TAA or FXAA will break the energy conservation by blurring the stars.
 fn procedural_star_layer(dir: vec3<f32>, time: f32, pixel_size: f32) -> vec3<f32> {
 
     let grid = dir * 400.0;
     let cell = floor(grid);
     let density = hash13(cell);
     
-    if density < 0.985 {
+    if density < 0.997 {
         return vec3<f32>(0.0);
     }
 
@@ -146,9 +164,11 @@ fn compute_celestial_lighting(
     star_time: f32,
     pixel_size: f32,
 ) -> vec3<f32> {
+    // sun
     var color = vec3<f32>(0.0);
-    color += sun_disk(dir);
+    color += sun_disk(dir, view_transmittance);
 
+    // star sky
     let night_factor = 1.0 - smoothstep(-0.12, 0.04, u_bake_params.sun_direction.y);
     let rotated_star_dir = rotate_about_axis(
         dir,
@@ -159,6 +179,8 @@ fn compute_celestial_lighting(
     var night_color = procedural_star_layer(rotated_star_dir, star_time, pixel_size);
     night_color += sample_starbox(rotated_star_dir) * u_bake_params.star_intensity;
     color += night_color * view_transmittance * night_factor;
+
+    // moon
     color += moon_disk(dir, view_transmittance);
 
     return color;

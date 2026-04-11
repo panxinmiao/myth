@@ -29,12 +29,10 @@ struct BakeParams {
     star_axis: vec3<f32>,
     sun_disk_size: f32,
     moon_disk_size: f32,
-    exposure: f32,
     planet_radius: f32,
     atmosphere_radius: f32,
     star_intensity: f32,
     star_rotation: f32,
-    _pad2: vec2<f32>,
 };
 
 @group(1) @binding(0) var<uniform> u_bake_params: BakeParams;
@@ -103,7 +101,7 @@ $$ if SKYBOX_PROCEDURAL
         u_render_state.time,
         dynamic_pixel_size
     );
-    procedural_color *= u_bake_params.exposure;
+
     procedural_color = clamp(procedural_color, vec3<f32>(0.0), vec3<f32>(65000.0));
     color = vec4<f32>(procedural_color, 1.0);
 $$ endif

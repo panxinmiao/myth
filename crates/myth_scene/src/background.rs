@@ -126,16 +126,13 @@ pub struct ProceduralSkyParams {
     /// Earth default: `6_460_000.0`.
     pub atmosphere_radius: f32,
 
-    /// Exposure multiplier applied to the final sky color.
-    pub exposure: f32,
-
     /// Optional user-provided star-field texture used for the night sky.
     ///
     /// 2D textures are treated as equirectangular panoramas; cube textures are
     /// sampled directly as cubemaps.
     pub starbox_texture: Option<TextureSource>,
 
-    /// Brightness multiplier applied to the star-field texture before exposure.
+    /// Brightness multiplier applied to the star-field texture.
     pub star_intensity: f32,
 
     /// Rotation angle in radians applied around `star_axis`.
@@ -170,11 +167,10 @@ impl ProceduralSkyParams {
             mie_scattering: 3.996e-6,
             mie_absorption: 4.4e-6,
             mie_scale_height: 1200.0,
-            mie_anisotropy: 0.75,
+            mie_anisotropy: 0.80,
             ozone_absorption: Vec3::new(0.65e-6, 1.881e-6, 0.085e-6),
             planet_radius: 6_360_000.0,
             atmosphere_radius: 6_460_000.0,
-            exposure: 10.0,
             starbox_texture: None,
             star_intensity: 1.0,
             star_rotation: 0.0,
@@ -189,7 +185,6 @@ impl ProceduralSkyParams {
         Self {
             sun_direction: Vec3::new(0.0, sun_elevation.sin(), -sun_elevation.cos()).normalize(),
             sun_intensity: 20.0,
-            exposure: 10.0,
             ..Self::golden_hour()
         }
     }
@@ -201,11 +196,10 @@ impl ProceduralSkyParams {
         let base = Self::golden_hour();
         Self {
             sun_direction: Vec3::new(0.3, sun_elevation.sin(), -sun_elevation.cos()).normalize(),
-            sun_intensity: 1.0, 
-            exposure: 12.0,
+            sun_intensity: 1.0,
 
             ozone_absorption: base.ozone_absorption * 2.8,
-            
+
             rayleigh_scattering: base.rayleigh_scattering * 1.15,
 
             mie_scattering: base.mie_scattering * 2.5,
@@ -260,14 +254,6 @@ impl ProceduralSkyParams {
     pub fn set_moon_intensity(&mut self, intensity: f32) {
         if self.moon_intensity != intensity {
             self.moon_intensity = intensity;
-            self.version = self.version.wrapping_add(1);
-        }
-    }
-
-    /// Sets the exposure multiplier and increments the version.
-    pub fn set_exposure(&mut self, exposure: f32) {
-        if self.exposure != exposure {
-            self.exposure = exposure;
             self.version = self.version.wrapping_add(1);
         }
     }
@@ -698,8 +684,6 @@ impl BackgroundSettings {
             BackgroundMode::Procedural(_) => {
                 p.color_top = Vec4::ZERO;
                 p.color_bottom = Vec4::ZERO;
-                p.rotation = 0.0;
-                p.intensity = 1.0;
             }
         }
     }

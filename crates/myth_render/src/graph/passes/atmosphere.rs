@@ -120,12 +120,11 @@ struct GpuBakeParams {
     star_axis: [f32; 3],
     sun_disk_size: f32,
     moon_disk_size: f32,
-    exposure: f32,
     planet_radius: f32,
     atmosphere_radius: f32,
     star_intensity: f32,
     star_rotation: f32,
-    _pad2: [f32; 2],
+    _pad3: [f32; 3],
 }
 
 impl GpuBakeParams {
@@ -138,12 +137,11 @@ impl GpuBakeParams {
             star_axis: params.star_axis.into(),
             sun_disk_size: params.sun_disk_size,
             moon_disk_size: params.moon_disk_size,
-            exposure: params.exposure,
             planet_radius: params.planet_radius,
             atmosphere_radius: params.atmosphere_radius,
             star_intensity: params.star_intensity,
             star_rotation: params.star_rotation,
-            _pad2: [0.0; 2],
+            _pad3: [0.0; 3],
         }
     }
 }

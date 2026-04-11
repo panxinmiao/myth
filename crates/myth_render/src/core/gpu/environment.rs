@@ -142,7 +142,6 @@ fn procedural_bake_hash(params: &ProceduralSkyParams, starbox_hash: u64) -> u64 
     hash_f32(&mut hasher, params.sun_disk_size);
     hash_f32(&mut hasher, params.moon_intensity);
     hash_f32(&mut hasher, params.moon_disk_size);
-    hash_f32(&mut hasher, params.exposure);
     hash_f32(&mut hasher, params.star_intensity);
     hash_vec3(&mut hasher, params.star_axis);
     starbox_hash.hash(&mut hasher);

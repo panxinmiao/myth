@@ -70,9 +70,7 @@ impl SkyboxDemo {
             DemoMode::Planar => BackgroundMode::planar(self.env_texture, 1.0),
             DemoMode::CubeMap => BackgroundMode::cubemap(self.cube_env_texture, 1.0),
             DemoMode::Equirectangular => BackgroundMode::equirectangular(self.env_texture, 1.0),
-            DemoMode::Procedural => {
-                BackgroundMode::procedural_with(ProceduralSkyParams::sunset())
-            }
+            DemoMode::Procedural => BackgroundMode::procedural_with(ProceduralSkyParams::sunset()),
         });
 
         scene.environment.set_env_map(match self.mode {
@@ -129,7 +127,9 @@ impl AppHandler for SkyboxDemo {
         scene.environment.set_env_map(Some(env_texture));
         scene.environment.set_intensity(1.0);
 
-        scene.tone_mapping.set_mode(myth::ToneMappingMode::AgX(myth_resources::tone_mapping::AgxLook::Punchy));
+        scene.tone_mapping.set_mode(myth::ToneMappingMode::AgX(
+            myth_resources::tone_mapping::AgxLook::Punchy,
+        ));
 
         // Default to gradient background
         let mode = DemoMode::Gradient;

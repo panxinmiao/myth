@@ -19,12 +19,10 @@ struct BakeParams {
     star_axis: vec3<f32>,
     sun_disk_size: f32,
     moon_disk_size: f32,
-    exposure: f32,
     planet_radius: f32,
     atmosphere_radius: f32,
     star_intensity: f32,
     star_rotation: f32,
-    _pad2: vec2<f32>,
 };
 
 @group(0) @binding(0)
@@ -84,9 +82,6 @@ fn main(@builtin(global_invocation_id) id: vec3<u32>) {
     let view_transmittance = sample_direction_transmittance(dir);
 
     color += compute_celestial_lighting(dir, view_transmittance, 0.0, 0.25);
-
-    // Apply exposure
-    color *= u_bake_params.exposure;
 
     let safe_color = clamp(color, vec3<f32>(0.0), vec3<f32>(65000.0));
     textureStore(dest, vec2<u32>(id.xy), face, vec4<f32>(safe_color, 1.0));
