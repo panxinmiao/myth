@@ -210,7 +210,7 @@ pub use myth_resources::{
     AlphaMode, AntiAliasingMode, Attribute, FxaaQuality, FxaaSettings, Geometry, Image,
     IndexFormat, Material, MaterialTrait, MaterialType, Mesh, PhongMaterial, PhysicalMaterial,
     RenderableMaterialTrait, ShaderDefines, Side, TaaSettings, Texture, TextureSlot,
-    TextureTransform, ToneMappingMode, ToneMappingSettings, UnlitMaterial, VertexFormat,
+    TextureTransform, ToneMappingMode, AgxLook, ToneMappingSettings, UnlitMaterial, VertexFormat,
 };
 
 // Assets

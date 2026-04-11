@@ -82,7 +82,8 @@ fn main(@builtin(global_invocation_id) id: vec3<u32>) {
     let sky_uv = direction_to_sky_view_uv(dir);
     var color = textureSampleLevel(t_sky_view, s_skybox, sky_uv, 0.0).rgb;
     let view_transmittance = sample_direction_transmittance(dir);
-    color += compute_celestial_lighting(dir, view_transmittance, 0.0);
+
+    color += compute_celestial_lighting(dir, view_transmittance, 0.0, 0.25);
 
     // Apply exposure
     color *= u_bake_params.exposure;

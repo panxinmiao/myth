@@ -27,6 +27,7 @@ enum DemoMode {
     Planar,
     Equirectangular,
     CubeMap,
+    Procedural,
 }
 
 impl DemoMode {
@@ -37,6 +38,7 @@ impl DemoMode {
             Self::Equirectangular => "Equirectangular HDR",
             Self::CubeMap => "Cubemap Skybox",
             Self::Planar => "Planar Texture",
+            Self::Procedural => "Procedural Sky",
         }
     }
 }
@@ -68,6 +70,9 @@ impl SkyboxDemo {
             DemoMode::Planar => BackgroundMode::planar(self.env_texture, 1.0),
             DemoMode::CubeMap => BackgroundMode::cubemap(self.cube_env_texture, 1.0),
             DemoMode::Equirectangular => BackgroundMode::equirectangular(self.env_texture, 1.0),
+            DemoMode::Procedural => {
+                BackgroundMode::procedural_with(ProceduralSkyParams::sunset())
+            }
         });
 
         scene.environment.set_env_map(match self.mode {
@@ -85,6 +90,7 @@ impl SkyboxDemo {
         println!("║  3 — Planar Texture                   ║");
         println!("║  4 — Equirectangular HDR panorama     ║");
         println!("║  5 — Cubemap Skybox                   ║");
+        println!("║  6 — Procedural Sky (Hillaire 2020)   ║");
         println!("║  H — Toggle HighFidelity/BasicForward ║");
         println!("║  Mouse drag / Scroll — Orbit / Zoom   ║");
         println!("╚═══════════════════════════════════════╝");
@@ -122,6 +128,8 @@ impl AppHandler for SkyboxDemo {
         // Environment map for image-based lighting (IBL)
         scene.environment.set_env_map(Some(env_texture));
         scene.environment.set_intensity(1.0);
+
+        scene.tone_mapping.set_mode(myth::ToneMappingMode::AgX(myth_resources::tone_mapping::AgxLook::Punchy));
 
         // Default to gradient background
         let mode = DemoMode::Gradient;
@@ -188,6 +196,10 @@ impl AppHandler for SkyboxDemo {
         }
         if engine.input.get_key_down(Key::Key5) && self.mode != DemoMode::CubeMap {
             self.mode = DemoMode::CubeMap;
+            mode_changed = true;
+        }
+        if engine.input.get_key_down(Key::Key6) && self.mode != DemoMode::Procedural {
+            self.mode = DemoMode::Procedural;
             mode_changed = true;
         }
 

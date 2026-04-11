@@ -60,7 +60,8 @@ impl AppHandler for ProceduralSkyDemo {
             DayNightCycle::new(18.5, 35.0)
                 .with_sun(sun_light_node)
                 .with_moon(moon_light_node)
-                .with_time_speed(0.35),
+                .with_time_speed(0.35)
+                .with_auto_tick(false),
         );
 
         // Load the DamagedHelmet model as a reference object
@@ -72,12 +73,18 @@ impl AppHandler for ProceduralSkyDemo {
         scene.node(&root).set_position(0.0, 0.0, 0.0);
 
         scene.bloom.set_enabled(true);
-        scene.bloom.set_strength(0.002);
+        scene.bloom.set_strength(0.02);
         scene.bloom.set_radius(0.005);
         scene.bloom.set_karis_average(true);
 
+        scene.tone_mapping
+            .set_mode(myth::ToneMappingMode::AgX(myth::AgxLook::Punchy));
+
         // Camera
-        let cam_node_id = scene.add_camera(Camera::new_perspective(45.0, 1280.0 / 720.0, 0.1));
+        let mut camera = Camera::new_perspective(45.0, 1280.0 / 720.0, 0.1);
+        camera.set_aa_mode(AntiAliasingMode::msaa());
+
+        let cam_node_id = scene.add_camera(camera);
         scene
             .node(&cam_node_id)
             .set_position(0.0, 0.5, 4.0)

@@ -34,13 +34,19 @@ fn disk_mask(
 fn sun_disk(dir: vec3<f32>) -> vec3<f32> {
     let dynamic_sun_size = u_bake_params.sun_disk_size
         * mix(2.5, 1.0, smoothstep(0.0, 0.5, u_bake_params.sun_direction.y));
-    let mask = disk_mask(dir, u_bake_params.sun_direction, dynamic_sun_size, 0.0001);
+
+    let mask = disk_mask(dir, u_bake_params.sun_direction, dynamic_sun_size, 0.00005);
     if mask <= 0.0 {
         return vec3<f32>(0.0);
     }
 
     let transmittance = sample_direction_transmittance(u_bake_params.sun_direction);
-    let visual_sun_intensity = u_bake_params.sun_intensity * 200.0;
+    // let height_fade = smoothstep(-0.05, 0.2, u_bake_params.sun_direction.y);
+    // let visual_sun_intensity = u_bake_params.sun_intensity * mix(20.0, 200.0, height_fade);
+
+    let horizon_fade = smoothstep(-0.02, 0.15, u_bake_params.sun_direction.y);
+    let visual_sun_intensity = mix(1.2, u_bake_params.sun_intensity * 200.0, horizon_fade);
+
     return transmittance * (mask * visual_sun_intensity);
 }
 
@@ -49,7 +55,7 @@ fn moon_disk(dir: vec3<f32>, view_transmittance: vec3<f32>) -> vec3<f32> {
         dir,
         u_bake_params.moon_direction,
         u_bake_params.moon_disk_size,
-        0.00015,
+        0.00005,
     );
     if mask <= 0.0 {
         return vec3<f32>(0.0);
@@ -65,28 +71,57 @@ fn hash13(p: vec3<f32>) -> f32 {
     return fract((p3.x + p3.y) * p3.z);
 }
 
-fn procedural_star_layer(dir: vec3<f32>, time: f32) -> vec3<f32> {
+// Energy-Conserving Analytical Anti-Aliasing
+fn procedural_star_layer(dir: vec3<f32>, time: f32, pixel_size: f32) -> vec3<f32> {
+
     let grid = dir * 400.0;
     let cell = floor(grid);
     let density = hash13(cell);
-    if density < 0.997 {
+    
+    if density < 0.985 {
         return vec3<f32>(0.0);
     }
 
     let local = fract(grid) - vec3<f32>(0.5);
-    let size = mix(0.22, 0.08, hash13(cell + vec3<f32>(11.0, 17.0, 23.0)));
-    let radial = 1.0 - clamp(length(local) / size, 0.0, 1.0);
-    let brightness = pow((density - 0.997) / 0.003, 3.0);
+    let dist = length(local);
+    
+    // real physical size of the star's core.
+    let physical_size = mix(0.015, 0.06, hash13(cell + vec3<f32>(11.0, 17.0, 23.0))); 
+    
+    // ==========================================
+    // Dynamic Anti-Aliasing Core:
+    // Take the maximum of the actual pixel_size and physical_size.
+    // ==========================================
+    let render_size = max(physical_size, pixel_size);
+    
+    // Energy-Conserving Formula (Square of Area Ratio)
+    let energy_scale = (physical_size * physical_size) / (render_size * render_size);
+    
+    let raw_core = clamp(1.0 - dist / render_size, 0.0, 1.0);
+    let core = raw_core * raw_core; 
+    
+    let star_shape = core * energy_scale;
+
+    let brightness = pow((density - 0.985) / 0.015, 2.0);
     let twinkle_phase = hash13(cell + vec3<f32>(37.0, 19.0, 53.0)) * TAU;
-    let twinkle_speed = mix(0.8, 2.4, hash13(cell + vec3<f32>(59.0, 29.0, 71.0)));
-    let twinkle = 0.82 + 0.18 * sin(time * twinkle_speed + twinkle_phase);
+    let twinkle_speed = mix(0.1, 0.3, hash13(cell + vec3<f32>(59.0, 29.0, 71.0)));
+
+    let t = time * twinkle_speed + twinkle_phase;
+    let wave1 = sin(t);
+    let wave2 = sin(t * 1.43);
+    let chaotic_wave = (wave1 + wave2) * 0.5;
+
+    let twinkle = 0.925 + 0.075 * chaotic_wave;
     let tint = mix(
         vec3<f32>(0.72, 0.80, 1.0),
         vec3<f32>(1.0, 0.95, 0.86),
         hash13(cell + vec3<f32>(83.0, 41.0, 97.0))
     );
-    let star = pow(max(radial, 0.0), 8.0) * (4.0 + 24.0 * brightness) * twinkle;
-    return tint * star * 3.0;
+    
+    // Final star color with twinkle and energy conservation applied
+    let star = star_shape * (100.0 + 400.0 * brightness) * twinkle;
+    
+    return tint * star;
 }
 
 fn sample_starbox(dir: vec3<f32>) -> vec3<f32> {
@@ -109,6 +144,7 @@ fn compute_celestial_lighting(
     dir: vec3<f32>,
     view_transmittance: vec3<f32>,
     star_time: f32,
+    pixel_size: f32,
 ) -> vec3<f32> {
     var color = vec3<f32>(0.0);
     color += sun_disk(dir);
@@ -120,7 +156,7 @@ fn compute_celestial_lighting(
         u_bake_params.star_rotation,
     );
 
-    var night_color = procedural_star_layer(rotated_star_dir, star_time);
+    var night_color = procedural_star_layer(rotated_star_dir, star_time, pixel_size);
     night_color += sample_starbox(rotated_star_dir) * u_bake_params.star_intensity;
     color += night_color * view_transmittance * night_factor;
     color += moon_disk(dir, view_transmittance);

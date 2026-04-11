@@ -170,7 +170,7 @@ impl ProceduralSkyParams {
             mie_scattering: 3.996e-6,
             mie_absorption: 4.4e-6,
             mie_scale_height: 1200.0,
-            mie_anisotropy: 0.8,
+            mie_anisotropy: 0.75,
             ozone_absorption: Vec3::new(0.65e-6, 1.881e-6, 0.085e-6),
             planet_radius: 6_360_000.0,
             atmosphere_radius: 6_460_000.0,
@@ -197,12 +197,20 @@ impl ProceduralSkyParams {
     /// Sunset preset with the sun at 3° elevation.
     #[must_use]
     pub fn sunset() -> Self {
-        let sun_elevation = 3.0_f32.to_radians();
+        let sun_elevation = 0.8_f32.to_radians();
+        let base = Self::golden_hour();
         Self {
             sun_direction: Vec3::new(0.3, sun_elevation.sin(), -sun_elevation.cos()).normalize(),
-            sun_intensity: 20.0,
+            sun_intensity: 1.0, 
             exposure: 12.0,
-            ..Self::golden_hour()
+
+            ozone_absorption: base.ozone_absorption * 2.8,
+            
+            rayleigh_scattering: base.rayleigh_scattering * 1.15,
+
+            mie_scattering: base.mie_scattering * 2.5,
+            mie_absorption: base.mie_absorption * 2.5,
+            ..base
         }
     }
 

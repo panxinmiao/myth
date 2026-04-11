@@ -71,7 +71,7 @@ pub use shader_defines::ShaderDefines;
 pub use ssao::SsaoSettings;
 pub use taa::TaaSettings;
 pub use texture::{Texture, TextureSampler};
-pub use tone_mapping::{ToneMappingMode, ToneMappingSettings};
+pub use tone_mapping::{ToneMappingMode, ToneMappingSettings, AgxLook};
 pub use uniforms::{Mat3Uniform, WgslType};
 
 // Re-export binding/builder types for myth_render
