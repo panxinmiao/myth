@@ -82,7 +82,7 @@ fn _moon_disk(dir: vec3<f32>, view_transmittance: vec3<f32>) -> vec3<f32> {
     return moon_color * view_transmittance * (mask * u_bake_params.moon_intensity * 10.0);
 }
 
-fn moon_disk(dir: vec3<f32>, view_transmittance: vec3<f32>) -> vec3<f32> {
+fn moon_disk(dir: vec3<f32>, view_transmittance: vec3<f32>, night_factor: f32) -> vec3<f32> {
     // 1. Determine if the direction is within the moon disk
     let cos_angle = dot(dir, u_bake_params.moon_direction);
     let angular_radius = (u_bake_params.moon_disk_size * 2.5 * 0.5) * PI / 180.0;
@@ -97,7 +97,10 @@ fn moon_disk(dir: vec3<f32>, view_transmittance: vec3<f32>) -> vec3<f32> {
     let t_prime = cos_angle - sqrt(sq);
     let sphere_normal = normalize(dir * t_prime - u_bake_params.moon_direction);
 
-    let phase_shading = max(0.0, dot(sphere_normal, u_bake_params.sun_direction)) + 0.03;
+
+    let earthshine = 0.03 * night_factor;
+
+    let phase_shading = max(0.0, dot(sphere_normal, u_bake_params.sun_direction)) + earthshine;
 
     // Add surface details (todo: replace this with a real moon texture)
 
@@ -112,7 +115,7 @@ fn moon_disk(dir: vec3<f32>, view_transmittance: vec3<f32>) -> vec3<f32> {
     // Edge anti-aliasing mask
     let mask = smoothstep(cos_alpha - 0.00005, cos_alpha + 0.00005, cos_angle);
     
-    return surface_albedo * phase_shading * view_transmittance * (mask * u_bake_params.moon_intensity * 20.0);
+    return surface_albedo * phase_shading * view_transmittance * (mask * u_bake_params.moon_intensity);
 }
 
 // Energy-Conserving Analytical Anti-Aliasing
@@ -209,7 +212,7 @@ fn compute_celestial_lighting(
     color += night_color * view_transmittance * night_factor;
 
     // moon
-    color += moon_disk(dir, view_transmittance);
+    color += moon_disk(dir, view_transmittance, night_factor);
 
     return color;
 }

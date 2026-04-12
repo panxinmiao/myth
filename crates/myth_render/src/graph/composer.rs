@@ -806,7 +806,7 @@ impl<'a> FrameComposer<'a> {
                 });
             }
 
-            drop(graph_ctx);
+            // drop(graph_ctx);
 
             // ── After-Post-Process Hooks (UI, debug overlays) ──────────────
             {

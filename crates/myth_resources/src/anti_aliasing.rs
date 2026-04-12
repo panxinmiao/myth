@@ -75,24 +75,28 @@ impl AntiAliasingMode {
         }
     }
 
+    #[must_use]
     pub fn fxaa() -> AntiAliasingMode {
         AntiAliasingMode::FXAA(FxaaSettings::default())
     }
 
+    #[must_use]
     pub fn msaa() -> AntiAliasingMode {
         AntiAliasingMode::MSAA(4)
     }
 
+    #[must_use]
     pub fn msaa_fxaa() -> AntiAliasingMode {
         AntiAliasingMode::MSAA_FXAA(4, FxaaSettings::default())
     }
 
+    #[must_use]
     pub fn taa() -> AntiAliasingMode {
         AntiAliasingMode::TAA(TaaSettings::default())
     }
 
+    #[must_use]
     pub fn taa_fxaa() -> AntiAliasingMode {
         AntiAliasingMode::TAA_FXAA(TaaSettings::default(), FxaaSettings::default())
     }
-
 }

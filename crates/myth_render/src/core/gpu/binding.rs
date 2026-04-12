@@ -455,12 +455,13 @@ impl ResourceManager {
         // resolve_gpu_environment runs before prepare_global and always creates
         // cache entries, so a miss here should not happen in normal operation.
         let (processed_env_map_id, pmrem_map_id) = if has_active_environment {
-            self.gpu_environment(scene.id())
-                .map(|gpu_env| (gpu_env.base_cube_view.id(), gpu_env.pmrem_view.id()))
-                .unwrap_or((
+            self.gpu_environment(scene.id()).map_or(
+                (
                     self.system_textures.black_cube.id(),
                     self.system_textures.black_cube.id(),
-                ))
+                ),
+                |gpu_env| (gpu_env.base_cube_view.id(), gpu_env.pmrem_view.id()),
+            )
         } else {
             (
                 self.system_textures.black_cube.id(),

@@ -48,7 +48,7 @@ impl DayNightCycle {
     pub fn new(time_of_day: f32, latitude: f32) -> Self {
         Self {
             time_of_day: wrap_time_of_day(time_of_day),
-            day_count: 0.0,
+            day_count: 14.75, // Start at a full moon phase by default
             latitude: latitude.clamp(-90.0, 90.0),
             auto_tick: true,
             time_speed: 0.25,
@@ -107,12 +107,11 @@ impl DayNightCycle {
     pub fn compute_moon_direction(&self) -> Vec3 {
         // (-self.compute_sun_direction()).normalize_or_zero()
 
-
         let latitude = self.latitude.to_radians();
 
         // The moon's phase progression relative to the sun (0.0 = new moon, 0.5 = full moon, 1.0 = new moon)
         // Assuming a synodic month of 29.5 days
-        let lunar_progress = self.day_count / 29.5; 
+        let lunar_progress = self.day_count / 29.5;
 
         // Moon's independent hour angle: solar hour angle minus the offset of the moon's orbit
         let moon_hour_angle = self.solar_hour_angle() - (lunar_progress * std::f32::consts::TAU);
@@ -121,7 +120,7 @@ impl DayNightCycle {
         Vec3::new(
             -moon_hour_angle.sin(),
             latitude.cos() * moon_hour_angle.cos(),
-            latitude.sin() * moon_hour_angle.cos(), 
+            latitude.sin() * moon_hour_angle.cos(),
         )
         .normalize_or_zero()
     }
@@ -141,7 +140,7 @@ impl DayNightCycle {
         let solar_rotation = wrap_time_of_day(self.time_of_day) / 24.0 * TAU;
         // Star drift: completes a full 360-degree (TAU) rotation every year (365.25 days)
         let sidereal_drift = (self.day_count / 365.25) * TAU;
-        
+
         solar_rotation + sidereal_drift
     }
 
@@ -190,15 +189,10 @@ impl SceneLogic for DayNightCycle {
     fn update(&mut self, scene: &mut Scene, _input: &Input, dt: f32) {
         if self.auto_tick {
             // self.time_of_day = wrap_time_of_day(self.time_of_day + dt * self.time_speed);
-            self.time_of_day += dt * self.time_speed;
+            let delta_hours = dt * self.time_speed;
+            self.day_count += delta_hours / 24.0;
 
-            if self.time_of_day >= 24.0 {
-                self.time_of_day -= 24.0;
-                self.day_count += 1.0;
-            } else if self.time_of_day < 0.0 {
-                self.time_of_day += 24.0;
-                self.day_count -= 1.0;
-            }
+            self.time_of_day = wrap_time_of_day(self.time_of_day + delta_hours);
         }
 
         let sun_direction = self.compute_sun_direction();

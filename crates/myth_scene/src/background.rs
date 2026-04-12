@@ -161,7 +161,7 @@ impl ProceduralSkyParams {
             sun_disk_size: 0.53,
             moon_disk_size: 0.52,
             sun_intensity: 30.0,
-            moon_intensity: 0.35,
+            moon_intensity: 3.0,
             rayleigh_scattering: Vec3::new(5.802e-6, 13.558e-6, 33.1e-6),
             rayleigh_scale_height: 8000.0,
             mie_scattering: 3.996e-6,
@@ -242,7 +242,7 @@ impl ProceduralSkyParams {
 
     /// Sets the sun intensity and increments the version.
     pub fn set_sun_intensity(&mut self, intensity: f32) {
-        if self.sun_intensity != intensity {
+        if (self.sun_intensity - intensity).abs() > f32::EPSILON {
             self.sun_intensity = intensity;
             self.version = self.version.wrapping_add(1);
         }
@@ -250,7 +250,7 @@ impl ProceduralSkyParams {
 
     /// Sets the moon intensity and increments the version.
     pub fn set_moon_intensity(&mut self, intensity: f32) {
-        if self.moon_intensity != intensity {
+        if (self.moon_intensity - intensity).abs() > f32::EPSILON {
             self.moon_intensity = intensity;
             self.version = self.version.wrapping_add(1);
         }
@@ -258,7 +258,7 @@ impl ProceduralSkyParams {
 
     /// Sets the star texture intensity and increments the version.
     pub fn set_star_intensity(&mut self, intensity: f32) {
-        if self.star_intensity != intensity {
+        if (self.star_intensity - intensity).abs() > f32::EPSILON {
             self.star_intensity = intensity.max(0.0);
             self.version = self.version.wrapping_add(1);
         }
@@ -266,7 +266,7 @@ impl ProceduralSkyParams {
 
     /// Sets the star-field rotation angle and increments the version.
     pub fn set_star_rotation(&mut self, rotation: f32) {
-        if self.star_rotation != rotation {
+        if (self.star_rotation - rotation).abs() > f32::EPSILON {
             self.star_rotation = rotation;
             self.version = self.version.wrapping_add(1);
         }
@@ -290,15 +290,13 @@ impl ProceduralSkyParams {
 
     /// Sets the Mie scattering coefficient and increments the version.
     pub fn set_mie_scattering(&mut self, coeff: f32) {
-        if self.mie_scattering != coeff {
-            self.mie_scattering = coeff;
-            self.version = self.version.wrapping_add(1);
-        }
+        self.mie_scattering = coeff;
+        self.version = self.version.wrapping_add(1);
     }
 
     /// Sets the Mie phase function anisotropy and increments the version.
     pub fn set_mie_anisotropy(&mut self, g: f32) {
-        if self.mie_anisotropy != g {
+        if (self.mie_anisotropy - g).abs() > f32::EPSILON {
             self.mie_anisotropy = g.clamp(-1.0, 1.0);
             self.version = self.version.wrapping_add(1);
         }
@@ -306,7 +304,7 @@ impl ProceduralSkyParams {
 
     /// Sets the sun disk angular size in degrees and increments the version.
     pub fn set_sun_disk_size(&mut self, degrees: f32) {
-        if self.sun_disk_size != degrees {
+        if (self.sun_disk_size - degrees).abs() > f32::EPSILON {
             self.sun_disk_size = degrees;
             self.version = self.version.wrapping_add(1);
         }
@@ -314,7 +312,7 @@ impl ProceduralSkyParams {
 
     /// Sets the moon disk size in degrees and increments the version.
     pub fn set_moon_disk_size(&mut self, degrees: f32) {
-        if self.moon_disk_size != degrees {
+        if (self.moon_disk_size - degrees).abs() > f32::EPSILON {
             self.moon_disk_size = degrees;
             self.version = self.version.wrapping_add(1);
         }

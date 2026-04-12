@@ -66,8 +66,8 @@ impl GpuEnvironment {
 
 struct ResolvedEnvironmentSource {
     source_type: CubeSourceType,
-    source_key: Option<TextureSource>,
-    source_version: u64,
+    key: Option<TextureSource>,
+    version: u64,
     source_ready: bool,
 }
 
@@ -243,63 +243,59 @@ impl ResourceManager {
             return gpu_env.env_map_max_mip_level();
         }
 
-        let resolved = match background {
-            BackgroundMode::Procedural(_) => {
-                unreachable!("procedural backgrounds are handled above")
-            }
-            _ => {
-                let Some(source) = environment.source_env_map().cloned() else {
-                    if let Some(gpu_env) = self.scene_gpu_environments.get_mut(&scene_id) {
-                        gpu_env.needs_compute = false;
-                        gpu_env.source_key = None;
-                        gpu_env.source_ready = false;
-                        gpu_env.pending_bake_sun_direction = None;
-                        gpu_env.last_used_frame = self.frame_index;
-                    }
-                    return 0.0;
-                };
-
-                let mut source_version = environment.source_version();
-                let mut source_ready = true;
-
-                if let TextureSource::Asset(handle) = &source {
-                    let state = self.prepare_texture(assets, *handle);
-                    source_ready =
-                        !matches!(state, ResourceState::Pending | ResourceState::Unknown);
-
-                    if source_ready && let Some(tex) = assets.textures.get(*handle) {
-                        source_version = source_version.wrapping_shl(32)
-                            ^ u64::from(assets.images.get_version(tex.image).unwrap_or(0));
-                    }
+        let resolved = if let BackgroundMode::Procedural(_) = background {
+            unreachable!("procedural backgrounds are handled above")
+        } else {
+            let Some(source) = environment.source_env_map().copied() else {
+                if let Some(gpu_env) = self.scene_gpu_environments.get_mut(&scene_id) {
+                    gpu_env.needs_compute = false;
+                    gpu_env.source_key = None;
+                    gpu_env.source_ready = false;
+                    gpu_env.pending_bake_sun_direction = None;
+                    gpu_env.last_used_frame = self.frame_index;
                 }
+                return 0.0;
+            };
 
-                let source_type = match &source {
-                    TextureSource::Asset(handle) => self
-                        .texture_bindings
-                        .get(*handle)
-                        .and_then(|binding| self.gpu_images.get(binding.image_handle))
-                        .map_or(CubeSourceType::Equirectangular, |img| {
-                            if img.default_view_dimension == TextureViewDimension::D2 {
-                                CubeSourceType::Equirectangular
-                            } else {
-                                CubeSourceType::Cubemap
-                            }
-                        }),
-                    TextureSource::Attachment(_, dim) => {
-                        if *dim == TextureViewDimension::D2 {
+            let mut source_version = environment.source_version();
+            let mut source_ready = true;
+
+            if let TextureSource::Asset(handle) = &source {
+                let state = self.prepare_texture(assets, *handle);
+                source_ready = !matches!(state, ResourceState::Pending | ResourceState::Unknown);
+
+                if source_ready && let Some(tex) = assets.textures.get(*handle) {
+                    source_version = source_version.wrapping_shl(32)
+                        ^ u64::from(assets.images.get_version(tex.image).unwrap_or(0));
+                }
+            }
+
+            let source_type = match &source {
+                TextureSource::Asset(handle) => self
+                    .texture_bindings
+                    .get(*handle)
+                    .and_then(|binding| self.gpu_images.get(binding.image_handle))
+                    .map_or(CubeSourceType::Equirectangular, |img| {
+                        if img.default_view_dimension == TextureViewDimension::D2 {
                             CubeSourceType::Equirectangular
                         } else {
                             CubeSourceType::Cubemap
                         }
+                    }),
+                TextureSource::Attachment(_, dim) => {
+                    if *dim == TextureViewDimension::D2 {
+                        CubeSourceType::Equirectangular
+                    } else {
+                        CubeSourceType::Cubemap
                     }
-                };
-
-                ResolvedEnvironmentSource {
-                    source_type,
-                    source_key: Some(source),
-                    source_version,
-                    source_ready,
                 }
+            };
+
+            ResolvedEnvironmentSource {
+                source_type,
+                key: Some(source),
+                version: source_version,
+                source_ready,
             }
         };
 
@@ -310,15 +306,15 @@ impl ResourceManager {
 
         gpu_env.last_used_frame = self.frame_index;
 
-        let source_changed = gpu_env.source_version != resolved.source_version
+        let source_changed = gpu_env.source_version != resolved.version
             || gpu_env.source_type != resolved.source_type
-            || gpu_env.source_key != resolved.source_key
+            || gpu_env.source_key != resolved.key
             || gpu_env.source_ready != resolved.source_ready;
 
         if source_changed {
-            gpu_env.source_version = resolved.source_version;
+            gpu_env.source_version = resolved.version;
             gpu_env.source_type = resolved.source_type;
-            gpu_env.source_key = resolved.source_key;
+            gpu_env.source_key = resolved.key;
             gpu_env.source_ready = resolved.source_ready;
             gpu_env.pending_bake_sun_direction = None;
             gpu_env.needs_compute = resolved.source_ready;
