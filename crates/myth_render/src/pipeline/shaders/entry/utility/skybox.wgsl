@@ -39,11 +39,12 @@ struct BakeParams {
 @group(1) @binding(1) var t_sky_view: texture_2d<f32>;
 @group(1) @binding(2) var s_skybox: sampler;
 @group(1) @binding(3) var t_transmittance: texture_2d<f32>;
+@group(1) @binding(4) var t_moon_albedo: texture_2d<f32>;
 $$ if CELESTIAL_STARBOX_EQUIRECT
-@group(1) @binding(4) var t_starbox_2d: texture_2d<f32>;
+@group(1) @binding(5) var t_starbox_2d: texture_2d<f32>;
 $$ endif
 $$ if CELESTIAL_STARBOX_CUBE
-@group(1) @binding(4) var t_starbox_cube: texture_cube<f32>;
+@group(1) @binding(5) var t_starbox_cube: texture_cube<f32>;
 $$ endif
 $$ else
 @group(1) @binding(0) var<uniform> u_params: SkyboxParams;
@@ -91,15 +92,10 @@ $$ if SKYBOX_PROCEDURAL
     var procedural_color = textureSampleLevel(t_sky_view, s_skybox, sky_uv, 0.0).rgb;
     let view_transmittance = sample_direction_transmittance(world_dir);
 
-    // multiply by 400.0 to convert to our star grid coordinate system, 
-    // and 0.35 is a tuning factor representing the optimal "smoothing radius" for one anti-aliased pixel
-    let dynamic_pixel_size = length(fwidth(world_dir)) * 400.0 * 0.35;
-
     procedural_color += compute_celestial_lighting(
         world_dir,
         view_transmittance,
         u_render_state.time,
-        dynamic_pixel_size
     );
 
     procedural_color = clamp(procedural_color, vec3<f32>(0.0), vec3<f32>(65000.0));

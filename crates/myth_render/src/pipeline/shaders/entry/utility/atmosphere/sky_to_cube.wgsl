@@ -40,12 +40,15 @@ var dest: texture_storage_2d_array<rgba16float, write>;
 @group(0) @binding(4)
 var t_transmittance: texture_2d<f32>;
 
+@group(0) @binding(5)
+var t_moon_albedo: texture_2d<f32>;
+
 $$ if CELESTIAL_STARBOX_EQUIRECT
-@group(0) @binding(5) var t_starbox_2d: texture_2d<f32>;
+@group(0) @binding(6) var t_starbox_2d: texture_2d<f32>;
 $$ endif
 
 $$ if CELESTIAL_STARBOX_CUBE
-@group(0) @binding(5) var t_starbox_cube: texture_cube<f32>;
+@group(0) @binding(6) var t_starbox_cube: texture_cube<f32>;
 $$ endif
 
 {$ include "entry/utility/atmosphere/celestial_bodies" $}
@@ -74,14 +77,17 @@ fn main(@builtin(global_invocation_id) id: vec3<u32>) {
     }
 
     let uv = (vec2<f32>(id.xy) + 0.5) / vec2<f32>(dims);
-    let dir = normalize(get_cube_direction(face, uv));
+    let cube_dir = normalize(get_cube_direction(face, uv));
+
+    // Engine uses right-handed coordinates, so we flip the X axis to match the left-handed coordinates used by cube map sampling
+    let dir = vec3<f32>(-cube_dir.x, cube_dir.y, cube_dir.z);
 
     // Sample sky-view LUT
     let sky_uv = direction_to_sky_view_uv(dir);
     var color = textureSampleLevel(t_sky_view, s_skybox, sky_uv, 0.0).rgb;
     let view_transmittance = sample_direction_transmittance(dir);
 
-    color += compute_celestial_lighting(dir, view_transmittance, 0.0, 0.25);
+    color += compute_celestial_lighting(dir, view_transmittance, 0.0);
 
     let safe_color = clamp(color, vec3<f32>(0.0), vec3<f32>(65000.0));
     textureStore(dest, vec2<u32>(id.xy), face, vec4<f32>(safe_color, 1.0));

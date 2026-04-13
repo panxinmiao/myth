@@ -78,7 +78,14 @@ impl DayNightCycle {
     /// Sets the simulation speed in hours per second.
     #[must_use]
     pub fn with_time_speed(mut self, time_speed: f32) -> Self {
-        self.time_speed = time_speed.max(0.0);
+        self.time_speed = time_speed;
+        self
+    }
+
+    /// Sets the current day count, which drives moon phase and sidereal drift.
+    #[must_use]
+    pub fn with_day_count(mut self, day_count: f32) -> Self {
+        self.day_count = day_count.max(0.0);
         self
     }
 

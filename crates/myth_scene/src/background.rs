@@ -126,6 +126,12 @@ pub struct ProceduralSkyParams {
     /// Earth default: `6_460_000.0`.
     pub atmosphere_radius: f32,
 
+    /// Optional user-provided orthographic moon albedo texture.
+    ///
+    /// The texture should represent the visible lunar face in sRGB without
+    /// baked lighting so procedural phase shading remains physically correct.
+    pub moon_albedo_texture: Option<TextureSource>,
+
     /// Optional user-provided star-field texture used for the night sky.
     ///
     /// 2D textures are treated as equirectangular panoramas; cube textures are
@@ -161,7 +167,7 @@ impl ProceduralSkyParams {
             sun_disk_size: 0.53,
             moon_disk_size: 0.52,
             sun_intensity: 30.0,
-            moon_intensity: 3.0,
+            moon_intensity: 1.0,
             rayleigh_scattering: Vec3::new(5.802e-6, 13.558e-6, 33.1e-6),
             rayleigh_scale_height: 8000.0,
             mie_scattering: 3.996e-6,
@@ -171,6 +177,7 @@ impl ProceduralSkyParams {
             ozone_absorption: Vec3::new(0.65e-6, 1.881e-6, 0.085e-6),
             planet_radius: 6_360_000.0,
             atmosphere_radius: 6_460_000.0,
+            moon_albedo_texture: None,
             starbox_texture: None,
             star_intensity: 1.0,
             star_rotation: 0.0,
@@ -273,11 +280,26 @@ impl ProceduralSkyParams {
     }
 
     /// Sets the optional star texture and increments the version.
-    pub fn set_starbox_texture(&mut self, starbox_texture: Option<TextureSource>) {
+    pub fn set_starbox_texture<T: Into<Option<TextureSource>>>(&mut self, starbox_texture: T) {
+        let starbox_texture = starbox_texture.into();
         if self.starbox_texture != starbox_texture {
             self.starbox_texture = starbox_texture;
             self.version = self.version.wrapping_add(1);
         }
+    }
+
+    /// Sets the optional moon albedo texture and increments the version.
+    pub fn set_moon_albedo_texture<T: Into<Option<TextureSource>>>(&mut self, moon_albedo_texture: T) {
+        let moon_albedo_texture = moon_albedo_texture.into();
+        if self.moon_albedo_texture != moon_albedo_texture {
+            self.moon_albedo_texture = moon_albedo_texture;
+            self.version = self.version.wrapping_add(1);
+        }
+    }
+
+    /// Convenience alias for setting the moon albedo texture.
+    pub fn set_moon_texture<T: Into<Option<TextureSource>>>(&mut self, moon_texture: T) {
+        self.set_moon_albedo_texture(moon_texture);
     }
 
     /// Sets the Rayleigh scattering coefficients and increments the version.

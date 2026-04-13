@@ -62,6 +62,7 @@ const SKYBOX_SAMPLER_KEY: TextureSampler = TextureSampler {
 struct SkyboxPipelineKey {
     variant: SkyboxVariant,
     procedural_starbox: ProceduralStarboxKind,
+    procedural_moon_texture: bool,
     color_format: wgpu::TextureFormat,
     depth_format: wgpu::TextureFormat,
     msaa_samples: u32,
@@ -125,6 +126,7 @@ impl SkyboxVariant {
         self,
         defines: &mut ShaderDefines,
         starbox_kind: ProceduralStarboxKind,
+        moon_texture: bool,
     ) {
         defines.set(self.shader_define_key(), "1");
         if self == Self::Procedural {
@@ -137,14 +139,32 @@ impl SkyboxVariant {
                     defines.set("CELESTIAL_STARBOX_CUBE", "1");
                 }
             }
+            if moon_texture {
+                defines.set("USE_MOON_TEXTURE", "1");
+            }
         }
     }
+}
+
+#[derive(Clone, Copy)]
+struct ResolvedTextureView<'a> {
+    view: &'a wgpu::TextureView,
+    view_dimension: wgpu::TextureViewDimension,
+    resource_key: u64,
 }
 
 #[derive(Clone, Copy)]
 struct ProceduralStarboxView<'a> {
     view: &'a wgpu::TextureView,
     kind: ProceduralStarboxKind,
+    resource_key: u64,
+}
+
+#[derive(Clone, Copy)]
+struct ProceduralMoonView<'a> {
+    view: &'a wgpu::TextureView,
+    resource_key: u64,
+    enabled: bool,
 }
 
 // ─── Layout Helpers ───────────────────────────────────────────────────────────
@@ -243,6 +263,16 @@ fn create_procedural_layout(device: &wgpu::Device) -> wgpu::BindGroupLayout {
                 },
                 count: None,
             },
+            wgpu::BindGroupLayoutEntry {
+                binding: 4,
+                visibility: wgpu::ShaderStages::FRAGMENT,
+                ty: wgpu::BindingType::Texture {
+                    sample_type: wgpu::TextureSampleType::Float { filterable: true },
+                    view_dimension: wgpu::TextureViewDimension::D2,
+                    multisampled: false,
+                },
+                count: None,
+            },
         ],
     })
 }
@@ -293,6 +323,16 @@ fn create_procedural_texture_layout(
             },
             wgpu::BindGroupLayoutEntry {
                 binding: 4,
+                visibility: wgpu::ShaderStages::FRAGMENT,
+                ty: wgpu::BindingType::Texture {
+                    sample_type: wgpu::TextureSampleType::Float { filterable: true },
+                    view_dimension: wgpu::TextureViewDimension::D2,
+                    multisampled: false,
+                },
+                count: None,
+            },
+            wgpu::BindGroupLayoutEntry {
+                binding: 5,
                 visibility: wgpu::ShaderStages::FRAGMENT,
                 ty: wgpu::BindingType::Texture {
                     sample_type: wgpu::TextureSampleType::Float { filterable: true },
@@ -441,8 +481,11 @@ impl SkyboxFeature {
             .expect("Global state must exist");
 
         let mut defines = ShaderDefines::new();
-        key.variant
-            .apply_shader_defines(&mut defines, key.procedural_starbox);
+        key.variant.apply_shader_defines(
+            &mut defines,
+            key.procedural_starbox,
+            key.procedural_moon_texture,
+        );
 
         let mut options = ShaderCompilationOptions {
             defines,
@@ -505,17 +548,27 @@ impl SkyboxFeature {
     fn resolve_texture_view_with_dimension<'a>(
         resource_manager: &'a crate::core::ResourceManager,
         source: &TextureSource,
-    ) -> Option<(&'a wgpu::TextureView, wgpu::TextureViewDimension)> {
+    ) -> Option<ResolvedTextureView<'a>> {
         match source {
             TextureSource::Asset(handle) => {
                 let binding = resource_manager.texture_bindings.get(*handle)?;
                 let img = resource_manager.gpu_images.get(binding.image_handle)?;
-                Some((&img.default_view, img.default_view_dimension))
+                Some(ResolvedTextureView {
+                    view: &img.default_view,
+                    view_dimension: img.default_view_dimension,
+                    resource_key: binding.view_id,
+                })
             }
-            TextureSource::Attachment(id, dim) => resource_manager
-                .internal_resources
-                .get(id)
-                .map(|view| (view, *dim)),
+            TextureSource::Attachment(id, dim) => {
+                resource_manager
+                    .internal_resources
+                    .get(id)
+                    .map(|view| ResolvedTextureView {
+                        view,
+                        view_dimension: *dim,
+                        resource_key: *id,
+                    })
+            }
         }
     }
 
@@ -524,16 +577,17 @@ impl SkyboxFeature {
         source: &TextureSource,
         mapping: BackgroundMapping,
     ) -> Option<&'a wgpu::TextureView> {
-        let (view, view_dimension) =
-            Self::resolve_texture_view_with_dimension(resource_manager, source)?;
+        let resolved = Self::resolve_texture_view_with_dimension(resource_manager, source)?;
         match mapping {
-            BackgroundMapping::Cube if view_dimension == wgpu::TextureViewDimension::Cube => {
-                Some(view)
+            BackgroundMapping::Cube
+                if resolved.view_dimension == wgpu::TextureViewDimension::Cube =>
+            {
+                Some(resolved.view)
             }
             BackgroundMapping::Equirectangular | BackgroundMapping::Planar
-                if view_dimension == wgpu::TextureViewDimension::D2 =>
+                if resolved.view_dimension == wgpu::TextureViewDimension::D2 =>
             {
-                Some(view)
+                Some(resolved.view)
             }
             _ => None,
         }
@@ -543,10 +597,38 @@ impl SkyboxFeature {
         resource_manager: &'a crate::core::ResourceManager,
         source: &TextureSource,
     ) -> Option<ProceduralStarboxView<'a>> {
-        let (view, view_dimension) =
-            Self::resolve_texture_view_with_dimension(resource_manager, source)?;
-        let kind = ProceduralStarboxKind::from_view_dimension(view_dimension)?;
-        Some(ProceduralStarboxView { view, kind })
+        let resolved = Self::resolve_texture_view_with_dimension(resource_manager, source)?;
+        let kind = ProceduralStarboxKind::from_view_dimension(resolved.view_dimension)?;
+        Some(ProceduralStarboxView {
+            view: resolved.view,
+            kind,
+            resource_key: resolved.resource_key,
+        })
+    }
+
+    fn resolve_procedural_moon_view<'a>(
+        resource_manager: &'a crate::core::ResourceManager,
+        source: Option<TextureSource>,
+    ) -> ProceduralMoonView<'a> {
+        source
+            .and_then(|source| {
+                let resolved =
+                    Self::resolve_texture_view_with_dimension(resource_manager, &source)?;
+                if resolved.view_dimension != wgpu::TextureViewDimension::D2 {
+                    return None;
+                }
+
+                Some(ProceduralMoonView {
+                    view: resolved.view,
+                    resource_key: resolved.resource_key,
+                    enabled: true,
+                })
+            })
+            .unwrap_or(ProceduralMoonView {
+                view: &resource_manager.system_textures.white_2d,
+                resource_key: resource_manager.system_textures.white_2d.id(),
+                enabled: false,
+            })
     }
 
     /// Extract scene data and prepare GPU resources for skybox rendering.
@@ -601,6 +683,18 @@ impl SkyboxFeature {
             }
         }
 
+        if let BackgroundMode::Procedural(params) = background_mode
+            && let Some(TextureSource::Asset(handle)) = params.moon_albedo_texture
+        {
+            let state = ctx.resource_manager.prepare_texture(ctx.assets, handle);
+            if matches!(state, ResourceState::Pending)
+                && self.current_bind_group.is_some()
+                && self.current_pipeline.is_some()
+            {
+                return;
+            }
+        }
+
         // Ensure the custom sampler is created (first frame only; subsequent
         // frames are a no-op HashMap lookup). The mutable borrow is released
         // before we resolve the texture view below.
@@ -626,6 +720,13 @@ impl SkyboxFeature {
             }),
             _ => None,
         };
+        let procedural_moon = match background_mode {
+            BackgroundMode::Procedural(params) => Some(Self::resolve_procedural_moon_view(
+                ctx.resource_manager,
+                params.moon_albedo_texture,
+            )),
+            _ => None,
+        };
         let procedural_starbox_kind =
             procedural_starbox.map_or(ProceduralStarboxKind::None, |starbox| starbox.kind);
 
@@ -644,6 +745,7 @@ impl SkyboxFeature {
                 self.current_pipeline = None;
                 return;
             };
+            let moon = procedural_moon.expect("procedural moon view must exist");
             let sampler = self
                 .procedural_sampler
                 .as_ref()
@@ -653,11 +755,11 @@ impl SkyboxFeature {
                 .with_resource(resources.bake_params_buffer.id())
                 .with_resource(resources.sky_view_view.id())
                 .with_resource(resources.transmittance_view.id())
-                .with_resource(sampler.id());
+                .with_resource(sampler.id())
+                .with_resource(moon.resource_key);
 
             let key = if let Some(starbox) = procedural_starbox {
-                let starbox_key = std::ptr::from_ref::<wgpu::TextureView>(starbox.view) as u64;
-                key.with_resource(starbox_key)
+                key.with_resource(starbox.resource_key)
             } else {
                 key
             };
@@ -692,6 +794,10 @@ impl SkyboxFeature {
                             },
                             wgpu::BindGroupEntry {
                                 binding: 4,
+                                resource: wgpu::BindingResource::TextureView(moon.view),
+                            },
+                            wgpu::BindGroupEntry {
+                                binding: 5,
                                 resource: wgpu::BindingResource::TextureView(starbox.view),
                             },
                         ],
@@ -719,6 +825,10 @@ impl SkyboxFeature {
                                 resource: wgpu::BindingResource::TextureView(
                                     resources.transmittance_view,
                                 ),
+                            },
+                            wgpu::BindGroupEntry {
+                                binding: 4,
+                                resource: wgpu::BindingResource::TextureView(moon.view),
                             },
                         ],
                     }),
@@ -801,6 +911,11 @@ impl SkyboxFeature {
                 procedural_starbox_kind
             } else {
                 ProceduralStarboxKind::None
+            },
+            procedural_moon_texture: if variant == SkyboxVariant::Procedural {
+                procedural_moon.is_some_and(|moon| moon.enabled)
+            } else {
+                false
             },
             color_format,
             depth_format: ctx.wgpu_ctx.depth_format,

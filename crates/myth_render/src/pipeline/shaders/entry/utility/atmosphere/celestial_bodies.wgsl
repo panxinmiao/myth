@@ -33,6 +33,16 @@ fn disk_mask(
     return smoothstep(disk_cos - smoothing, disk_cos + smoothing, cos_angle);
 }
 
+$$ if USE_MOON_TEXTURE
+fn sample_moon_albedo(moon_uv: vec2<f32>) -> vec3<f32> {
+$$ if SKYBOX_PROCEDURAL
+    return textureSample(t_moon_albedo, s_skybox, moon_uv).rgb;
+$$ else
+    return textureSampleLevel(t_moon_albedo, s_skybox, moon_uv, 0.0).rgb;
+$$ endif
+}
+$$ endif
+
 fn _sun_disk(dir: vec3<f32>, view_transmittance: vec3<f32>) -> vec3<f32> {
     let dynamic_sun_size = u_bake_params.sun_disk_size
         * mix(3.0, 1.0, smoothstep(0.0, 0.5, u_bake_params.sun_direction.y));
@@ -83,45 +93,53 @@ fn _moon_disk(dir: vec3<f32>, view_transmittance: vec3<f32>) -> vec3<f32> {
 }
 
 fn moon_disk(dir: vec3<f32>, view_transmittance: vec3<f32>, night_factor: f32) -> vec3<f32> {
-    // 1. Determine if the direction is within the moon disk
     let cos_angle = dot(dir, u_bake_params.moon_direction);
-    let angular_radius = (u_bake_params.moon_disk_size * 2.5 * 0.5) * PI / 180.0;
+    let angular_radius = (u_bake_params.moon_disk_size * 3.0 * 0.5) * PI / 180.0;
     let cos_alpha = cos(angular_radius);
-    
+
     if (cos_angle < cos_alpha - 0.0001) {
         return vec3<f32>(0.0);
     }
 
-    // 2. Compute the intersection point on the moon's sphere (world space)
     let sq = max(0.0, cos_angle * cos_angle - cos_alpha * cos_alpha);
     let t_prime = cos_angle - sqrt(sq);
     let sphere_normal = normalize(dir * t_prime - u_bake_params.moon_direction);
 
-
-    let earthshine = 0.03 * night_factor;
-
+    let earthshine = 0.0015 * night_factor;
     let phase_shading = max(0.0, dot(sphere_normal, u_bake_params.sun_direction)) + earthshine;
 
-    // Add surface details (todo: replace this with a real moon texture)
-
+$$ if USE_MOON_TEXTURE
+    var up = vec3<f32>(0.0, 1.0, 0.0);
+    if (abs(u_bake_params.moon_direction.y) > 0.999) {
+        up = vec3<f32>(1.0, 0.0, 0.0);
+    }
+    let moon_right = normalize(cross(up, u_bake_params.moon_direction));
+    let moon_up = cross(u_bake_params.moon_direction, moon_right);
+    let local_x = dot(sphere_normal, moon_right);
+    let local_y = dot(sphere_normal, moon_up);
+    let moon_uv = clamp(
+        vec2<f32>(local_x, local_y) * 0.498 + 0.5, // 0.498 to leave a tiny border to avoid sampling artifacts
+        vec2<f32>(0.0),
+        vec2<f32>(1.0),
+    );
+    let surface_albedo = sample_moon_albedo(moon_uv);
+$$ else
     let dark_color = vec3<f32>(0.08, 0.08, 0.10);
     let bright_color = vec3<f32>(0.92, 0.94, 0.98);
-
     let moon_noise = fbm3D(sphere_normal * 4.0);
-
     let surface_albedo = mix(dark_color, bright_color, moon_noise);
+$$ endif
 
-    // 7. Combine final color
-    // Edge anti-aliasing mask
     let mask = smoothstep(cos_alpha - 0.00005, cos_alpha + 0.00005, cos_angle);
     
-    return surface_albedo * phase_shading * view_transmittance * (mask * u_bake_params.moon_intensity);
+    let final_albedo = pow(surface_albedo, vec3<f32>(1.5));
+    return final_albedo * phase_shading * view_transmittance * (mask * u_bake_params.moon_intensity * 20.0);
 }
 
 // Energy-Conserving Analytical Anti-Aliasing
 // todo: We should skip the AA in the skybox area in TAA and FXAA.
 // Skybox itself does not require AA, while TAA or FXAA will break the energy conservation by blurring the stars.
-fn procedural_star_layer(dir: vec3<f32>, time: f32, pixel_size: f32) -> vec3<f32> {
+fn procedural_star_layer(dir: vec3<f32>, time: f32) -> vec3<f32> {
 
     let grid = dir * 400.0;
     let cell = floor(grid);
@@ -141,6 +159,15 @@ fn procedural_star_layer(dir: vec3<f32>, time: f32, pixel_size: f32) -> vec3<f32
     // Dynamic Anti-Aliasing Core:
     // Take the maximum of the actual pixel_size and physical_size.
     // ==========================================
+
+     $$ if SKYBOX_PROCEDURAL
+    // multiply by 400.0 to convert to our star grid coordinate system, 
+    // and 0.35 is a tuning factor representing the optimal "smoothing radius" for one anti-aliased pixel
+    let pixel_size = length(fwidth(dir)) * 400.0 * 0.35;
+    $$ else
+    let pixel_size = 0.25;
+    $$ endif
+
     let render_size = max(physical_size, pixel_size);
     
     // Energy-Conserving Formula (Square of Area Ratio)
@@ -193,11 +220,15 @@ fn compute_celestial_lighting(
     dir: vec3<f32>,
     view_transmittance: vec3<f32>,
     star_time: f32,
-    pixel_size: f32,
 ) -> vec3<f32> {
-    // sun
+
     var color = vec3<f32>(0.0);
+
+    $$ if SKYBOX_PROCEDURAL
+    // sun
     color += sun_disk(dir, view_transmittance);
+    $$ endif
+
 
     // star sky
     let night_factor = 1.0 - smoothstep(-0.12, 0.04, u_bake_params.sun_direction.y);
@@ -207,7 +238,7 @@ fn compute_celestial_lighting(
         u_bake_params.star_rotation,
     );
 
-    var night_color = procedural_star_layer(rotated_star_dir, star_time, pixel_size);
+    var night_color = procedural_star_layer(rotated_star_dir, star_time);
     night_color += sample_starbox(rotated_star_dir) * u_bake_params.star_intensity;
     color += night_color * view_transmittance * night_factor;
 

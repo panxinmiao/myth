@@ -33,39 +33,25 @@ impl AppHandler for ProceduralSkyDemo {
             ColorSpace::Srgb,
             true,
         );
+        let moon_albedo =
+            engine
+                .assets
+                .load_texture("examples/assets/moon.jpg", ColorSpace::Srgb, true);
 
         let mut sky = ProceduralSkyParams::golden_hour();
-        sky.set_starbox_texture(Some(starbox.into()));
+        sky.set_starbox_texture(starbox);
+        sky.set_moon_texture(moon_albedo);
         scene
             .background
             .set_mode(BackgroundMode::procedural_with(sky));
 
-        // Directional light aligned with initial sun direction
-        let sun_dir = scene
-            .background
-            .procedural_sky_params()
-            .map(|p| p.sun_direction)
-            .unwrap_or(Vec3::new(0.0, 0.2, -1.0).normalize());
-        let moon_dir = scene
-            .background
-            .procedural_sky_params()
-            .map(|p| p.moon_direction)
-            .unwrap_or(-sun_dir);
 
         let mut sun_light = Light::new_directional(Vec3::new(1.0, 0.95, 0.8), 3.0);
         sun_light.cast_shadows = true;
         let sun_light_node = scene.add_light(sun_light);
-        if let Some(node) = scene.get_node_mut(sun_light_node) {
-            node.transform.position = sun_dir * 10.0;
-            node.transform.look_at(Vec3::ZERO, Vec3::Y);
-        }
 
-        let moon_light = Light::new_directional(Vec3::new(0.62, 0.72, 1.0), 0.08);
+        let moon_light = Light::new_directional(Vec3::new(0.62, 0.72, 1.0), 0.12);
         let moon_light_node = scene.add_light(moon_light);
-        if let Some(node) = scene.get_node_mut(moon_light_node) {
-            node.transform.position = moon_dir * 10.0;
-            node.transform.look_at(Vec3::ZERO, Vec3::Y);
-        }
 
         let cycle = DayNightCycle::new(16.5, 35.0)
             .with_sun(sun_light_node)
@@ -101,7 +87,7 @@ impl AppHandler for ProceduralSkyDemo {
             .set_position(0.0, 0.5, 4.0)
             .look_at(Vec3::ZERO);
         scene.active_camera = Some(cam_node_id);
-        
+
         print_help();
 
         Self {
@@ -138,7 +124,10 @@ impl AppHandler for ProceduralSkyDemo {
         self.cycle.update(scene, &engine.input, frame.dt);
 
         if let Some(fps) = self.fps_counter.update() {
-            window.set_title(&format!("Procedural Sky Day/Night Time: {:.2}, Speed: {:.2} (hour/s) - FPS: {:.0}", self.cycle.time_of_day, self.cycle.time_speed, fps));
+            window.set_title(&format!(
+                "Procedural Sky Day/Night Time: {:.2}, Speed: {:.2} (hour/s) - FPS: {:.0}",
+                self.cycle.time_of_day, self.cycle.time_speed, fps
+            ));
         }
     }
 }
