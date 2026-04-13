@@ -1,0 +1,74 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Myth Engine Gallery</title>
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Sans:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500;700&display=swap" rel="stylesheet">
+    <link rel="stylesheet" href="./style.css">
+</head>
+<body class="gallery-shell" data-page="gallery">
+    <button class="drawer-toggle" id="drawer-toggle" type="button" aria-expanded="false" aria-controls="sidebar">
+        BROWSE
+    </button>
+
+    <aside class="sidebar" id="sidebar">
+        <div class="sidebar-head">
+            <div>
+                <div class="brand-kicker">Myth Engine</div>
+                <h1 class="brand-title">Gallery</h1>
+                <p class="brand-copy">内容优先的实时渲染总览。左侧是索引，右侧始终保留给真正的画面。</p>
+            </div>
+            <button class="sidebar-close" id="sidebar-close" type="button" aria-label="关闭菜单">×</button>
+        </div>
+
+        <div class="sidebar-meta">
+            <span class="meta-pill">WebGPU</span>
+            <span class="meta-pill">WASM</span>
+            <span class="meta-pill">Production</span>
+        </div>
+
+        <nav class="nav-groups" id="nav-groups" aria-label="Gallery navigation"></nav>
+
+        <footer class="sidebar-foot">
+            <a class="ghost-link" href="https://github.com/panxinmiao/myth" target="_blank" rel="noreferrer">GitHub</a>
+            <div class="foot-copy">切换条目时会重建 iframe，以便浏览器及时释放旧的 WebGPU 上下文。</div>
+        </footer>
+    </aside>
+
+    <main class="stage">
+        <iframe id="viewer-frame" class="viewer-frame" title="Myth Gallery Stage" src="about:blank"></iframe>
+
+        <section class="stage-panel">
+            <div class="stage-panel-top">
+                <div>
+                    <div class="stage-label" id="entry-kind">Gallery item</div>
+                    <h2 class="stage-title" id="entry-name">加载中</h2>
+                </div>
+                <span class="status-badge" id="entry-status">Preparing</span>
+            </div>
+
+            <p class="stage-description" id="entry-description">正在解析示例清单并准备默认路由。</p>
+
+            <div class="stage-path" id="entry-source-path"></div>
+
+            <div class="stage-actions">
+                <a class="action-button" id="entry-source" href="#" target="_blank" rel="noreferrer">查看源码</a>
+                <a class="action-button action-button-primary" id="entry-open" href="#" target="stage-preview">单独打开</a>
+            </div>
+        </section>
+
+        <section class="stage-empty hidden" id="stage-empty">
+            <div class="stage-empty-card">
+                <div class="stage-empty-label" id="stage-empty-label">Native Only</div>
+                <h2 id="stage-empty-title">该条目不提供网页运行时</h2>
+                <p id="stage-empty-copy">这类示例仍会纳入 Gallery 索引，但不会尝试在浏览器里挂载不存在的 WebGPU 页面。</p>
+            </div>
+        </section>
+    </main>
+
+    <script type="module" src="./main.js"></script>
+</body>
+</html>

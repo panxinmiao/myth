@@ -194,6 +194,7 @@ pub mod prelude {
 pub use myth_app::winit::App;
 pub use myth_app::{AppHandler, Window};
 pub use myth_app::{Engine, FrameState};
+pub use myth_macros::main;
 
 // Scene
 pub use myth_core::{NodeHandle, Transform};

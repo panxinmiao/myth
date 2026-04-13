@@ -1,3 +1,10 @@
+//! [gallery]
+//! name = "Phong Box"
+//! category = "Materials"
+//! description = "Classic Blinn-Phong shaded cube with a generated checker texture."
+//! order = 110
+//!
+
 use myth::prelude::*;
 
 /// Phong Material Cube Example
@@ -53,7 +60,7 @@ impl AppHandler for PhongBox {
     }
 }
 
+#[myth::main]
 fn main() -> myth::Result<()> {
-    env_logger::init();
     App::new().run::<PhongBox>()
 }

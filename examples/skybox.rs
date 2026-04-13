@@ -1,3 +1,10 @@
+//! [gallery]
+//! name = "Skybox & Backgrounds"
+//! category = "Environment"
+//! description = "Compares solid, gradient, panoramic, cubemap, and procedural background modes."
+//! order = 220
+//!
+
 //! Skybox / Background Demo
 //!
 //! Demonstrates all background modes and both rendering paths (HDR / LDR).
@@ -18,6 +25,14 @@
 use myth::prelude::*;
 use myth::resources::Key;
 use myth::utils::FpsCounter;
+
+#[cfg(not(target_arch = "wasm32"))]
+const ASSET_PATH: &str = "examples/assets/";
+#[cfg(target_arch = "wasm32")]
+const ASSET_PATH: &str = match option_env!("MYTH_ASSET_PATH") {
+    Some(path) => path,
+    None => "assets/",
+};
 
 /// Which demo mode is active.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -56,6 +71,9 @@ struct SkyboxDemo {
     env_texture: TextureHandle,
     /// Cube map texture handle (if using CubeMap mode)
     cube_env_texture: TextureHandle,
+    /// Deferred glTF sample shown inside the scene
+    helmet_prefab: PrefabHandle,
+    helmet_loaded: bool,
 }
 
 impl SkyboxDemo {
@@ -100,24 +118,20 @@ impl AppHandler for SkyboxDemo {
         // --- Load HDR environment texture (used for both IBL and equirectangular skybox) ---
         let env_texture = engine
             .assets
-            .load_hdr_texture_blocking("examples/assets/envs/royal_esplanade_2k.hdr.jpg")
-            .expect("Failed to load HDR environment map");
+            .load_hdr_texture(format!("{}envs/blouberg_sunrise_2_1k.hdr", ASSET_PATH));
 
-        let cube_env_texture = engine
-            .assets
-            .load_cube_texture_blocking(
-                [
-                    "examples/assets/envs/Park2/posx.jpg",
-                    "examples/assets/envs/Park2/negx.jpg",
-                    "examples/assets/envs/Park2/posy.jpg",
-                    "examples/assets/envs/Park2/negy.jpg",
-                    "examples/assets/envs/Park2/posz.jpg",
-                    "examples/assets/envs/Park2/negz.jpg",
-                ],
-                ColorSpace::Srgb,
-                true,
-            )
-            .expect("Failed to load environment map");
+        let cube_env_texture = engine.assets.load_cube_texture(
+            [
+                format!("{}envs/Park2/posx.jpg", ASSET_PATH),
+                format!("{}envs/Park2/negx.jpg", ASSET_PATH),
+                format!("{}envs/Park2/posy.jpg", ASSET_PATH),
+                format!("{}envs/Park2/negy.jpg", ASSET_PATH),
+                format!("{}envs/Park2/posz.jpg", ASSET_PATH),
+                format!("{}envs/Park2/negz.jpg", ASSET_PATH),
+            ],
+            ColorSpace::Srgb,
+            true,
+        );
 
         // --- Scene setup ---
         let scene = engine.scene_manager.create_active();
@@ -135,12 +149,9 @@ impl AppHandler for SkyboxDemo {
         let mode = DemoMode::Gradient;
 
         // --- Load reference model ---
-        let gltf_path =
-            std::path::Path::new("examples/assets/DamagedHelmet/glTF/DamagedHelmet.gltf");
-        let prefab =
-            GltfLoader::load(gltf_path, engine.assets.clone()).expect("Failed to load glTF model");
-        let node = scene.instantiate(&prefab);
-        scene.node(&node).set_scale(1.0).set_position(0.0, 0.0, 0.0);
+        let helmet_prefab = engine
+            .assets
+            .load_gltf(format!("{}DamagedHelmet/glTF/DamagedHelmet.gltf", ASSET_PATH));
 
         // --- Camera ---
         let cam_node = scene.add_camera(Camera::new_perspective(45.0, 1280.0 / 720.0, 0.1));
@@ -162,6 +173,8 @@ impl AppHandler for SkyboxDemo {
             render_path,
             env_texture,
             cube_env_texture,
+            helmet_prefab,
+            helmet_loaded: false,
         };
 
         // Apply initial mode
@@ -171,9 +184,21 @@ impl AppHandler for SkyboxDemo {
     }
 
     fn update(&mut self, engine: &mut Engine, window: &dyn Window, frame: &FrameState) {
+        let assets = engine.assets.clone();
         let Some(scene) = engine.scene_manager.active_scene_mut() else {
             return;
         };
+
+        if !self.helmet_loaded {
+            if let Some(prefab) = assets.prefabs.get(self.helmet_prefab) {
+                let node = scene.instantiate(prefab.as_ref());
+                scene.node(&node).set_scale(1.0).set_position(0.0, 0.0, 0.0);
+                self.helmet_loaded = true;
+            } else if let Some(err) = assets.prefabs.get_error(self.helmet_prefab) {
+                eprintln!("Failed to load skybox demo helmet: {err}");
+                self.helmet_loaded = true;
+            }
+        }
 
         // --- Mode switching ---
         let mut mode_changed = false;
@@ -246,8 +271,8 @@ impl AppHandler for SkyboxDemo {
     }
 }
 
+#[myth::main]
 fn main() -> myth::Result<()> {
-    env_logger::init();
     App::new()
         .with_settings(RendererSettings {
             path: RenderPath::BasicForward,

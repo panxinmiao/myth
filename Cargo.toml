@@ -6,6 +6,7 @@
 resolver = "2"
 members = [
     "crates/myth_core",
+    "crates/myth_dev_utils",
     "crates/myth_macros",
     "crates/myth_resources",
     "crates/myth_animation",
@@ -13,6 +14,10 @@ members = [
     "crates/myth_assets",
     "crates/myth_render",
     "crates/myth_app",
+    "demo_apps/showcase",
+    "demo_apps/gltf_viewer",
+    "demo_apps/gltf_shower",
+    "xtask",
 ]
 
 # =============================================================================
@@ -36,7 +41,9 @@ categories = ["game-development", "graphics", "rendering::engine"]
 
 [workspace.dependencies]
 # Internal crates
+myth           = { package = "myth-engine", path = ".", version = "0.2.0" }
 myth_core      = { path = "crates/myth_core", version = "0.2.0" }
+myth_dev_utils = { path = "crates/myth_dev_utils", version = "0.2.0" }
 myth_macros    = { path = "crates/myth_macros", version = "0.2.0" }
 myth_resources = { path = "crates/myth_resources", version = "0.2.0" }
 myth_animation = { path = "crates/myth_animation", version = "0.2.0" }
@@ -172,6 +179,7 @@ crate-type = ["cdylib", "rlib"]
 
 [dependencies]
 myth_core      = { workspace = true }
+myth_macros    = { workspace = true }
 myth_resources = { workspace = true }
 myth_animation = { workspace = true }
 myth_scene     = { workspace = true }
@@ -184,9 +192,9 @@ log  = { workspace = true }
 
 [dev-dependencies]
 anyhow = { workspace = true }
-rfd    = { workspace = true }
 env_logger = { workspace = true }
 image = { workspace = true }
+myth_dev_utils = { workspace = true }
 pollster = { workspace = true }
 serde = { workspace = true }
 serde_json = { workspace = true }
@@ -200,8 +208,6 @@ half = { workspace = true }
 [target.'cfg(not(target_arch = "wasm32"))'.dev-dependencies]
 criterion = { workspace = true, features = ["html_reports"] }
 egui      = { workspace = true }
-egui-wgpu = { workspace = true, features = ["winit"] }
-egui-winit = { workspace = true }
 tokio = { workspace = true, features = ["fs", "rt-multi-thread", "macros"] }
 ehttp = { workspace = true }
 wgpu = { workspace = true }
@@ -211,8 +217,6 @@ winit = { workspace = true }
 wasm-bindgen-test = { workspace = true }
 criterion = { workspace = true, default-features = false }
 egui      = { workspace = true }
-egui-wgpu = { workspace = true, features = ["winit"] }
-egui-winit = { workspace = true, default-features = false, features = ["links"] }
 wasm-bindgen = { workspace = true }
 wasm-bindgen-futures = { workspace = true }
 console_error_panic_hook = { workspace = true }
@@ -238,6 +242,13 @@ http = ["myth_assets/http"]
 
 [lints]
 workspace = true
+
+[workspace.metadata.gallery]
+frontend_dir = "demo_apps/gallery"
+demo_apps_dir = "demo_apps"
+examples_dir = "examples"
+gallery_dist_dir = "gallery"
+dist_dir = "dist"
 
 [[example]]
 name = "lut_baker"

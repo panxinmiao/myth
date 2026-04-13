@@ -4,8 +4,8 @@
 //! Features visual presets (Cinematic / Studio / Daylight), auto-camera,
 //! full post-processing pipeline, and an elegant web overlay.
 //!
-//! Native:  `cargo run --example showcase --release`
-//! WASM:    `scripts/build_wasm.bat showcase`
+//! Native:  `cargo run -p showcase --release`
+//! WASM:    `cargo xtask build-app showcase`
 
 use myth_resources::tone_mapping::AgxLook;
 #[cfg(target_arch = "wasm32")]
@@ -17,7 +17,7 @@ use std::collections::HashMap;
 use myth::ToneMappingMode;
 use myth::assets::SharedPrefab;
 use myth::prelude::*;
-use myth::utils::FpsCounter;
+use myth_dev_utils::FpsCounter;
 use myth_resources::MouseButton;
 
 #[cfg(target_arch = "wasm32")]
@@ -706,33 +706,13 @@ fn hide_loading_overlay() {
 
 // ── Entry Points ────────────────────────────────────────────────────────────
 
-#[cfg(not(target_arch = "wasm32"))]
+#[myth::main]
 fn main() -> myth::Result<()> {
-    env_logger::init();
-
     App::new()
         .with_title("Myth Engine — Showcase")
-        .with_settings(RendererSettings {
-            anisotropy_clamp: 4,
-            ..Default::default()
-        })
-        .run::<ShowcaseApp>()
-}
-
-#[cfg(target_arch = "wasm32")]
-#[wasm_bindgen(start)]
-pub fn wasm_main() {
-    std::panic::set_hook(Box::new(console_error_panic_hook::hook));
-    console_log::init_with_level(log::Level::Info).unwrap();
-
-    App::new()
         .with_settings(RendererSettings {
             anisotropy_clamp: if is_mobile_device() { 1 } else { 4 },
             ..Default::default()
         })
         .run::<ShowcaseApp>()
-        .unwrap();
 }
-
-#[cfg(target_arch = "wasm32")]
-fn main() {}

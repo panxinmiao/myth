@@ -1,0 +1,35 @@
+[package]
+name = "showcase"
+description = "Hero showcase application for Myth Engine."
+version.workspace = true
+rust-version.workspace = true
+edition.workspace = true
+authors.workspace = true
+license.workspace = true
+repository.workspace = true
+homepage.workspace = true
+publish = false
+
+[package.metadata.gallery]
+name = "Showcase"
+category = "Showcase Apps"
+description = "Cinematic hero demo with lighting presets, post-processing, and launch-ready presentation."
+order = 10
+
+[[bin]]
+name = "showcase"
+path = "main.rs"
+
+[dependencies]
+myth = { workspace = true, features = ["gltf-meshopt"] }
+myth_dev_utils = { workspace = true }
+myth_resources = { workspace = true }
+
+log = { workspace = true }
+
+[target.'cfg(target_arch = "wasm32")'.dependencies]
+wasm-bindgen = { workspace = true }
+web-sys = { workspace = true, features = ["Window", "Document", "Element", "DomTokenList"] }
+
+[lints]
+workspace = true

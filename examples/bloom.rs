@@ -1,3 +1,10 @@
+//! [gallery]
+//! name = "Bloom"
+//! category = "Post-Processing"
+//! description = "Interactive bloom tuning demo driven by a glTF character and HDR lighting."
+//! order = 310
+//!
+
 //! Physically-Based Bloom Example
 //!
 //! Demonstrates the engine's physically-based bloom post-processing effect
@@ -16,10 +23,20 @@ use myth::prelude::*;
 use myth::resources::Key;
 use myth::utils::FpsCounter;
 
+#[cfg(not(target_arch = "wasm32"))]
+const ASSET_PATH: &str = "examples/assets/";
+#[cfg(target_arch = "wasm32")]
+const ASSET_PATH: &str = match option_env!("MYTH_ASSET_PATH") {
+    Some(path) => path,
+    None => "assets/",
+};
+
 struct BloomDemo {
     cam_node_id: NodeHandle,
     controls: OrbitControls,
     fps_counter: FpsCounter,
+    model_prefab: PrefabHandle,
+    model_loaded: bool,
 }
 
 impl AppHandler for BloomDemo {
@@ -27,7 +44,7 @@ impl AppHandler for BloomDemo {
         // Load HDR environment map for realistic IBL lighting
         let env_texture_handle = engine
             .assets
-            .load_hdr_texture("examples/assets/envs/blouberg_sunrise_2_1k.hdr");
+            .load_hdr_texture(format!("{}envs/blouberg_sunrise_2_1k.hdr", ASSET_PATH));
 
         let scene = engine.scene_manager.create_active();
         scene.environment.set_env_map(Some(env_texture_handle));
@@ -37,20 +54,11 @@ impl AppHandler for BloomDemo {
         scene.add_light(Light::new_directional(Vec3::new(1.0, 1.0, 1.0), 3.0));
 
         // Load the DamagedHelmet model (has nice emissive and specular detail)
-        let gltf_path = std::path::Path::new("examples/assets/phoenix_bird.glb");
-        let prefab =
-            GltfLoader::load(gltf_path, engine.assets.clone()).expect("Failed to load glTF model");
-        let gltf_node = scene.instantiate(&prefab);
+        let model_prefab = engine
+            .assets
+            .load_gltf(format!("{}phoenix_bird.glb", ASSET_PATH));
 
-        // Play animation
-        scene.play_if_any_animation(gltf_node);
-
-        let mut controls = OrbitControls::new(Vec3::new(0.0, 0.0, 3.0), Vec3::ZERO);
-
-        scene.update_matrix_world();
-        if let Some(bbox) = scene.get_bbox_of_node(gltf_node, &engine.assets) {
-            controls.fit(&bbox);
-        }
+        let controls = OrbitControls::new(Vec3::new(0.0, 0.0, 3.0), Vec3::ZERO);
 
         // Configure bloom
         scene.bloom.set_enabled(true);
@@ -79,13 +87,31 @@ impl AppHandler for BloomDemo {
             cam_node_id,
             controls,
             fps_counter: FpsCounter::new(),
+            model_prefab,
+            model_loaded: false,
         }
     }
 
     fn update(&mut self, engine: &mut Engine, window: &dyn Window, frame: &FrameState) {
+        let assets = engine.assets.clone();
         let Some(scene) = engine.scene_manager.active_scene_mut() else {
             return;
         };
+
+        if !self.model_loaded {
+            if let Some(prefab) = assets.prefabs.get(self.model_prefab) {
+                let gltf_node = scene.instantiate(prefab.as_ref());
+                scene.play_if_any_animation(gltf_node);
+                scene.update_matrix_world();
+                if let Some(bbox) = scene.get_bbox_of_node(gltf_node, &assets) {
+                    self.controls.fit(&bbox);
+                }
+                self.model_loaded = true;
+            } else if let Some(err) = assets.prefabs.get_error(self.model_prefab) {
+                eprintln!("Failed to load bloom demo model: {err}");
+                self.model_loaded = true;
+            }
+        }
 
         // Camera controls
         if let Some(cam_node) = scene.get_node_mut(self.cam_node_id) {
@@ -167,8 +193,8 @@ impl AppHandler for BloomDemo {
     }
 }
 
+#[myth::main]
 fn main() -> myth::Result<()> {
-    env_logger::init();
     App::new()
         .with_settings(RendererSettings {
             vsync: false,

@@ -1,5 +1,20 @@
+//! [gallery]
+//! name = "Earth"
+//! category = "Environment"
+//! description = "Layered Earth rendering with day, night, normal, and cloud textures."
+//! order = 210
+//!
+
 use myth::prelude::*;
 use myth::utils::fps_counter::FpsCounter;
+
+#[cfg(not(target_arch = "wasm32"))]
+const ASSET_PATH: &str = "examples/assets/";
+#[cfg(target_arch = "wasm32")]
+const ASSET_PATH: &str = match option_env!("MYTH_ASSET_PATH") {
+    Some(path) => path,
+    None => "assets/",
+};
 
 /// Earth Example
 struct Earth {
@@ -22,27 +37,27 @@ impl AppHandler for Earth {
 
         // Load textures
         let earth_tex_handle = engine.assets.load_texture(
-            "examples/assets/planets/earth_atmos_4096.jpg",
+            format!("{}planets/earth_atmos_4096.jpg", ASSET_PATH),
             ColorSpace::Srgb,
             true,
         );
         let specular_tex_handle = engine.assets.load_texture(
-            "examples/assets/planets/earth_specular_2048.jpg",
+            format!("{}planets/earth_specular_2048.jpg", ASSET_PATH),
             ColorSpace::Srgb,
             true,
         );
         let emssive_tex_handle = engine.assets.load_texture(
-            "examples/assets/planets/earth_lights_2048.png",
+            format!("{}planets/earth_lights_2048.png", ASSET_PATH),
             ColorSpace::Srgb,
             true,
         );
         let normal_map_handle = engine.assets.load_texture(
-            "examples/assets/planets/earth_normal_2048.jpg",
+            format!("{}planets/earth_normal_2048.jpg", ASSET_PATH),
             ColorSpace::Linear,
             true,
         );
         let clouds_tex_handle = engine.assets.load_texture(
-            "examples/assets/planets/earth_clouds_1024.png",
+            format!("{}planets/earth_clouds_1024.png", ASSET_PATH),
             ColorSpace::Srgb,
             true,
         );
@@ -153,8 +168,8 @@ impl AppHandler for Earth {
     }
 }
 
+#[myth::main]
 fn main() -> myth::Result<()> {
-    env_logger::init();
     App::new()
         .with_title("Earth")
         .with_settings(RendererSettings {

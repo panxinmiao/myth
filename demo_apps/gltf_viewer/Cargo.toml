@@ -1,0 +1,50 @@
+[package]
+name = "gltf_viewer"
+description = "Standalone glTF viewer application for Myth Engine."
+version.workspace = true
+rust-version.workspace = true
+edition.workspace = true
+authors.workspace = true
+license.workspace = true
+repository.workspace = true
+homepage.workspace = true
+publish = false
+
+[package.metadata.gallery]
+name = "glTF Viewer"
+category = "Showcase Apps"
+description = "Inspector-driven glTF viewer with local loading, sample browsing, and live material inspection."
+order = 20
+
+[[bin]]
+name = "gltf_viewer"
+path = "main.rs"
+
+[dependencies]
+myth = { workspace = true, features = ["gltf-meshopt"] }
+myth_dev_utils = { workspace = true }
+
+egui = { workspace = true }
+ehttp = { workspace = true }
+glam = { workspace = true }
+log = { workspace = true }
+rfd = { workspace = true }
+serde = { workspace = true }
+serde_json = { workspace = true }
+winit = { workspace = true }
+
+[target.'cfg(not(target_arch = "wasm32"))'.dependencies]
+tokio = { workspace = true, features = ["fs", "rt-multi-thread", "macros"] }
+
+[target.'cfg(target_arch = "wasm32")'.dependencies]
+tokio = { workspace = true, features = ["macros", "sync", "rt", "time"] }
+wasm-bindgen = { workspace = true }
+wasm-bindgen-futures = { workspace = true }
+web-sys = { workspace = true, features = ["Window", "Document", "Element", "DomTokenList"] }
+
+[features]
+default = []
+debug_view = ["myth/debug_view"]
+
+[lints]
+workspace = true

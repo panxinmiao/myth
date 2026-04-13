@@ -1,3 +1,10 @@
+//! [gallery]
+//! name = "All Shadows"
+//! category = "Shadows"
+//! description = "Combined directional, spot, and point-light shadow casting in one scene."
+//! order = 430
+//!
+
 use myth::prelude::*;
 use myth::utils::fps_counter::FpsCounter;
 
@@ -160,8 +167,8 @@ impl AppHandler for ShadowAllLightsDemo {
     }
 }
 
+#[myth::main]
 fn main() -> myth::Result<()> {
-    env_logger::init();
     App::new()
         .with_settings(RendererSettings {
             vsync: false,

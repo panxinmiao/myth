@@ -1,6 +1,7 @@
 /target
 /target_ra
 /debug
+/dist
 
 # Python bindings (bindings/python/)
 bindings/python/target/

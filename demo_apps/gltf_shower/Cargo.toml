@@ -1,0 +1,34 @@
+[package]
+name = "gltf_shower"
+description = "Lightweight standalone glTF showcase viewer for Myth Engine."
+version.workspace = true
+rust-version.workspace = true
+edition.workspace = true
+authors.workspace = true
+license.workspace = true
+repository.workspace = true
+homepage.workspace = true
+publish = false
+
+[package.metadata.gallery]
+name = "glTF Shower"
+category = "Showcase Apps"
+description = "Compact embeddable viewer shell for direct model links and lightweight web deployment."
+order = 30
+
+[[bin]]
+name = "gltf_shower"
+path = "main.rs"
+
+[dependencies]
+myth = { workspace = true, features = ["gltf-meshopt"] }
+myth_dev_utils = { workspace = true }
+
+log = { workspace = true }
+
+[target.'cfg(target_arch = "wasm32")'.dependencies]
+wasm-bindgen = { workspace = true }
+web-sys = { workspace = true, features = ["Window", "Document", "Element", "DomTokenList", "Location", "UrlSearchParams"] }
+
+[lints]
+workspace = true

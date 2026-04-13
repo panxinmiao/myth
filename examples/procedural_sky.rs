@@ -1,6 +1,25 @@
+//! [gallery]
+//! name = "Procedural Sky"
+//! category = "Environment"
+//! description = "Interactive day-night atmosphere demo with celestial controls and UI overlay."
+//! order = 240
+//!
+
+use std::any::Any;
+
+use egui::Slider;
 use myth::prelude::*;
-use myth::utils::FpsCounter;
+use myth_dev_utils::{FpsCounter, UiPass, UiPassNode};
 use myth_resources::Key;
+use winit::event::WindowEvent;
+
+#[cfg(not(target_arch = "wasm32"))]
+const ASSET_PATH: &str = "examples/assets/";
+#[cfg(target_arch = "wasm32")]
+const ASSET_PATH: &str = match option_env!("MYTH_ASSET_PATH") {
+    Some(path) => path,
+    None => "assets/",
+};
 
 /// Procedural Sky Demo
 ///
@@ -10,7 +29,10 @@ struct ProceduralSkyDemo {
     cam_node_id: NodeHandle,
     controls: OrbitControls,
     fps_counter: FpsCounter,
+    ui_pass: UiPass,
     cycle: DayNightCycle,
+    helmet_prefab: PrefabHandle,
+    helmet_loaded: bool,
 }
 
 fn print_help() {
@@ -25,18 +47,27 @@ fn print_help() {
 }
 
 impl AppHandler for ProceduralSkyDemo {
-    fn init(engine: &mut Engine, _window: &dyn Window) -> Self {
+    fn init(engine: &mut Engine, window: &dyn Window) -> Self {
+        let wgpu_ctx = engine
+            .renderer
+            .wgpu_ctx()
+            .expect("Renderer not initialized");
+        let winit_window = window
+            .as_any()
+            .downcast_ref::<winit::window::Window>()
+            .expect("Expected winit window backend");
+        let ui_pass = UiPass::new(&wgpu_ctx.device, wgpu_ctx.surface_view_format, winit_window);
+
         let scene = engine.scene_manager.create_active();
 
         let starbox = engine.assets.load_texture(
-            "examples/assets/envs/Milky_Way_panorama.jpg",
+            format!("{}envs/Milky_Way_panorama.jpg", ASSET_PATH),
             ColorSpace::Srgb,
             true,
         );
-        let moon_albedo =
-            engine
-                .assets
-                .load_texture("examples/assets/moon.jpg", ColorSpace::Srgb, true);
+        let moon_albedo = engine
+            .assets
+            .load_texture(format!("{}moon.jpg", ASSET_PATH), ColorSpace::Srgb, true);
 
         let mut sky = ProceduralSkyParams::golden_hour();
         sky.set_starbox_texture(starbox);
@@ -59,13 +90,10 @@ impl AppHandler for ProceduralSkyDemo {
 
         // scene.add_logic(cycle);
 
-        // Load the DamagedHelmet model as a reference object
-        let gltf_path =
-            std::path::Path::new("examples/assets/DamagedHelmet/glTF/DamagedHelmet.gltf");
-        let prefab =
-            GltfLoader::load(gltf_path, engine.assets.clone()).expect("Failed to load glTF model");
-        let root = scene.instantiate(&prefab);
-        scene.node(&root).set_position(0.0, 0.0, 0.0);
+        let helmet_prefab =
+            engine
+                .assets
+                .load_gltf(format!("{}DamagedHelmet/glTF/DamagedHelmet.gltf", ASSET_PATH));
 
         scene.bloom.set_enabled(true);
         scene.bloom.set_strength(0.02);
@@ -93,14 +121,71 @@ impl AppHandler for ProceduralSkyDemo {
             cam_node_id,
             controls: OrbitControls::new(Vec3::new(0.0, 0.5, 4.0), Vec3::ZERO),
             fps_counter: FpsCounter::new(),
+            ui_pass,
             cycle,
+            helmet_prefab,
+            helmet_loaded: false,
         }
     }
 
+    fn on_event(&mut self, _engine: &mut Engine, window: &dyn Window, event: &dyn Any) -> bool {
+        let Some(event) = event.downcast_ref::<WindowEvent>() else {
+            return false;
+        };
+
+        let winit_window = window
+            .as_any()
+            .downcast_ref::<winit::window::Window>()
+            .expect("Expected winit window backend");
+
+        if self.ui_pass.handle_input(winit_window, event) {
+            return true;
+        }
+
+        if let WindowEvent::Resized(size) = event {
+            self.ui_pass
+                .resize(size.width, size.height, window.scale_factor());
+        }
+
+        false
+    }
+
     fn update(&mut self, engine: &mut Engine, window: &dyn Window, frame: &FrameState) {
+        let winit_window = window
+            .as_any()
+            .downcast_ref::<winit::window::Window>()
+            .expect("Expected winit window backend");
+        self.ui_pass.begin_frame(winit_window);
+        let egui_ctx = self.ui_pass.context().clone();
+        egui::Window::new("Sky Controls")
+            .anchor(egui::Align2::RIGHT_TOP, egui::vec2(-20.0, 20.0))
+            .resizable(false)
+            .show(&egui_ctx, |ui| {
+                ui.label("Procedural atmosphere and celestial motion");
+                ui.separator();
+                ui.checkbox(&mut self.cycle.auto_tick, "Auto animate");
+                ui.add(Slider::new(&mut self.cycle.time_of_day, 0.0..=24.0).text("Solar time"));
+                ui.add(
+                    Slider::new(&mut self.cycle.time_speed, -2.0..=2.0).text("Hours / second"),
+                );
+                ui.label(format!("Day count: {:.2}", self.cycle.day_count));
+                ui.label("Keyboard shortcuts remain available for quick tweaks.");
+            });
+        self.ui_pass.end_frame(winit_window);
+
+        self.cycle.time_of_day = self.cycle.time_of_day.rem_euclid(24.0);
+        let assets = engine.assets.clone();
         let Some(scene) = engine.scene_manager.active_scene_mut() else {
             return;
         };
+
+        if !self.helmet_loaded
+            && let Some(prefab) = assets.prefabs.get(self.helmet_prefab)
+        {
+            let root = scene.instantiate(prefab.as_ref());
+            scene.node(&root).set_position(0.0, 0.0, 0.0);
+            self.helmet_loaded = true;
+        }
 
         // Orbit camera
         if let Some(cam_node) = scene.get_node_mut(self.cam_node_id) {
@@ -129,10 +214,40 @@ impl AppHandler for ProceduralSkyDemo {
             ));
         }
     }
+
+    fn render(&mut self, engine: &mut Engine, _window: &dyn Window) {
+        use myth::renderer::graph::core::{GraphBlackboard, HookStage};
+
+        let Some(composer) = engine.compose_frame() else {
+            return;
+        };
+
+        self.ui_pass
+            .resolve_textures(composer.device(), composer.resource_manager());
+
+        let ui_pass = &mut self.ui_pass;
+        composer
+            .add_custom_pass(HookStage::AfterPostProcess, move |rdg, blackboard| {
+                let new_surface = rdg.add_pass("ProceduralSkyUI", |builder| {
+                    let out = builder.mutate_texture(blackboard.surface_out, "Surface_With_UI");
+                    let node = UiPassNode {
+                        pass: ui_pass,
+                        target_tex: out,
+                    };
+                    (node, out)
+                });
+
+                GraphBlackboard {
+                    surface_out: new_surface,
+                    ..blackboard
+                }
+            })
+            .render();
+    }
 }
 
+#[myth::main]
 fn main() -> myth::Result<()> {
-    env_logger::init();
     App::new()
         .with_settings(RendererSettings {
             vsync: false,

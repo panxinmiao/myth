@@ -7,14 +7,14 @@
 //! 3. Automatically plays the first animation (if any)
 //! 4. Built-in HDR environment lighting
 //!
-//! Build command: cargo build --example showcase_viewer --target wasm32-unknown-unknown --release
+//! Build command: cargo xtask build-app gltf_shower
 
 #[cfg(target_arch = "wasm32")]
 use wasm_bindgen::prelude::*;
 
 use myth::assets::SharedPrefab;
 use myth::prelude::*;
-use myth::utils::FpsCounter;
+use myth_dev_utils::FpsCounter;
 
 #[cfg(target_arch = "wasm32")]
 #[wasm_bindgen(
@@ -208,33 +208,13 @@ fn get_model_url() -> Option<String> {
 
 // --- Entry point ---
 
-#[cfg(not(target_arch = "wasm32"))]
+#[myth::main]
 fn main() -> myth::Result<()> {
-    env_logger::init();
-
     App::new()
         .with_title("Myth Showcase Viewer")
-        .with_settings(RendererSettings {
-            anisotropy_clamp: 4,
-            ..Default::default()
-        })
-        .run::<ShowcaseApp>()
-}
-
-#[cfg(target_arch = "wasm32")]
-#[wasm_bindgen(start)]
-pub fn wasm_main() {
-    std::panic::set_hook(Box::new(console_error_panic_hook::hook));
-    console_log::init_with_level(log::Level::Info).expect("Failed to init logger");
-
-    App::new()
         .with_settings(RendererSettings {
             anisotropy_clamp: if is_mobile_device() { 1 } else { 4 },
             ..Default::default()
         })
         .run::<ShowcaseApp>()
-        .unwrap();
 }
-
-#[cfg(target_arch = "wasm32")]
-fn main() {}

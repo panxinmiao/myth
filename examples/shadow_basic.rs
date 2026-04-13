@@ -1,3 +1,10 @@
+//! [gallery]
+//! name = "Shadow Basic"
+//! category = "Shadows"
+//! description = "Minimal directional shadow map setup with a rotating box and receiver plane."
+//! order = 410
+//!
+
 use myth::prelude::*;
 use myth::utils::fps_counter::FpsCounter;
 
@@ -84,8 +91,8 @@ impl AppHandler for ShadowBasicDemo {
     }
 }
 
+#[myth::main]
 fn main() -> myth::Result<()> {
-    env_logger::init();
     App::new()
         .with_settings(RendererSettings {
             vsync: false,

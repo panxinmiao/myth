@@ -1,3 +1,10 @@
+//! [gallery]
+//! name = "Custom Material"
+//! category = "Materials"
+//! description = "Registers a custom WGSL shader template and visualises normals in world space."
+//! order = 130
+//!
+
 //! Custom Material Example — Normal Visualization
 //!
 //! Demonstrates the custom shader registration API by defining a material
@@ -16,14 +23,14 @@ use myth_resources::myth_material;
 // ── Custom WGSL Template ───────────────────────────────────────────────
 //
 // Embedded at compile-time.  The template engine resolves `{% include %}`
-// directives against the built-in chunk library, so `vertex_output_def`
-// and `fragment_output_def` work out of the box.
+// directives against the built-in chunk library, so `vertex_output`
+// and `fragment_output` work out of the box.
 
 const CUSTOM_NORMAL_SHADER: &str = r#"
 {{ vertex_input_code }}
 {{ binding_code }}
-{$ include 'core/vertex_output_def' $}
-{$ include 'core/fragment_output_def' $}
+{$ include 'core/vertex_output' $}
+{$ include 'core/fragment_output' $}
 
 @vertex
 fn vs_main(in: VertexInput, @builtin(vertex_index) vertex_index: u32) -> VertexOutput {
@@ -50,7 +57,7 @@ fn vs_main(in: VertexInput, @builtin(vertex_index) vertex_index: u32) -> VertexO
     out.uv = in.uv;
     $$ endif
 
-    {$ include 'geometry/uv_vertex_inline' $}
+    {$ include 'mixins/uv_vertex' $}
     return out;
 }
 
@@ -148,7 +155,7 @@ impl AppHandler for CustomMaterialDemo {
     }
 }
 
+#[myth::main]
 fn main() -> myth::Result<()> {
-    env_logger::init();
     App::new().run::<CustomMaterialDemo>()
 }

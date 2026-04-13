@@ -63,7 +63,7 @@ fn shader_loader(name: &str) -> Result<Option<String>, Error> {
 
     #[cfg(all(debug_assertions, not(target_arch = "wasm32")))]
     {
-        let path = std::path::Path::new("src/renderer/pipeline/shaders").join(filename.as_ref());
+        let path = std::path::Path::new("src/pipeline/shaders").join(filename.as_ref());
         if path.exists() {
             match std::fs::read_to_string(&path) {
                 Ok(source) => return Ok(Some(source)),

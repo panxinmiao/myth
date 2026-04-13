@@ -1,5 +1,20 @@
+//! [gallery]
+//! name = "PBR Box"
+//! category = "Materials"
+//! description = "Physically based material test with checker albedo and image-based lighting."
+//! order = 120
+//!
+
 use myth::prelude::*;
 use myth::utils::fps_counter::FpsCounter;
+
+#[cfg(not(target_arch = "wasm32"))]
+const ASSET_PATH: &str = "examples/assets/";
+#[cfg(target_arch = "wasm32")]
+const ASSET_PATH: &str = match option_env!("MYTH_ASSET_PATH") {
+    Some(path) => path,
+    None => "assets/",
+};
 
 /// PBR Material Cube Example
 struct PbrBox {
@@ -30,21 +45,18 @@ impl AppHandler for PbrBox {
         scene.add_light(Light::new_directional(Vec3::new(1.0, 1.0, 1.0), 1.0));
 
         // Load environment map
-        let env_texture_handle = engine
-            .assets
-            .load_cube_texture_blocking(
-                [
-                    "examples/assets/envs/Park2/posx.jpg",
-                    "examples/assets/envs/Park2/negx.jpg",
-                    "examples/assets/envs/Park2/posy.jpg",
-                    "examples/assets/envs/Park2/negy.jpg",
-                    "examples/assets/envs/Park2/posz.jpg",
-                    "examples/assets/envs/Park2/negz.jpg",
-                ],
-                ColorSpace::Srgb,
-                true,
-            )
-            .expect("Failed to load environment map");
+        let env_texture_handle = engine.assets.load_cube_texture(
+            [
+                format!("{}envs/Park2/posx.jpg", ASSET_PATH),
+                format!("{}envs/Park2/negx.jpg", ASSET_PATH),
+                format!("{}envs/Park2/posy.jpg", ASSET_PATH),
+                format!("{}envs/Park2/negy.jpg", ASSET_PATH),
+                format!("{}envs/Park2/posz.jpg", ASSET_PATH),
+                format!("{}envs/Park2/negz.jpg", ASSET_PATH),
+            ],
+            ColorSpace::Srgb,
+            true,
+        );
         scene.environment.set_env_map(Some(env_texture_handle));
 
         // Camera
@@ -86,8 +98,8 @@ impl AppHandler for PbrBox {
     }
 }
 
+#[myth::main]
 fn main() -> myth::Result<()> {
-    env_logger::init();
     App::new()
         .with_settings(RendererSettings {
             vsync: false,

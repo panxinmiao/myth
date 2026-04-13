@@ -1,16 +1,33 @@
+//! [gallery]
+//! name = "glTF Helmet"
+//! category = "Scenes & glTF"
+//! description = "Loads the DamagedHelmet sample and frames it with orbit controls."
+//! order = 610
+//!
+
 use myth::prelude::*;
 use myth::utils::FpsCounter;
+
+#[cfg(not(target_arch = "wasm32"))]
+const ASSET_PATH: &str = "examples/assets/";
+#[cfg(target_arch = "wasm32")]
+const ASSET_PATH: &str = match option_env!("MYTH_ASSET_PATH") {
+    Some(path) => path,
+    None => "assets/",
+};
 
 /// glTF PBR Helmet Example
 struct HelmetGltf {
     cam_node_id: NodeHandle,
     controls: OrbitControls,
     fps_counter: FpsCounter,
+    helmet_prefab: PrefabHandle,
+    helmet_loaded: bool,
 }
 
 impl AppHandler for HelmetGltf {
     fn init(engine: &mut Engine, _window: &dyn Window) -> Self {
-        let map_path = "examples/assets/envs/royal_esplanade_2k.hdr.jpg";
+        let map_path = format!("{}envs/royal_esplanade_2k.hdr.jpg", ASSET_PATH);
         let env_texture_handle = engine
             .assets
             .load_texture(map_path, ColorSpace::Srgb, false);
@@ -19,14 +36,9 @@ impl AppHandler for HelmetGltf {
         scene.environment.set_env_map(Some(env_texture_handle));
         scene.add_light(Light::new_directional(Vec3::new(1.0, 1.0, 1.0), 1.0));
 
-        let gltf_path =
-            std::path::Path::new("examples/assets/DamagedHelmet/glTF/DamagedHelmet.gltf");
-        println!("Loading glTF model from: {}", gltf_path.display());
-
-        let prefab =
-            GltfLoader::load(gltf_path, engine.assets.clone()).expect("Failed to load glTF model");
-        let gltf_node = scene.instantiate(&prefab);
-        println!("Successfully loaded root node: {:?}", gltf_node);
+        let helmet_source = format!("{}DamagedHelmet/glTF/DamagedHelmet.gltf", ASSET_PATH);
+        println!("Loading glTF model from: {helmet_source}");
+        let helmet_prefab = engine.assets.load_gltf(helmet_source);
 
         let cam_node_id = scene.add_camera(Camera::new_perspective(45.0, 1280.0 / 720.0, 0.1));
         scene
@@ -39,13 +51,27 @@ impl AppHandler for HelmetGltf {
             cam_node_id,
             controls: OrbitControls::new(Vec3::new(0.0, 0.0, 3.0), Vec3::ZERO),
             fps_counter: FpsCounter::new(),
+            helmet_prefab,
+            helmet_loaded: false,
         }
     }
 
     fn update(&mut self, engine: &mut Engine, window: &dyn Window, frame: &FrameState) {
+        let assets = engine.assets.clone();
         let Some(scene) = engine.scene_manager.active_scene_mut() else {
             return;
         };
+
+        if !self.helmet_loaded {
+            if let Some(prefab) = assets.prefabs.get(self.helmet_prefab) {
+                let gltf_node = scene.instantiate(prefab.as_ref());
+                println!("Successfully loaded root node: {:?}", gltf_node);
+                self.helmet_loaded = true;
+            } else if let Some(err) = assets.prefabs.get_error(self.helmet_prefab) {
+                eprintln!("Failed to load helmet glTF: {err}");
+                self.helmet_loaded = true;
+            }
+        }
 
         if let Some(cam_node) = scene.get_node_mut(self.cam_node_id) {
             self.controls
@@ -58,8 +84,8 @@ impl AppHandler for HelmetGltf {
     }
 }
 
+#[myth::main]
 fn main() -> myth::Result<()> {
-    env_logger::init();
     App::new()
         .with_settings(RendererSettings {
             path: RenderPath::BasicForward,

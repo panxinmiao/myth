@@ -1,0 +1,18 @@
+[package]
+name = "xtask"
+description = "Build orchestration utilities for the Myth gallery and standalone apps."
+version = "0.1.0"
+edition.workspace = true
+rust-version.workspace = true
+publish = false
+
+[dependencies]
+anyhow = { workspace = true }
+cargo_metadata = "0.19"
+serde = { workspace = true }
+serde_json = { workspace = true }
+toml = "0.9"
+walkdir = "2.5"
+
+[lints]
+workspace = true

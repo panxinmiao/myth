@@ -36,6 +36,7 @@ mod codegen;
 mod gpu_struct_codegen;
 mod gpu_struct_parse;
 mod layout;
+mod main_entry;
 mod parse;
 
 /// Transforms a declarative material struct into a complete engine material type.
@@ -144,6 +145,34 @@ pub fn gpu_struct(attr: TokenStream, item: TokenStream) -> TokenStream {
     let input = syn::parse_macro_input!(item as syn::DeriveInput);
 
     match gpu_struct_codegen::generate(args, input) {
+        Ok(tokens) => tokens.into(),
+        Err(err) => err.to_compile_error().into(),
+    }
+}
+
+/// Generates platform-specific entry points for Myth applications.
+///
+/// The annotated function becomes the shared application body, while the macro
+/// expands to native and WASM entry points that initialize logging and panic
+/// hooks consistently across platforms.
+///
+/// # Supported Signatures
+///
+/// - `fn main()`
+/// - `fn main() -> Result<(), E>`
+/// - `async fn main()`
+/// - `async fn main() -> Result<(), E>`
+#[proc_macro_attribute]
+pub fn main(attr: TokenStream, item: TokenStream) -> TokenStream {
+    if !attr.is_empty() {
+        return syn::Error::new(proc_macro2::Span::call_site(), "#[myth::main] does not accept arguments")
+            .to_compile_error()
+            .into();
+    }
+
+    let input = syn::parse_macro_input!(item as syn::ItemFn);
+
+    match main_entry::generate(input) {
         Ok(tokens) => tokens.into(),
         Err(err) => err.to_compile_error().into(),
     }

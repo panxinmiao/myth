@@ -36,7 +36,8 @@ fn disk_mask(
 $$ if USE_MOON_TEXTURE
 fn sample_moon_albedo(moon_uv: vec2<f32>) -> vec3<f32> {
 $$ if SKYBOX_PROCEDURAL
-    return textureSample(t_moon_albedo, s_skybox, moon_uv).rgb;
+    // return textureSample(t_moon_albedo, s_skybox, moon_uv).rgb;
+    return textureSampleLevel(t_moon_albedo, s_skybox, moon_uv, 0.0).rgb;
 $$ else
     return textureSampleLevel(t_moon_albedo, s_skybox, moon_uv, 0.0).rgb;
 $$ endif
@@ -144,6 +145,13 @@ fn procedural_star_layer(dir: vec3<f32>, time: f32) -> vec3<f32> {
     let grid = dir * 400.0;
     let cell = floor(grid);
     let density = hash13(cell);
+
+     $$ if SKYBOX_PROCEDURAL
+    // Keep derivative operations in uniform control flow for WebGPU validation.
+    let pixel_size = length(fwidth(dir)) * 400.0 * 0.35;
+    $$ else
+    let pixel_size = 0.25;
+    $$ endif
     
     if density < 0.997 {
         return vec3<f32>(0.0);
@@ -159,14 +167,6 @@ fn procedural_star_layer(dir: vec3<f32>, time: f32) -> vec3<f32> {
     // Dynamic Anti-Aliasing Core:
     // Take the maximum of the actual pixel_size and physical_size.
     // ==========================================
-
-     $$ if SKYBOX_PROCEDURAL
-    // multiply by 400.0 to convert to our star grid coordinate system, 
-    // and 0.35 is a tuning factor representing the optimal "smoothing radius" for one anti-aliased pixel
-    let pixel_size = length(fwidth(dir)) * 400.0 * 0.35;
-    $$ else
-    let pixel_size = 0.25;
-    $$ endif
 
     let render_size = max(physical_size, pixel_size);
     

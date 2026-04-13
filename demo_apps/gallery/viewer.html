@@ -1,0 +1,32 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Myth Viewer</title>
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Sans:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500;700&display=swap" rel="stylesheet">
+    <link rel="stylesheet" href="./style.css">
+</head>
+<body class="viewer-shell" data-page="viewer">
+    <div class="viewer-hud">
+        <div class="viewer-kicker" id="viewer-meta">Interactive Example</div>
+        <h1 class="viewer-title" id="viewer-title">Loading</h1>
+        <p class="viewer-copy" id="viewer-copy">正在准备独立的 WebGPU 运行时。</p>
+    </div>
+
+    <canvas class="viewer-canvas" id="myth-canvas"></canvas>
+
+    <section class="viewer-overlay" id="viewer-overlay">
+        <div class="viewer-overlay-card">
+            <div class="stage-empty-label">Runtime Boot</div>
+            <h2 id="viewer-overlay-title">Initializing Viewer</h2>
+            <p class="viewer-overlay-copy" id="viewer-overlay-copy">正在加载示例清单和 wasm-bindgen 入口文件。</p>
+            <div class="viewer-status" id="viewer-status">Preparing manifest</div>
+        </div>
+    </section>
+
+    <script type="module" src="./main.js"></script>
+</body>
+</html>

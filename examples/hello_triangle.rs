@@ -1,3 +1,10 @@
+//! [gallery]
+//! name = "Hello Triangle"
+//! category = "Foundations"
+//! description = "Minimal textured triangle that exercises the core render path."
+//! order = 10
+//!
+
 use myth::prelude::*;
 
 /// Hello Triangle Example
@@ -62,7 +69,7 @@ impl AppHandler for HelloTriangle {
     }
 }
 
+#[myth::main]
 fn main() -> myth::Result<()> {
-    env_logger::init();
     App::new().run::<HelloTriangle>()
 }

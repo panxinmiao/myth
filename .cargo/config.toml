@@ -1,4 +1,5 @@
-# Only applies when compiling for the WASM target
+[alias]
+xtask = "run --package xtask --"# Only applies when compiling for the WASM target
 [target.wasm32-unknown-unknown]
 # Use clang as the C/C++ compiler for the wasm32 target
 ar = "llvm-ar"

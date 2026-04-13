@@ -13,15 +13,13 @@
 //! - Camera orbit control
 //! - FPS display
 //!
-//! Run: cargo run --example gltf_viewer --release
+//! Run: cargo run -p gltf_viewer --release
 //!
 //! # Architecture Notes
 //! This example demonstrates the "UI as a Plugin" pattern:
 //! - `UiPass` implements `PassNode` trait, can be injected into RDG
 //! - Inject UI Pass via `compose_frame()` hook into RDG
 //! - Engine core does not depend on egui at all
-
-mod ui_pass;
 
 use std::any::Any;
 #[cfg(not(target_arch = "wasm32"))]
@@ -39,9 +37,7 @@ use myth::assets::SharedPrefab;
 use myth::prelude::*;
 use myth::renderer::core::{BindingResource, ResourceBuilder};
 use myth::resources::texture::TextureSource;
-use myth::utils::FpsCounter;
-
-use ui_pass::UiPass;
+use myth_dev_utils::{FpsCounter, UiPass, UiPassNode};
 
 // winit types needed for on_event downcasting (advanced egui integration)
 use winit::event::WindowEvent;
@@ -636,7 +632,7 @@ impl AppHandler for GltfViewer {
                 .add_custom_pass(HookStage::AfterPostProcess, move |rdg, bb| {
                     let new_surface = rdg.add_pass("UI_Pass", |builder| {
                         let out = builder.mutate_texture(bb.surface_out, "Surface_With_UI");
-                        let node = ui_pass::UiPassNode {
+                        let node = UiPassNode {
                             pass: ui_pass_ref,
                             target_tex: out,
                         };
@@ -3007,25 +3003,24 @@ fn execute_future<F: std::future::Future<Output = ()> + 'static>(f: F) {
     wasm_bindgen_futures::spawn_local(f);
 }
 
-// ============================================================================
-// Native Main Entry Point
-// ============================================================================
-
-#[cfg(not(target_arch = "wasm32"))]
+#[myth::main]
 fn main() -> myth::Result<()> {
-    env_logger::Builder::from_env(env_logger::Env::default().default_filter_or("warn")).init();
-
+    #[cfg(not(target_arch = "wasm32"))]
     let rt = tokio::runtime::Builder::new_multi_thread()
         .enable_all()
         .build()
         .expect("Failed to create Tokio Runtime");
 
+    #[cfg(not(target_arch = "wasm32"))]
     let _enter = rt.enter();
+
+    #[cfg(target_arch = "wasm32")]
+    log::info!("Starting glTF Viewer (WASM)...");
 
     App::new()
         .with_title("glTF Viewer")
         .with_settings(RendererSettings {
-            vsync: false,
+            vsync: cfg!(target_arch = "wasm32"),
             ..Default::default()
         })
         .run::<GltfViewer>()
@@ -3043,30 +3038,3 @@ extern "C" {
     fn showRenderGraph(graph: &str);
 }
 
-#[cfg(target_arch = "wasm32")]
-#[wasm_bindgen(start)]
-pub fn wasm_main() {
-    // Set up panic hook for better error messages
-    std::panic::set_hook(Box::new(console_error_panic_hook::hook));
-
-    // Initialize logging
-    console_log::init_with_level(log::Level::Info).expect("Failed to initialize logger");
-
-    log::info!("Starting glTF Viewer (WASM)...");
-
-    // Run the application
-    if let Err(e) = App::new()
-        .with_title("glTF Viewer")
-        .with_settings(RendererSettings {
-            vsync: true,
-            ..Default::default()
-        })
-        .run::<GltfViewer>()
-    {
-        log::error!("Application error: {}", e);
-    }
-}
-
-// WASM 需要一个空的 main 函数
-#[cfg(target_arch = "wasm32")]
-fn main() {}

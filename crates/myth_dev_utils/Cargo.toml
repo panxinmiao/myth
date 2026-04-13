@@ -1,0 +1,35 @@
+[package]
+name = "myth_dev_utils"
+description = "Internal developer-facing utilities for Myth examples and apps."
+version.workspace = true
+rust-version.workspace = true
+edition.workspace = true
+authors.workspace = true
+license.workspace = true
+repository.workspace = true
+homepage.workspace = true
+publish = false
+
+[dependencies]
+myth_app = { workspace = true }
+myth_core = { workspace = true }
+myth_assets = { workspace = true }
+myth_render = { workspace = true }
+
+egui = { workspace = true }
+rustc-hash = { workspace = true }
+
+[target.'cfg(not(target_arch = "wasm32"))'.dependencies]
+egui-wgpu = { workspace = true, features = ["winit"] }
+egui-winit = { workspace = true }
+wgpu = { workspace = true }
+winit = { workspace = true }
+
+[target.'cfg(target_arch = "wasm32")'.dependencies]
+egui-wgpu = { workspace = true, features = ["winit"] }
+egui-winit = { workspace = true, default-features = false, features = ["links"] }
+wgpu = { workspace = true, features = ["webgpu", "fragile-send-sync-non-atomic-wasm"] }
+winit = { workspace = true }
+
+[lints]
+workspace = true

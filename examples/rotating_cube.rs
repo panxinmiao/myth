@@ -1,3 +1,10 @@
+//! [gallery]
+//! name = "Rotating Cube"
+//! category = "Foundations"
+//! description = "Single unlit cube with the smallest possible animated scene setup."
+//! order = 20
+//!
+
 use myth::prelude::*;
 
 /// Basic Rotating Cube Example
@@ -41,7 +48,7 @@ impl AppHandler for RotatingCube {
     }
 }
 
+#[myth::main]
 fn main() -> myth::Result<()> {
-    env_logger::init();
     App::new().run::<RotatingCube>()
 }

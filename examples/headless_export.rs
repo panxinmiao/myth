@@ -1,3 +1,12 @@
+//! [gallery]
+//! name = "Headless Export"
+//! category = "Native Tools"
+//! description = "Offscreen render-and-readback sample that writes a frame to disk."
+//! order = 910
+//! web = false
+//! note = "Runs without a window and writes output.png on native platforms."
+//!
+
 //! Headless (offscreen) rendering example.
 //!
 //! Initialises the GPU without a window, renders a single frame of a

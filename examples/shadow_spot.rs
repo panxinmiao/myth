@@ -1,3 +1,10 @@
+//! [gallery]
+//! name = "Shadow Spot"
+//! category = "Shadows"
+//! description = "Focused spot-light shadows over a simple floor-and-sphere composition."
+//! order = 420
+//!
+
 use myth::prelude::*;
 use myth::utils::fps_counter::FpsCounter;
 
@@ -76,8 +83,8 @@ impl AppHandler for ShadowSpotDemo {
     }
 }
 
+#[myth::main]
 fn main() -> myth::Result<()> {
-    env_logger::init();
     App::new()
         .with_settings(RendererSettings {
             vsync: false,

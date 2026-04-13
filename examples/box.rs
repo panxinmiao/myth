@@ -1,3 +1,10 @@
+//! [gallery]
+//! name = "Textured Box"
+//! category = "Foundations"
+//! description = "Textured cube with orbit controls and per-frame scene callbacks."
+//! order = 30
+//!
+
 use myth::prelude::*;
 
 /// 带纹理的旋转立方体 + 轨道控制器
@@ -50,7 +57,7 @@ impl AppHandler for TexturedBox {
     }
 }
 
+#[myth::main]
 fn main() -> myth::Result<()> {
-    env_logger::init();
     App::new().run::<TexturedBox>()
 }
