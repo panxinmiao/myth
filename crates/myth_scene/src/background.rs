@@ -289,7 +289,10 @@ impl ProceduralSkyParams {
     }
 
     /// Sets the optional moon albedo texture and increments the version.
-    pub fn set_moon_albedo_texture<T: Into<Option<TextureSource>>>(&mut self, moon_albedo_texture: T) {
+    pub fn set_moon_albedo_texture<T: Into<Option<TextureSource>>>(
+        &mut self,
+        moon_albedo_texture: T,
+    ) {
         let moon_albedo_texture = moon_albedo_texture.into();
         if self.moon_albedo_texture != moon_albedo_texture {
             self.moon_albedo_texture = moon_albedo_texture;

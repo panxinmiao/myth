@@ -606,10 +606,10 @@ impl SkyboxFeature {
         })
     }
 
-    fn resolve_procedural_moon_view<'a>(
-        resource_manager: &'a crate::core::ResourceManager,
+    fn resolve_procedural_moon_view(
+        resource_manager: &crate::core::ResourceManager,
         source: Option<TextureSource>,
-    ) -> ProceduralMoonView<'a> {
+    ) -> ProceduralMoonView<'_> {
         source
             .and_then(|source| {
                 let resolved =

@@ -63,6 +63,7 @@ Myth 通过引入**严格的基于 SSA（静态单赋值）的渲染图 (RenderG
     * **基于物理的材质 (PBR)**：强大的 PBR 管线，支持清漆 (Clearcoat)、彩虹色 (Iridescence)、透射 (Transmission)、光泽 (Sheen) 和各向异性 (Anisotropy)。
     * **基于图像的光照 (IBL)** + **动态阴影 (CSM)**。
     * **屏幕空间环境光遮蔽 (SSAO) / 屏幕空间次表面散射 (SSSS) / 天空盒 (Skybox)**。
+    * **程序化天空系统**：基于物理的散射模型 (Hillaire 2020)，支持程序化天体（太阳、月亮和星空）。内置昼夜循环组件，自动同步太阳、月亮和星空的轨迹。
 
 * **后期处理与特效**
     * **HDR 管线** + **泛光 (Bloom)** + **色彩分级 (Color Grading)** + **TAA / FXAA / MSAA**。

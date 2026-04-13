@@ -45,7 +45,6 @@ impl AppHandler for ProceduralSkyDemo {
             .background
             .set_mode(BackgroundMode::procedural_with(sky));
 
-
         let mut sun_light = Light::new_directional(Vec3::new(1.0, 0.95, 0.8), 3.0);
         sun_light.cast_shadows = true;
         let sun_light_node = scene.add_light(sun_light);
