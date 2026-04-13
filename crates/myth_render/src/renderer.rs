@@ -305,7 +305,7 @@ impl Renderer {
     pub fn begin_frame<'a>(
         &'a mut self,
         scene: &'a mut Scene,
-        camera: &'a RenderCamera,
+        camera: RenderCamera,
         assets: &'a AssetServer,
         frame_time: FrameTime,
     ) -> Option<FrameComposer<'a>> {
@@ -329,7 +329,7 @@ impl Renderer {
         state.render_frame.extract_and_prepare(
             &mut state.resource_manager,
             scene,
-            camera,
+            &camera,
             assets,
             frame_time,
             &mut state.render_lists,
@@ -351,7 +351,7 @@ impl Renderer {
             &mut state.pipeline_cache,
             &mut state.shader_manager,
             &mut state.render_lists,
-            camera,
+            &camera,
             assets,
         );
 
@@ -414,7 +414,7 @@ impl Renderer {
                 render_lists: &mut state.render_lists,
                 extracted_scene: &state.render_frame.extracted_scene,
                 render_state: &state.render_frame.render_state,
-                render_camera: camera,
+                render_camera: &camera,
                 assets,
             };
 
@@ -1012,7 +1012,7 @@ mod tests {
     fn render_frame(
         renderer: &mut Renderer,
         scene: &mut Scene,
-        camera: &RenderCamera,
+        camera: RenderCamera,
         assets: &AssetServer,
         frame_index: u64,
     ) {
@@ -1039,7 +1039,7 @@ mod tests {
         scene.background.set_mode(BackgroundMode::procedural());
         let camera = make_camera();
 
-        render_frame(&mut renderer, &mut scene, &camera, &assets, 0);
+        render_frame(&mut renderer, &mut scene, camera, &assets, 0);
 
         let state = renderer.context.as_ref().expect("renderer state missing");
         let scene_id = scene.id();
@@ -1062,7 +1062,7 @@ mod tests {
             panic!("expected procedural background");
         }
 
-        render_frame(&mut renderer, &mut scene, &camera, &assets, 1);
+        render_frame(&mut renderer, &mut scene, camera, &assets, 1);
 
         let state = renderer.context.as_ref().expect("renderer state missing");
         let global_state = state
@@ -1098,7 +1098,7 @@ mod tests {
         scene.background.set_mode(BackgroundMode::procedural());
         let camera = make_camera();
 
-        render_frame(&mut renderer, &mut scene, &camera, &assets, 0);
+        render_frame(&mut renderer, &mut scene, camera, &assets, 0);
 
         let state = renderer.context.as_ref().expect("renderer state missing");
         let scene_id = scene.id();
@@ -1118,7 +1118,7 @@ mod tests {
         scene.environment.set_base_cube_size(256);
         scene.environment.set_pmrem_size(128);
 
-        render_frame(&mut renderer, &mut scene, &camera, &assets, 1);
+        render_frame(&mut renderer, &mut scene, camera, &assets, 1);
 
         let state = renderer.context.as_ref().expect("renderer state missing");
         let global_state = state
@@ -1156,7 +1156,7 @@ mod tests {
         scene.background.set_mode(BackgroundMode::procedural());
         let camera = make_camera();
 
-        render_frame(&mut renderer, &mut scene, &camera, &assets, 0);
+        render_frame(&mut renderer, &mut scene, camera, &assets, 0);
 
         let scene_id = scene.id();
         let initial_source_version = renderer
@@ -1180,7 +1180,7 @@ mod tests {
             params.set_sun_direction((slight_rotation * initial_sun_direction).normalize());
         }
 
-        render_frame(&mut renderer, &mut scene, &camera, &assets, 1);
+        render_frame(&mut renderer, &mut scene, camera, &assets, 1);
 
         let after_small_rotation = renderer
             .context
@@ -1201,7 +1201,7 @@ mod tests {
             params.set_sun_direction((larger_rotation * initial_sun_direction).normalize());
         }
 
-        render_frame(&mut renderer, &mut scene, &camera, &assets, 2);
+        render_frame(&mut renderer, &mut scene, camera, &assets, 2);
 
         let after_large_rotation = renderer
             .context
@@ -1226,7 +1226,7 @@ mod tests {
         scene.background.set_mode(BackgroundMode::procedural());
         let camera = make_camera();
 
-        render_frame(&mut renderer, &mut scene, &camera, &assets, 0);
+        render_frame(&mut renderer, &mut scene, camera, &assets, 0);
 
         let scene_id = scene.id();
         let initial_source_version = renderer
@@ -1244,7 +1244,7 @@ mod tests {
             params.set_star_intensity(2.0);
         }
 
-        render_frame(&mut renderer, &mut scene, &camera, &assets, 1);
+        render_frame(&mut renderer, &mut scene, camera, &assets, 1);
 
         let updated_source_version = renderer
             .context

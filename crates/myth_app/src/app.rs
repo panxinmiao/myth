@@ -15,7 +15,6 @@
 
 use crate::engine::{Engine, FrameState};
 use crate::window::Window;
-use myth_render::graph::FrameComposer;
 
 /// Trait for defining application behavior.
 ///
@@ -75,8 +74,12 @@ pub trait AppHandler: Sized + 'static {
     /// Override this method to add custom render passes (UI, post-processing, etc.)
     /// via the hook-based API. The default implementation only renders the built-in
     /// pipeline (BasicForward or HighFidelity depending on `RenderPath`).
-    fn compose_frame<'a>(&'a mut self, composer: FrameComposer<'a>) {
-        composer.render();
+    // fn compose_frame<'a>(&'a mut self, composer: FrameComposer<'a>) {
+    //     composer.render();
+    // }
+    #[allow(unused_variables)]
+    fn render(&mut self, engine: &mut Engine, window: &dyn Window) {
+        engine.render_active_scene();
     }
 }
 

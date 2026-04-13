@@ -311,45 +311,6 @@ impl<H: AppHandler> AppRunner<H> {
         user_state.update(engine, window.as_ref(), &frame_state);
         engine.update(dt);
     }
-
-    fn render_frame(&mut self) {
-        let (Some(engine), Some(user_state)) = (&mut self.engine, &mut self.user_state) else {
-            return;
-        };
-
-        let Some(scene_handle) = engine.scene_manager.active_handle() else {
-            return;
-        };
-        let time = engine.frame_time();
-        let Some(scene) = engine.scene_manager.get_scene_mut(scene_handle) else {
-            return;
-        };
-        let Some(camera_node) = scene.active_camera else {
-            return;
-        };
-
-        // Sync the camera's AA mode to the renderer and advance TAA jitter.
-        if let Some(cam) = scene.cameras.get_mut(camera_node)
-            && engine.renderer.render_path().supports_post_processing()
-        {
-            cam.step_frame();
-        }
-
-        let Some(cam) = scene.cameras.get(camera_node) else {
-            return;
-        };
-        let render_camera = cam.extract_render_camera();
-
-        if let Some(composer) =
-            engine
-                .renderer
-                .begin_frame(scene, &render_camera, &engine.assets, time)
-        {
-            user_state.compose_frame(composer);
-        }
-
-        engine.renderer.maybe_prune();
-    }
 }
 
 impl<H: AppHandler> ApplicationHandler for AppRunner<H> {
@@ -564,7 +525,13 @@ impl<H: AppHandler> ApplicationHandler for AppRunner<H> {
 
             WindowEvent::RedrawRequested => {
                 self.update_logic();
-                self.render_frame();
+
+                if let (Some(window), Some(engine), Some(user_state)) =
+                    (&self.window, &mut self.engine, &mut self.user_state)
+                {
+                    user_state.render(engine, window.as_ref());
+                    engine.maybe_prune();
+                }
             }
 
             _ => {}

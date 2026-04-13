@@ -33,6 +33,7 @@
 
 use myth_core::Error;
 use myth_render::core::{ReadbackFrame, ReadbackStream};
+use myth_render::graph::FrameComposer;
 use myth_render::renderer::FrameTime;
 use raw_window_handle::{HasDisplayHandle, HasWindowHandle};
 
@@ -336,6 +337,22 @@ impl Engine {
         }
     }
 
+    /// Prepares a new frame for rendering by extracting scene data and configuring the renderer.
+    ///
+    /// Returns a `FrameComposer` if a frame could be prepared, or `None` if no active scene or camera is available.
+    pub fn compose_frame(&mut self) -> Option<FrameComposer<'_>> {
+        self.step_camera_frame();
+
+        let scene_handle = self.scene_manager.active_handle()?;
+        let scene = self.scene_manager.get_scene_mut(scene_handle)?;
+        let camera_node = scene.active_camera?;
+        let cam = scene.cameras.get(camera_node)?;
+        let render_camera = cam.extract_render_camera();
+
+        self.renderer
+            .begin_frame(scene, render_camera, &self.assets, self.frame_time)
+    }
+
     /// Renders the active scene using the active camera.
     ///
     /// This is a convenience method that combines scene lookup, camera extraction,
@@ -345,28 +362,7 @@ impl Engine {
     /// Returns `true` if a frame was successfully rendered, `false` if rendering
     /// was skipped (no active scene, no active camera, etc.).
     pub fn render_active_scene(&mut self) -> bool {
-        // Advance TAA jitter before extracting the camera snapshot.
-        self.step_camera_frame();
-
-        let Some(scene_handle) = self.scene_manager.active_handle() else {
-            return false;
-        };
-
-        let Some(scene) = self.scene_manager.get_scene_mut(scene_handle) else {
-            return false;
-        };
-        let Some(camera_node) = scene.active_camera else {
-            return false;
-        };
-        let Some(cam) = scene.cameras.get(camera_node) else {
-            return false;
-        };
-        let render_camera = cam.extract_render_camera();
-
-        if let Some(composer) =
-            self.renderer
-                .begin_frame(scene, &render_camera, &self.assets, self.frame_time)
-        {
+        if let Some(composer) = self.compose_frame() {
             composer.render();
             true
         } else {

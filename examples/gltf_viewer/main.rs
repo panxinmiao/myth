@@ -618,8 +618,11 @@ impl AppHandler for GltfViewer {
         }
     }
 
-    fn compose_frame<'a>(&'a mut self, composer: FrameComposer<'a>) {
+    fn render(&mut self, engine: &mut Engine, _window: &dyn Window) {
         use myth::renderer::graph::core::{GraphBlackboard, HookStage};
+        let Some(composer) = engine.compose_frame() else {
+            return;
+        };
 
         if self.show_ui {
             // Resolve pending engine texture registrations before the RDG

@@ -3,8 +3,17 @@
 ## Unreleased
 
 ### Major Changes
-- Added a procedural sky system powered by a physically-based atmospheric scattering model (Hillaire 2020), enabling high-quality real-time sky rendering with procedural celestial bodies (sun, moon, and stars).
+- Added a **procedural sky system** powered by a physically-based atmospheric scattering model (Hillaire 2020), enabling high-quality real-time sky rendering with procedural celestial bodies (sun, moon, and stars).
 Also includes a `DayNightCycle` component for dynamic time progression, automatically syncing the trajectories of the sun, moon, and star field with scene parameters.
+
+### Refactored / Changed
+- Removed the `compose_frame` method from `AppHandler` and narrowed its responsibility to providing only a high-level render trigger, with full render graph orchestration delegated to the `Engine`.
+  > _Note: This simplifies `AppRunner`, returning control of `RedrawRequested` execution to the user. It also improves the extensibility of headless mode — `FrameComposer` can now be accessed directly to attach custom RenderGraph nodes (e.g., offline data extraction or custom compute passes), without being constrained by the window system lifecycle._
+
+- Updated `RenderCamera` in `Renderer::begin_frame` and `ComposerContext` to be passed by value.
+  > _Note: This clarifies the architectural intent of `RenderCamera` data as a transient snapshot and removes borrowing dependencies on local variables._
+
+
 
 ### Fixed
 - Fixed an issue of UnlitMaterial UV transform not taking effect

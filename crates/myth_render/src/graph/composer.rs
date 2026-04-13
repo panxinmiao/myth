@@ -89,7 +89,7 @@ pub struct ComposerContext<'a> {
 
     // External scene data
     pub scene: &'a mut Scene,
-    pub camera: &'a RenderCamera,
+    pub camera: RenderCamera,
     pub assets: &'a AssetServer,
     pub frame_time: FrameTime,
 
