@@ -36,3 +36,4 @@ else
 fi
 
 echo "Build complete. Dist output is available in ./dist"
+echo "👉 Run: python -m http.server 8080 --directory ./dist"

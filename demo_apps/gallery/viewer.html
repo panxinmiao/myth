@@ -6,26 +6,22 @@
     <title>Myth Viewer</title>
     <link rel="preconnect" href="https://fonts.googleapis.com">
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
-    <link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Sans:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500;700&display=swap" rel="stylesheet">
+    <link href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet">
     <link rel="stylesheet" href="./style.css">
 </head>
-<body class="viewer-shell" data-page="viewer">
-    <div class="viewer-hud">
-        <div class="viewer-kicker" id="viewer-meta">Interactive Example</div>
-        <h1 class="viewer-title" id="viewer-title">Loading</h1>
-        <p class="viewer-copy" id="viewer-copy">正在准备独立的 WebGPU 运行时。</p>
-    </div>
-
+<body data-page="viewer">
     <canvas class="viewer-canvas" id="myth-canvas"></canvas>
 
-    <section class="viewer-overlay" id="viewer-overlay">
-        <div class="viewer-overlay-card">
-            <div class="stage-empty-label">Runtime Boot</div>
-            <h2 id="viewer-overlay-title">Initializing Viewer</h2>
-            <p class="viewer-overlay-copy" id="viewer-overlay-copy">正在加载示例清单和 wasm-bindgen 入口文件。</p>
-            <div class="viewer-status" id="viewer-status">Preparing manifest</div>
+    <div class="loading-overlay" id="loading-overlay">
+        <div class="loading-content">
+            <div class="loading-title">MYTH ENGINE</div>
+            <div class="loading-status" id="loading-status">INITIALIZING...</div>
+            <div class="loading-progress">
+                <div class="loading-progress-bar" id="loading-progress-bar"></div>
+            </div>
+            <div class="loading-elapsed" id="loading-elapsed">0 ms</div>
         </div>
-    </section>
+    </div>
 
     <script type="module" src="./main.js"></script>
 </body>

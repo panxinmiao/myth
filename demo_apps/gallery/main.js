@@ -1,212 +1,224 @@
+const GALLERY_CHANNEL = "myth-gallery";
+const DESKTOP_QUERY = "(min-width: 900px)";
 const page = document.body.dataset.page;
 
 if (page === "gallery") {
-    initGallery().catch(handleFatalError);
+    initGallery().catch(console.error);
 } else if (page === "viewer") {
-    initViewer().catch(handleFatalError);
+    initViewer().catch(console.error);
 }
 
-function handleFatalError(error) {
-    console.error(error);
-}
+/* =========================================
+   Gallery (index.html)
+   ========================================= */
 
 async function initGallery() {
     const manifest = await fetchManifest("./examples.json");
-    const entries = manifest.flatMap((category) =>
-        category.items.map((item) => ({ ...item, category: category.category })),
+    const entries = manifest.flatMap((group) =>
+        group.items.map((item) => ({ ...item, category: group.category })),
     );
 
-    const drawerToggle = document.getElementById("drawer-toggle");
+    const desktopMedia = window.matchMedia(DESKTOP_QUERY);
     const sidebar = document.getElementById("sidebar");
+    const sidebarToggle = document.getElementById("sidebar-toggle");
     const sidebarClose = document.getElementById("sidebar-close");
-    const navGroups = document.getElementById("nav-groups");
+    const sidebarScrim = document.getElementById("sidebar-scrim");
+    const navMenu = document.getElementById("nav-menu");
     const frame = document.getElementById("viewer-frame");
-    const stageEmpty = document.getElementById("stage-empty");
-    const stageEmptyLabel = document.getElementById("stage-empty-label");
-    const stageEmptyTitle = document.getElementById("stage-empty-title");
-    const stageEmptyCopy = document.getElementById("stage-empty-copy");
-    const entryKind = document.getElementById("entry-kind");
-    const entryName = document.getElementById("entry-name");
-    const entryDescription = document.getElementById("entry-description");
-    const entryStatus = document.getElementById("entry-status");
-    const entrySourcePath = document.getElementById("entry-source-path");
-    const entrySource = document.getElementById("entry-source");
-    const entryOpen = document.getElementById("entry-open");
+    const nativeOverlay = document.getElementById("native-overlay");
+    const nativeTitle = document.getElementById("native-title");
+    const nativeCopy = document.getElementById("native-copy");
 
-    let activeId = null;
-
-    drawerToggle.addEventListener("click", () => {
-        const open = !sidebar.classList.contains("is-open");
-        sidebar.classList.toggle("is-open", open);
-        drawerToggle.setAttribute("aria-expanded", String(open));
-    });
-
-    sidebarClose.addEventListener("click", () => {
-        sidebar.classList.remove("is-open");
-        drawerToggle.setAttribute("aria-expanded", "false");
-    });
-
-    navGroups.innerHTML = manifest
+    // Render navigation
+    navMenu.innerHTML = manifest
         .map((group) => {
             const items = group.items
-                .map(
-                    (item) => `
-                        <button class="nav-item" type="button" data-entry-id="${item.id}">
-                            <div class="nav-item-top">
-                                <span class="nav-item-name">${escapeHtml(item.name)}</span>
-                                <span class="nav-item-kind">${escapeHtml(item.type)}</span>
-                            </div>
-                            <p class="nav-item-copy">${escapeHtml(item.description)}</p>
-                            ${item.note ? `<div class="nav-item-note">${escapeHtml(item.note)}</div>` : ""}
-                        </button>
-                    `,
-                )
+                .map((item) => {
+                    const note = item.note
+                        ? `<span class="example-item-note">${escapeHtml(item.note)}</span>`
+                        : "";
+                    return `<button class="example-item" type="button" data-id="${escapeHtml(item.id)}">${escapeHtml(item.name)}${note}</button>`;
+                })
                 .join("");
-            return `
-                <section class="nav-group">
-                    <h2 class="nav-group-title">${escapeHtml(group.category)}</h2>
-                    <div class="nav-list">${items}</div>
-                </section>
-            `;
+            return `<div class="category-group"><div class="category-title">${escapeHtml(group.category)}</div>${items}</div>`;
         })
         .join("");
 
-    navGroups.addEventListener("click", (event) => {
-        const button = event.target.closest("[data-entry-id]");
-        if (!button) {
-            return;
-        }
-
-        const entry = entries.find((candidate) => candidate.id === button.dataset.entryId);
-        if (!entry) {
-            return;
-        }
-
-        void selectEntry(entry, true);
-        sidebar.classList.remove("is-open");
-        drawerToggle.setAttribute("aria-expanded", "false");
-    });
-
-    frame.addEventListener("load", () => {
-        if (stageEmpty.classList.contains("hidden")) {
-            entryStatus.textContent = "Ready";
-            entryStatus.dataset.state = "ready";
-        }
-    });
-
-    window.addEventListener("popstate", () => {
-        const entry = entryFromUrl(entries);
-        if (entry) {
-            void selectEntry(entry, false);
-        }
-    });
-
-    const initial = entryFromUrl(entries) ?? entries[0];
-    if (initial) {
-        await selectEntry(initial, false);
+    // Sidebar toggling
+    function setSidebarOpen(open) {
+        sidebar.classList.toggle("is-open", open);
+        document.body.classList.toggle("sidebar-open", open);
+        sidebarScrim.hidden = !(open && !desktopMedia.matches);
     }
 
-    async function selectEntry(entry, pushHistory) {
-        activeId = entry.id;
-        updateActiveState(activeId);
+    setSidebarOpen(desktopMedia.matches);
 
-        const kindLabel = entry.type === "standalone" ? "Standalone App" : "Interactive Example";
-        entryKind.textContent = kindLabel;
-        entryName.textContent = entry.name;
-        entryDescription.textContent = entry.description;
-        entrySourcePath.textContent = entry.source_path;
-        entrySource.href = entry.source_url || "#";
-        entrySource.setAttribute("aria-disabled", entry.source_url ? "false" : "true");
+    sidebarToggle.addEventListener("click", () => setSidebarOpen(true));
+    sidebarClose.addEventListener("click", () => setSidebarOpen(false));
+    sidebarScrim.addEventListener("click", () => setSidebarOpen(false));
+    desktopMedia.addEventListener("change", () => setSidebarOpen(desktopMedia.matches));
 
-        const nextUrl = new URL(window.location.href);
-        nextUrl.searchParams.set("example", entry.id);
-        if (pushHistory) {
-            history.pushState({ example: entry.id }, "", nextUrl);
+    window.addEventListener("keydown", (event) => {
+        if (event.key === "Escape") setSidebarOpen(false);
+    });
+
+    // Navigation click
+    navMenu.addEventListener("click", (event) => {
+        const button = event.target.closest("[data-id]");
+        if (!button) return;
+        const entry = entries.find((e) => e.id === button.dataset.id);
+        if (entry) {
+            selectEntry(entry, true);
+            if (!desktopMedia.matches) setSidebarOpen(false);
+        }
+    });
+
+    // URL-driven state
+    window.addEventListener("popstate", () => {
+        const entry = entryFromUrl(entries) ?? entries[0];
+        if (entry) selectEntry(entry, false);
+    });
+
+    // Initial load
+    const initial = entryFromUrl(entries) ?? entries[0];
+    if (initial) selectEntry(initial, false);
+
+    function selectEntry(entry, pushHistory) {
+        // Update active state in nav
+        navMenu.querySelectorAll(".example-item").forEach((el) => {
+            el.classList.toggle("is-active", el.dataset.id === entry.id);
+        });
+
+        // Update URL via History API
+        const url = new URL(window.location.href);
+        url.searchParams.set("example", entry.id);
+        const currentId = new URLSearchParams(window.location.search).get("example");
+        if (pushHistory && currentId !== entry.id) {
+            history.pushState({ example: entry.id }, "", url);
         } else {
-            history.replaceState({ example: entry.id }, "", nextUrl);
+            history.replaceState({ example: entry.id }, "", url);
         }
 
+        // Handle native-only entries
         if (!entry.web_supported) {
-            entryStatus.textContent = "Native Only";
-            entryStatus.dataset.state = "native";
-            entryOpen.href = "#";
-            entryOpen.textContent = "仅源码可用";
-            entryOpen.setAttribute("aria-disabled", "true");
+            nativeOverlay.classList.remove("hidden");
+            nativeTitle.textContent = entry.name;
+            nativeCopy.textContent =
+                entry.note || "该示例仅支持原生运行，不提供网页运行时。";
             frame.src = "about:blank";
-            stageEmpty.classList.remove("hidden");
-            stageEmptyLabel.textContent = entry.note ? "Special Case" : "Native Only";
-            stageEmptyTitle.textContent = entry.name;
-            stageEmptyCopy.textContent = entry.note || "该条目不会在浏览器里执行，但仍保留在索引中供查阅和跳转源码。";
             return;
         }
 
-        stageEmpty.classList.add("hidden");
-        entryStatus.textContent = "Loading";
-        entryStatus.dataset.state = "loading";
+        nativeOverlay.classList.add("hidden");
 
-        const targetUrl = entry.type === "standalone"
-            ? entry.url
-            : `./viewer.html?example=${encodeURIComponent(entry.id)}`;
-
-        entryOpen.href = targetUrl;
-        entryOpen.textContent = entry.type === "standalone" ? "单独打开应用" : "单独打开示例";
-        entryOpen.setAttribute("aria-disabled", "false");
+        // Load in iframe
+        const targetUrl =
+            entry.type === "standalone"
+                ? entry.url
+                : `./viewer.html?example=${encodeURIComponent(entry.id)}`;
 
         frame.src = "about:blank";
-        await new Promise((resolve) => requestAnimationFrame(resolve));
-        frame.src = targetUrl;
-    }
-
-    function updateActiveState(id) {
-        document.querySelectorAll("[data-entry-id]").forEach((element) => {
-            element.classList.toggle("is-active", element.dataset.entryId === id);
+        requestAnimationFrame(() => {
+            frame.src = targetUrl;
         });
     }
 }
 
+/* =========================================
+   Viewer (viewer.html)
+   ========================================= */
+
 async function initViewer() {
-    const manifest = await fetchManifest("./examples.json");
-    const entries = manifest.flatMap((category) =>
-        category.items.map((item) => ({ ...item, category: category.category })),
-    );
     const params = new URLSearchParams(window.location.search);
     const exampleId = params.get("example");
+    const bootStart = performance.now();
 
-    const entry = entries.find((candidate) => candidate.id === exampleId);
-    const viewerTitle = document.getElementById("viewer-title");
-    const viewerCopy = document.getElementById("viewer-copy");
-    const viewerMeta = document.getElementById("viewer-meta");
-    const overlay = document.getElementById("viewer-overlay");
-    const overlayTitle = document.getElementById("viewer-overlay-title");
-    const overlayCopy = document.getElementById("viewer-overlay-copy");
-    const overlayStatus = document.getElementById("viewer-status");
+    const overlay = document.getElementById("loading-overlay");
+    const statusEl = document.getElementById("loading-status");
+    const progressBar = document.getElementById("loading-progress-bar");
+    const elapsedEl = document.getElementById("loading-elapsed");
 
-    if (!entry) {
-        overlayTitle.textContent = "Unknown entry";
-        overlayCopy.textContent = "传入的示例标识不在当前清单中。";
-        overlayStatus.textContent = "Manifest mismatch";
+    const elapsedTimer = setInterval(() => {
+        elapsedEl.textContent = formatDuration(performance.now() - bootStart);
+    }, 100);
+
+    updateProgress("Resolving manifest...", 5);
+    sendToGallery({
+        state: "mounted",
+        label: "Viewer Shell",
+        exampleId,
+        route: exampleId ? `?example=${exampleId}` : "?example=unknown",
+    });
+
+    const manifest = await fetchManifest("./examples.json");
+    const entries = manifest.flatMap((group) =>
+        group.items.map((item) => ({ ...item, category: group.category })),
+    );
+    const entry = entries.find((e) => e.id === exampleId);
+
+    if (!entry || !entry.web_supported || entry.type !== "iframe") {
+        clearInterval(elapsedTimer);
+        updateProgress("Entry not available", 100);
+        sendToGallery({
+            state: "error",
+            label: "Unavailable",
+            detail: "传入的示例标识不在当前清单中或不支持网页运行。",
+            exampleId,
+        });
         return;
     }
 
-    viewerTitle.textContent = entry.name;
-    viewerCopy.textContent = entry.description;
-    viewerMeta.textContent = `${entry.category} / ${entry.type}`;
-
-    if (!entry.web_supported || entry.type !== "iframe") {
-        overlayTitle.textContent = entry.name;
-        overlayCopy.textContent = entry.note || "该条目不通过 viewer.html 挂载。";
-        overlayStatus.textContent = "Not available in viewer";
-        return;
-    }
-
-    overlayTitle.textContent = entry.name;
-    overlayCopy.textContent = "初始化 WebGPU 运行时并加载对应的 wasm 模块。";
-    overlayStatus.textContent = "Fetching module";
+    updateProgress(`Loading wasm/${entry.id}.js`, 30);
+    sendToGallery({
+        state: "booting",
+        label: "Loading Module",
+        exampleId: entry.id,
+        route: `?example=${entry.id}`,
+    });
 
     const module = await import(`./wasm/${entry.id}.js`);
-    overlayStatus.textContent = "Booting runtime";
+
+    updateProgress("Booting runtime...", 70);
+    sendToGallery({
+        state: "booting",
+        label: "Booting Runtime",
+        exampleId: entry.id,
+    });
+
     await module.default();
-    overlay.classList.add("hidden");
+    await waitForPaints(2);
+
+    const bootMs = performance.now() - bootStart;
+    clearInterval(elapsedTimer);
+    elapsedEl.textContent = formatDuration(bootMs);
+
+    updateProgress("Ready", 100);
+    sendToGallery({
+        state: "ready",
+        label: "Runtime Ready",
+        exampleId: entry.id,
+        bootMs,
+        route: `?example=${entry.id}`,
+    });
+
+    // Smooth fade-out of loading overlay
+    setTimeout(() => {
+        overlay.classList.add("fade-out");
+    }, 120);
+
+    function updateProgress(status, pct) {
+        statusEl.textContent = status;
+        progressBar.style.width = `${Math.max(0, Math.min(100, pct))}%`;
+    }
+}
+
+/* =========================================
+   Shared utilities
+   ========================================= */
+
+function sendToGallery(payload) {
+    if (window.parent === window) return;
+    window.parent.postMessage({ channel: GALLERY_CHANNEL, ...payload }, "*");
 }
 
 async function fetchManifest(url) {
@@ -218,19 +230,34 @@ async function fetchManifest(url) {
 }
 
 function entryFromUrl(entries) {
-    const params = new URLSearchParams(window.location.search);
-    const id = params.get("example");
-    if (!id) {
-        return null;
-    }
-    return entries.find((entry) => entry.id === id) || null;
+    const id = new URLSearchParams(window.location.search).get("example");
+    return id ? entries.find((e) => e.id === id) || null : null;
 }
 
 function escapeHtml(value) {
-    return value
+    return String(value ?? "")
         .replaceAll("&", "&amp;")
         .replaceAll("<", "&lt;")
         .replaceAll(">", "&gt;")
         .replaceAll('"', "&quot;")
         .replaceAll("'", "&#39;");
+}
+
+function formatDuration(ms) {
+    if (!Number.isFinite(ms) || ms < 0) return "-- ms";
+    return ms < 1000 ? `${Math.round(ms)} ms` : `${(ms / 1000).toFixed(2)} s`;
+}
+
+function waitForPaints(count) {
+    return new Promise((resolve) => {
+        let remaining = count;
+        const step = () => {
+            if (--remaining <= 0) {
+                resolve();
+                return;
+            }
+            requestAnimationFrame(step);
+        };
+        requestAnimationFrame(step);
+    });
 }
