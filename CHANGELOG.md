@@ -16,7 +16,8 @@ Also includes a `DayNightCycle` component for dynamic time progression, automati
 
 
 ### Fixed
-- Fixed an issue of UnlitMaterial UV transform not taking effect
+- Fixed an issue of UnlitMaterial UV transform not taking effect.
+- Fixed an issue causing conflicts in GPU resource ID allocation.
 
 ## v0.2.0
 

@@ -1,12 +1,6 @@
 use std::ops::Deref;
-use std::sync::atomic::{AtomicU64, Ordering};
 
-/// Global unique ID generator
-static NEXT_RESOURCE_ID: AtomicU64 = AtomicU64::new(1);
-
-fn next_id() -> u64 {
-    NEXT_RESOURCE_ID.fetch_add(1, Ordering::Relaxed)
-}
+use crate::core::gpu::generate_gpu_resource_id;
 
 /// Resource wrapper with a unique ID
 /// Used to assign identity to `FrameResources` or temporary resources
@@ -21,7 +15,7 @@ impl<T> Tracked<T> {
     pub fn new(inner: T) -> Self {
         Self {
             inner,
-            id: next_id(),
+            id: generate_gpu_resource_id(),
         }
     }
 
