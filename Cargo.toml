@@ -247,9 +247,4 @@ workspace = true
 frontend_dir = "demo_apps/gallery"
 demo_apps_dir = "demo_apps"
 examples_dir = "examples"
-gallery_dist_dir = "gallery"
 dist_dir = "dist"
-
-[[example]]
-name = "lut_baker"
-path = "examples/tools/lut_baker.rs"

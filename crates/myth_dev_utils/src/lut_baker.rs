@@ -1,12 +1,3 @@
-//! [gallery]
-//! name = "LUT Baker"
-//! category = "Native Tools"
-//! description = "Command-line utility that converts .cube LUT files into packed binary textures."
-//! order = 920
-//! web = false
-//! note = "CLI-only asset preparation tool; not runnable inside the gallery viewer."
-//!
-
 use half;
 use std::env;
 use std::fs;

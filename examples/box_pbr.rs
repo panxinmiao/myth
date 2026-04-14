@@ -6,14 +6,11 @@
 //!
 
 use myth::prelude::*;
-use myth::utils::fps_counter::FpsCounter;
+use myth_dev_utils::FpsCounter;
 
-#[cfg(not(target_arch = "wasm32"))]
-const ASSET_PATH: &str = "examples/assets/";
-#[cfg(target_arch = "wasm32")]
 const ASSET_PATH: &str = match option_env!("MYTH_ASSET_PATH") {
     Some(path) => path,
-    None => "assets/",
+    None => "examples/assets/",
 };
 
 /// PBR Material Cube Example

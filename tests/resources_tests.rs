@@ -13,7 +13,7 @@ use myth::resources::screen_space::{FeatureId, SssProfile, SssProfileData, SssRe
 use myth::resources::uniforms::{Mat3Padded, Mat3Uniform};
 use myth::resources::version_tracker::{ChangeTracker, MutGuard};
 use myth::resources::{TextureSlot, TextureTransform};
-use myth::utils::FpsCounter;
+use myth_dev_utils::FpsCounter;
 
 const EPSILON: f32 = 1e-5;
 

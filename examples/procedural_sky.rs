@@ -13,12 +13,9 @@ use myth_dev_utils::{FpsCounter, UiPass, UiPassNode};
 use myth_resources::Key;
 use winit::event::WindowEvent;
 
-#[cfg(not(target_arch = "wasm32"))]
-const ASSET_PATH: &str = "examples/assets/";
-#[cfg(target_arch = "wasm32")]
 const ASSET_PATH: &str = match option_env!("MYTH_ASSET_PATH") {
     Some(path) => path,
-    None => "assets/",
+    None => "examples/assets/",
 };
 
 /// Procedural Sky Demo
@@ -65,9 +62,10 @@ impl AppHandler for ProceduralSkyDemo {
             ColorSpace::Srgb,
             true,
         );
-        let moon_albedo = engine
-            .assets
-            .load_texture(format!("{}moon.jpg", ASSET_PATH), ColorSpace::Srgb, true);
+        let moon_albedo =
+            engine
+                .assets
+                .load_texture(format!("{}moon.jpg", ASSET_PATH), ColorSpace::Srgb, true);
 
         let mut sky = ProceduralSkyParams::golden_hour();
         sky.set_starbox_texture(starbox);
@@ -90,10 +88,10 @@ impl AppHandler for ProceduralSkyDemo {
 
         // scene.add_logic(cycle);
 
-        let helmet_prefab =
-            engine
-                .assets
-                .load_gltf(format!("{}DamagedHelmet/glTF/DamagedHelmet.gltf", ASSET_PATH));
+        let helmet_prefab = engine.assets.load_gltf(format!(
+            "{}DamagedHelmet/glTF/DamagedHelmet.gltf",
+            ASSET_PATH
+        ));
 
         scene.bloom.set_enabled(true);
         scene.bloom.set_strength(0.02);
@@ -165,9 +163,7 @@ impl AppHandler for ProceduralSkyDemo {
                 ui.separator();
                 ui.checkbox(&mut self.cycle.auto_tick, "Auto animate");
                 ui.add(Slider::new(&mut self.cycle.time_of_day, 0.0..=24.0).text("Solar time"));
-                ui.add(
-                    Slider::new(&mut self.cycle.time_speed, -2.0..=2.0).text("Hours / second"),
-                );
+                ui.add(Slider::new(&mut self.cycle.time_speed, -2.0..=2.0).text("Hours / second"));
                 ui.label(format!("Day count: {:.2}", self.cycle.day_count));
                 ui.label("Keyboard shortcuts remain available for quick tweaks.");
             });

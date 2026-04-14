@@ -24,14 +24,11 @@
 
 use myth::prelude::*;
 use myth::resources::Key;
-use myth::utils::FpsCounter;
+use myth_dev_utils::FpsCounter;
 
-#[cfg(not(target_arch = "wasm32"))]
-const ASSET_PATH: &str = "examples/assets/";
-#[cfg(target_arch = "wasm32")]
 const ASSET_PATH: &str = match option_env!("MYTH_ASSET_PATH") {
     Some(path) => path,
-    None => "assets/",
+    None => "examples/assets/",
 };
 
 /// Which demo mode is active.
@@ -149,9 +146,10 @@ impl AppHandler for SkyboxDemo {
         let mode = DemoMode::Gradient;
 
         // --- Load reference model ---
-        let helmet_prefab = engine
-            .assets
-            .load_gltf(format!("{}DamagedHelmet/glTF/DamagedHelmet.gltf", ASSET_PATH));
+        let helmet_prefab = engine.assets.load_gltf(format!(
+            "{}DamagedHelmet/glTF/DamagedHelmet.gltf",
+            ASSET_PATH
+        ));
 
         // --- Camera ---
         let cam_node = scene.add_camera(Camera::new_perspective(45.0, 1280.0 / 720.0, 0.1));

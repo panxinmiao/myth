@@ -165,9 +165,12 @@ pub fn gpu_struct(attr: TokenStream, item: TokenStream) -> TokenStream {
 #[proc_macro_attribute]
 pub fn main(attr: TokenStream, item: TokenStream) -> TokenStream {
     if !attr.is_empty() {
-        return syn::Error::new(proc_macro2::Span::call_site(), "#[myth::main] does not accept arguments")
-            .to_compile_error()
-            .into();
+        return syn::Error::new(
+            proc_macro2::Span::call_site(),
+            "#[myth::main] does not accept arguments",
+        )
+        .to_compile_error()
+        .into();
     }
 
     let input = syn::parse_macro_input!(item as syn::ItemFn);

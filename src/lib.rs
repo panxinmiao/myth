@@ -97,10 +97,6 @@ pub mod engine {
 
 pub mod utils {
     pub use myth_app::OrbitControls;
-    pub use myth_core::utils::FpsCounter;
-    pub mod fps_counter {
-        pub use myth_core::utils::FpsCounter;
-    }
 }
 
 // ============================================================================

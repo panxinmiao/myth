@@ -6,7 +6,7 @@
 //!
 
 use myth::prelude::*;
-use myth::utils::fps_counter::FpsCounter;
+use myth_dev_utils::FpsCounter;
 
 struct ShadowBasicDemo {
     cube_node: NodeHandle,

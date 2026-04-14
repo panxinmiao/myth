@@ -4,12 +4,14 @@
 //! useful for demos, gallery builds, inspectors, and debug overlays without
 //! polluting the stable engine runtime surface.
 
+pub mod fps_counter;
+pub mod time;
 pub mod ui_pass;
 
-pub use myth_app::OrbitControls;
-pub use myth_core::utils::FpsCounter;
+pub use fps_counter::FpsCounter;
+pub use time::Timer;
 pub use ui_pass::{UiPass, UiPassNode};
 
 pub mod prelude {
-    pub use crate::{FpsCounter, OrbitControls, UiPass, UiPassNode};
+    pub use crate::{FpsCounter, Timer, UiPass, UiPassNode};
 }

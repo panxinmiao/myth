@@ -7,7 +7,7 @@
 
 use myth::prelude::*;
 
-/// 带纹理的旋转立方体 + 轨道控制器
+/// Basic textured box example demonstrating material setup and per-frame updates with an orbit camera.
 struct TexturedBox {
     controls: OrbitControls,
 }

@@ -12,7 +12,7 @@ pub fn generate(mut function: ItemFn) -> syn::Result<TokenStream> {
 
     if function.sig.constness.is_some() {
         return Err(syn::Error::new_spanned(
-            &function.sig.constness,
+            function.sig.constness,
             "#[myth::main] cannot be applied to const functions",
         ));
     }
@@ -37,7 +37,11 @@ pub fn generate(mut function: ItemFn) -> syn::Result<TokenStream> {
     })
 }
 
-fn native_wrapper(user_ident: &syn::Ident, return_type: &ReturnType, is_async: bool) -> TokenStream {
+fn native_wrapper(
+    user_ident: &syn::Ident,
+    return_type: &ReturnType,
+    is_async: bool,
+) -> TokenStream {
     match (is_async, return_type) {
         (false, ReturnType::Default) => quote! {
             #[cfg(not(target_arch = "wasm32"))]

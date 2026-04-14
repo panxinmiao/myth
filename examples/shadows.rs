@@ -6,7 +6,7 @@
 //!
 
 use myth::prelude::*;
-use myth::utils::fps_counter::FpsCounter;
+use myth_dev_utils::FpsCounter;
 
 /// Combined shadow example demonstrating all three shadow-casting light types:
 /// - **Directional light** (CSM): casts from the upper-right

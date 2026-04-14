@@ -54,7 +54,6 @@ struct WorkspaceGalleryConfigRaw {
     frontend_dir: Option<String>,
     demo_apps_dir: Option<String>,
     examples_dir: Option<String>,
-    gallery_dist_dir: Option<String>,
     dist_dir: Option<String>,
     shared_assets_dir: Option<String>,
     wasm_dist_dir: Option<String>,
@@ -65,7 +64,6 @@ struct WorkspaceGalleryConfig {
     frontend_dir: String,
     demo_apps_dir: String,
     examples_dir: String,
-    gallery_dist_dir: String,
     dist_dir: String,
     shared_assets_dir: String,
     wasm_dist_dir: String,
@@ -77,10 +75,11 @@ impl WorkspaceGalleryConfig {
             .context("failed to parse [workspace.metadata]")?;
         let raw = doc.gallery.unwrap_or_default();
         Ok(Self {
-            frontend_dir: raw.frontend_dir.unwrap_or_else(|| "demo_apps/gallery".to_string()),
+            frontend_dir: raw
+                .frontend_dir
+                .unwrap_or_else(|| "demo_apps/gallery".to_string()),
             demo_apps_dir: raw.demo_apps_dir.unwrap_or_else(|| "demo_apps".to_string()),
             examples_dir: raw.examples_dir.unwrap_or_else(|| "examples".to_string()),
-            gallery_dist_dir: raw.gallery_dist_dir.unwrap_or_else(|| "gallery".to_string()),
             dist_dir: raw.dist_dir.unwrap_or_else(|| "dist".to_string()),
             shared_assets_dir: raw
                 .shared_assets_dir
@@ -210,9 +209,13 @@ fn main() -> Result<()> {
     let config = WorkspaceGalleryConfig::from_metadata(&metadata)?;
 
     match &options.command {
-        CommandKind::BuildGallery { only } => {
-            build_gallery(&workspace_root, &metadata, &config, options.profile, only.as_deref())
-        }
+        CommandKind::BuildGallery { only } => build_gallery(
+            &workspace_root,
+            &metadata,
+            &config,
+            options.profile,
+            only.as_deref(),
+        ),
         CommandKind::BuildApp { selected } => build_apps(
             &workspace_root,
             &metadata,
@@ -220,9 +223,13 @@ fn main() -> Result<()> {
             options.profile,
             Some(selected.as_str()),
         ),
-        CommandKind::BuildApps { only } => {
-            build_apps(&workspace_root, &metadata, &config, options.profile, only.as_deref())
-        }
+        CommandKind::BuildApps { only } => build_apps(
+            &workspace_root,
+            &metadata,
+            &config,
+            options.profile,
+            only.as_deref(),
+        ),
     }
 }
 
@@ -314,10 +321,11 @@ fn build_gallery(
     let dist_root = prepare_clean_dir(&workspace_root.join(&config.dist_dir))?;
     sync_shared_assets(workspace_root, config, &dist_root)?;
 
-    let gallery_root = dist_root.join(&config.gallery_dist_dir);
+    let gallery_root = dist_root.clone();
     stage_gallery_frontend(workspace_root, config, &gallery_root)?;
 
-    let manifest_entries = build_manifest_entries(&examples, if only.is_none() { &apps } else { &[] });
+    let manifest_entries =
+        build_manifest_entries(&examples, if only.is_none() { &apps } else { &[] });
     write_manifest(&gallery_root.join("examples.json"), &manifest_entries)?;
 
     let wasm_root = prepare_clean_dir(&gallery_root.join(&config.wasm_dist_dir))?;
@@ -395,7 +403,12 @@ fn collect_examples(
         if !source_path.starts_with(&examples_root) {
             continue;
         }
-        let gallery = parse_example_metadata(source_path)?;
+
+        // skip examples that are not having [gallery] metadata block
+        let Some(gallery) = parse_example_metadata(source_path)? else {
+            continue;
+        };
+
         let source_rel = normalize_path(source_path.strip_prefix(workspace_root)?);
 
         specs.push(ExampleSpec {
@@ -457,8 +470,8 @@ fn collect_demo_apps(
         let source_rel = normalize_path(source_path.strip_prefix(workspace_root)?);
 
         specs.push(AppSpec {
-            id: package.name.clone(),
-            package_name: package.name.clone(),
+            id: package.name.to_string(),
+            package_name: package.name.to_string(),
             name: gallery.name,
             category: gallery.category,
             description: gallery.description,
@@ -482,7 +495,7 @@ fn collect_demo_apps(
     Ok(specs)
 }
 
-fn parse_example_metadata(source_path: &Path) -> Result<ExampleGalleryMetadata> {
+fn parse_example_metadata(source_path: &Path) -> Result<Option<ExampleGalleryMetadata>> {
     let contents = fs::read_to_string(source_path)
         .with_context(|| format!("failed to read {}", source_path.display()))?;
 
@@ -513,10 +526,7 @@ fn parse_example_metadata(source_path: &Path) -> Result<ExampleGalleryMetadata> 
     }
 
     if block_lines.is_empty() {
-        bail!(
-            "missing [gallery] metadata block at the top of {}",
-            source_path.display()
-        );
+        return Ok(None);
     }
 
     let doc: ExampleMetadataDoc = toml::from_str(&block_lines.join("\n")).with_context(|| {
@@ -526,7 +536,7 @@ fn parse_example_metadata(source_path: &Path) -> Result<ExampleGalleryMetadata> 
         )
     })?;
 
-    Ok(doc.gallery)
+    Ok(Some(doc.gallery))
 }
 
 fn build_manifest_entries(examples: &[ExampleSpec], apps: &[AppSpec]) -> Vec<ManifestEntry> {
@@ -577,13 +587,20 @@ fn build_manifest_entries(examples: &[ExampleSpec], apps: &[AppSpec]) -> Vec<Man
 fn write_manifest(path: &Path, entries: &[ManifestEntry]) -> Result<()> {
     let mut grouped: BTreeMap<String, Vec<&ManifestEntry>> = BTreeMap::new();
     for entry in entries {
-        grouped.entry(entry.category.clone()).or_default().push(entry);
+        grouped
+            .entry(entry.category.clone())
+            .or_default()
+            .push(entry);
     }
 
     let categories: Vec<ManifestCategory> = grouped
         .into_iter()
         .map(|(category, mut items)| {
-            items.sort_by(|left, right| left.order.cmp(&right.order).then_with(|| left.name.cmp(&right.name)));
+            items.sort_by(|left, right| {
+                left.order
+                    .cmp(&right.order)
+                    .then_with(|| left.name.cmp(&right.name))
+            });
             ManifestCategory {
                 category,
                 items: items
@@ -630,8 +647,7 @@ fn prepare_dist(dist_root: &Path) -> Result<PathBuf> {
 
 fn prepare_clean_dir(dir: &Path) -> Result<PathBuf> {
     if dir.exists() {
-        fs::remove_dir_all(dir)
-            .with_context(|| format!("failed to clear {}", dir.display()))?;
+        fs::remove_dir_all(dir).with_context(|| format!("failed to clear {}", dir.display()))?;
     }
     fs::create_dir_all(dir).with_context(|| format!("failed to create {}", dir.display()))?;
     Ok(dir.to_path_buf())
@@ -767,12 +783,10 @@ fn optimize_wasm(profile: Profile, output_dir: &Path, module_name: &str) -> Resu
 }
 
 fn replace_dir(source: &Path, destination: &Path) -> Result<()> {
-    if destination.exists() {
-        fs::remove_dir_all(destination)
-            .with_context(|| format!("failed to clear {}", destination.display()))?;
+    if !destination.exists() {
+        fs::create_dir_all(destination)
+            .with_context(|| format!("failed to create {}", destination.display()))?;
     }
-    fs::create_dir_all(destination)
-        .with_context(|| format!("failed to create {}", destination.display()))?;
 
     for entry in WalkDir::new(source) {
         let entry = entry?;
