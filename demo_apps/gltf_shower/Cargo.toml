@@ -11,10 +11,90 @@ homepage.workspace = true
 publish = false
 
 [package.metadata.gallery]
-name = "glTF Shower"
-category = "Showcase Apps"
-description = "Compact embeddable viewer shell for direct model links and lightweight web deployment."
-order = 30
+name = "glTF Showcase"
+category = "glTF Showcase"
+description = "High-quality glTF 2.0 sample models from Khronos Group."
+order = 10
+
+[[package.metadata.gallery.showcase]]
+id = "damaged-helmet"
+name = "Damaged Helmet"
+model = "https://raw.githubusercontent.com/KhronosGroup/glTF-Sample-Assets/main/Models/DamagedHelmet/glTF-Binary/DamagedHelmet.glb"
+
+[[package.metadata.gallery.showcase]]
+id = "sci-fi-game-board"
+name = "Sci-Fi Game Board"
+model = "https://raw.githubusercontent.com/KhronosGroup/glTF-Sample-Assets/main/Models/ABeautifulGame/glTF-Binary/ABeautifulGame.glb"
+
+[[package.metadata.gallery.showcase]]
+id = "chronograph-watch"
+name = "Chronograph Watch"
+model = "https://raw.githubusercontent.com/KhronosGroup/glTF-Sample-Assets/main/Models/ChronographWatch/glTF-Binary/ChronographWatch.glb"
+
+[[package.metadata.gallery.showcase]]
+id = "glass-hurricane"
+name = "Glass Hurricane"
+model = "https://raw.githubusercontent.com/KhronosGroup/glTF-Sample-Assets/main/Models/GlassHurricaneCandleHolder/glTF-Binary/GlassHurricaneCandleHolder.glb"
+
+[[package.metadata.gallery.showcase]]
+id = "vintage-fridge"
+name = "Vintage Fridge"
+model = "https://raw.githubusercontent.com/KhronosGroup/glTF-Sample-Assets/main/Models/CommercialRefrigerator/glTF-Binary/CommercialRefrigerator.glb"
+
+[[package.metadata.gallery.showcase]]
+id = "iridescence-lamp"
+name = "Iridescence Lamp"
+model = "https://raw.githubusercontent.com/KhronosGroup/glTF-Sample-Assets/main/Models/IridescenceLamp/glTF-Binary/IridescenceLamp.glb"
+
+[[package.metadata.gallery.showcase]]
+id = "olives-dish"
+name = "Olives Dish"
+model = "https://raw.githubusercontent.com/KhronosGroup/glTF-Sample-Assets/main/Models/IridescentDishWithOlives/glTF/IridescentDishWithOlives.gltf"
+
+[[package.metadata.gallery.showcase]]
+id = "mosquito-amber"
+name = "Mosquito Amber"
+model = "https://raw.githubusercontent.com/KhronosGroup/glTF-Sample-Assets/main/Models/MosquitoInAmber/glTF/MosquitoInAmber.gltf"
+
+[[package.metadata.gallery.showcase]]
+id = "velvet-chair"
+name = "Velvet Chair"
+model = "https://raw.githubusercontent.com/KhronosGroup/glTF-Sample-Assets/main/Models/SheenChair/glTF-Binary/SheenChair.glb"
+
+[[package.metadata.gallery.showcase]]
+id = "khronos-sunglasses"
+name = "Khronos Sunglasses"
+model = "https://raw.githubusercontent.com/KhronosGroup/glTF-Sample-Assets/main/Models/SunglassesKhronos/glTF-Binary/SunglassesKhronos.glb"
+
+[[package.metadata.gallery.showcase]]
+id = "toy-car"
+name = "Toy Car"
+model = "https://raw.githubusercontent.com/KhronosGroup/glTF-Sample-Assets/main/Models/ToyCar/glTF-Binary/ToyCar.glb"
+
+[[package.metadata.gallery.showcase]]
+id = "sheen-cloth"
+name = "Sheen Cloth"
+model = "https://raw.githubusercontent.com/KhronosGroup/glTF-Sample-Assets/main/Models/SheenCloth/glTF/SheenCloth.gltf"
+
+[[package.metadata.gallery.showcase]]
+id = "stained-glass-lamp"
+name = "Stained Glass Lamp"
+model = "https://raw.githubusercontent.com/KhronosGroup/glTF-Sample-Assets/main/Models/StainedGlassLamp/glTF/StainedGlassLamp.gltf"
+
+[[package.metadata.gallery.showcase]]
+id = "silk-pouf"
+name = "Silk Pouf"
+model = "https://raw.githubusercontent.com/KhronosGroup/glTF-Sample-Assets/main/Models/SpecularSilkPouf/glTF-Binary/SpecularSilkPouf.glb"
+
+[[package.metadata.gallery.showcase]]
+id = "concept-car"
+name = "Concept Car"
+model = "https://raw.githubusercontent.com/KhronosGroup/glTF-Sample-Assets/main/Models/CarConcept/glTF-Binary/CarConcept.glb"
+
+[[package.metadata.gallery.showcase]]
+id = "pot-of-coals"
+name = "Pot Of Coals"
+model = "https://raw.githubusercontent.com/KhronosGroup/glTF-Sample-Assets/main/Models/PotOfCoals/glTF-Binary/PotOfCoals.glb"
 
 [[bin]]
 name = "gltf_shower"

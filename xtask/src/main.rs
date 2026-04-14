@@ -120,6 +120,17 @@ struct DemoAppGalleryMetadata {
     web: Option<bool>,
     note: Option<String>,
     features: Option<Vec<String>>,
+    #[serde(default)]
+    showcase: Vec<ShowcaseItem>,
+}
+
+#[derive(Debug, Clone, Deserialize)]
+struct ShowcaseItem {
+    id: String,
+    name: String,
+    model: String,
+    description: Option<String>,
+    order: Option<i32>,
 }
 
 #[derive(Debug, Clone, Copy)]
@@ -167,6 +178,7 @@ struct AppSpec {
     note: Option<String>,
     manifest_dir: PathBuf,
     features: Vec<String>,
+    showcase: Vec<ShowcaseItem>,
 }
 
 #[derive(Debug, Clone)]
@@ -492,6 +504,7 @@ fn collect_demo_apps(
             .unwrap_or_else(|| manifest_dir.join("main.rs"));
         let source_rel = normalize_path(source_path.strip_prefix(workspace_root)?);
 
+        //if gallery.showcase.is_empty() {
         specs.push(AppSpec {
             id: package.name.to_string(),
             package_name: package.name.to_string(),
@@ -506,7 +519,28 @@ fn collect_demo_apps(
             note: gallery.note,
             manifest_dir,
             features: gallery.features.unwrap_or_default(),
+            showcase: gallery.showcase,
         });
+        // } else {
+        //     for item in gallery.showcase {
+        //         let encoded_model_url = urlencoding::encode(&item.model);
+        //         specs.push(AppSpec {
+        //             id: format!("{}-{}", package.name, item.id),
+        //             package_name: package.name.to_string(),
+        //             name: item.name,
+        //             category: gallery.category.clone(),
+        //             description: item.description.unwrap_or(gallery.description.clone()),
+        //             order: item.order.unwrap_or(gallery.order.unwrap_or(0)),
+        //             source_path: source_rel.clone(),
+        //             source_url: Some(source_url(repo_url, &source_rel)),
+        //             url: format!("../{}/viewer.html?model={}", package.name, encoded_model_url),
+        //             web_supported: gallery.web.unwrap_or(true),
+        //             note: gallery.note.clone(),
+        //             manifest_dir: manifest_dir.clone(),
+        //             features: gallery.features.clone().unwrap_or_default(),
+        //         });
+        //     }
+        // }
     }
 
     specs.sort_by(|left, right| {
@@ -564,7 +598,7 @@ fn parse_example_metadata(source_path: &Path) -> Result<Option<ExampleGalleryMet
 }
 
 fn build_manifest_entries(examples: &[ExampleSpec], apps: &[AppSpec]) -> Vec<ManifestEntry> {
-    let mut entries = Vec::with_capacity(examples.len() + apps.len());
+    let mut entries = Vec::new();
 
     for example in examples {
         entries.push(ManifestEntry {
@@ -583,19 +617,45 @@ fn build_manifest_entries(examples: &[ExampleSpec], apps: &[AppSpec]) -> Vec<Man
     }
 
     for app in apps {
-        entries.push(ManifestEntry {
-            id: app.id.clone(),
-            name: app.name.clone(),
-            category: app.category.clone(),
-            description: app.description.clone(),
-            order: app.order,
-            kind: GalleryItemKind::Standalone,
-            source_path: app.source_path.clone(),
-            source_url: app.source_url.clone(),
-            url: Some(app.url.clone()),
-            web_supported: app.web_supported,
-            note: app.note.clone(),
-        });
+        if app.showcase.is_empty() {
+            entries.push(ManifestEntry {
+                id: app.id.clone(),
+                name: app.name.clone(),
+                category: app.category.clone(),
+                description: app.description.clone(),
+                order: app.order,
+                kind: GalleryItemKind::Standalone,
+                source_path: app.source_path.clone(),
+                source_url: app.source_url.clone(),
+                url: Some(app.url.clone()),
+                web_supported: app.web_supported,
+                note: app.note.clone(),
+            });
+        } else {
+            for item in &app.showcase {
+                let encoded_url = urlencoding::encode(&item.model);
+
+                entries.push(ManifestEntry {
+                    id: format!("{}-{}", app.id, item.id),
+                    name: item.name.clone(),
+                    category: app.category.clone(),
+                    description: item
+                        .description
+                        .clone()
+                        .unwrap_or_else(|| app.description.clone()),
+                    order: item.order.unwrap_or(app.order),
+                    kind: GalleryItemKind::Standalone,
+                    source_path: app.source_path.clone(),
+                    source_url: app.source_url.clone(),
+                    url: Some(format!(
+                        "../{}/viewer.html?model={}",
+                        app.package_name, encoded_url
+                    )),
+                    web_supported: app.web_supported,
+                    note: app.note.clone(),
+                });
+            }
+        }
     }
 
     entries.sort_by(|left, right| {

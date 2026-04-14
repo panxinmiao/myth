@@ -28,6 +28,9 @@ async function initGallery() {
     const nativeOverlay = document.getElementById("native-overlay");
     const nativeTitle = document.getElementById("native-title");
     const nativeCopy = document.getElementById("native-copy");
+    const actionBar = document.getElementById("action-bar");
+    const btnSource = document.getElementById("btn-source");
+    const btnStandalone = document.getElementById("btn-standalone");
 
     // Render navigation
     navMenu.innerHTML = manifest
@@ -75,12 +78,12 @@ async function initGallery() {
 
     // URL-driven state
     window.addEventListener("popstate", () => {
-        const entry = entryFromUrl(entries) ?? entries[0];
+        const entry = entryFromUrl(entries) ?? (entries.find(e => e.id === "showcase") || entries[0]);
         if (entry) selectEntry(entry, false);
     });
 
     // Initial load
-    const initial = entryFromUrl(entries) ?? entries[0];
+    const initial = entryFromUrl(entries) ?? (entries.find(e => e.id === "showcase") || entries[0]);
     if (initial) selectEntry(initial, false);
 
     function selectEntry(entry, pushHistory) {
@@ -104,18 +107,30 @@ async function initGallery() {
             nativeOverlay.classList.remove("hidden");
             nativeTitle.textContent = entry.name;
             nativeCopy.textContent =
-                entry.note || "该示例仅支持原生运行，不提供网页运行时。";
+                entry.note || "This example is not supported on the web. Please run the native application to view it.";
             frame.src = "about:blank";
+
+            actionBar.classList.add("hidden");
             return;
         }
 
         nativeOverlay.classList.add("hidden");
+        actionBar.classList.remove("hidden");
+
+        if (entry.source_url) {
+            btnSource.href = entry.source_url;
+            btnSource.classList.remove("hidden");
+        } else {
+            btnSource.classList.add("hidden");
+        }
 
         // Load in iframe
         const targetUrl =
             entry.type === "standalone"
                 ? entry.url
                 : `./viewer.html?example=${encodeURIComponent(entry.id)}`;
+
+        btnStandalone.href = targetUrl;
 
         frame.src = "about:blank";
         requestAnimationFrame(() => {

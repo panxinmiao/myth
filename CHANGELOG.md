@@ -13,11 +13,16 @@ Also includes a `DayNightCycle` component for dynamic time progression, automati
 - Updated `RenderCamera` in `Renderer::begin_frame` and `ComposerContext` to be passed by value.
   > _Note: This clarifies the architectural intent of `RenderCamera` data as a transient snapshot and removes borrowing dependencies on local variables._
 
-
+### Added
+- Added `#[myth::main]` macro for ergonomic application entry point definition, unifying entry points across Native and WASM platforms.
 
 ### Fixed
 - Fixed an issue of UnlitMaterial UV transform not taking effect.
 - Fixed an issue causing conflicts in GPU resource ID allocation.
+
+### Engineering & DX (Developer Experience)
+* **[Build]** Replaced legacy shell/batch build scripts with a pure-Rust `cargo xtask` workflow, ensuring cross-platform consistency for WebAssembly compilation and Gallery generation.
+* **[Gallery]** Redesigned the Gallery infrastructure to support examples and dynamic, parameter-driven standalone applications. Migrated complex examples such as `showcase` and `gltf_viewer` into standalone apps with independent builds, significantly reducing engine `dev-dependencies`.
 
 ## v0.2.0
 

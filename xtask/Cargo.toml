@@ -13,6 +13,7 @@ serde = { workspace = true }
 serde_json = { workspace = true }
 toml = "1.1.2"
 walkdir = "2.5"
+urlencoding = "2.1"
 
 [lints]
 workspace = true

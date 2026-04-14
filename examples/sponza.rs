@@ -1,5 +1,5 @@
 //! [gallery]
-//! name = "Sponza"
+//! name = "Sponza(SSAO & Shadows)"
 //! category = "Scenes & glTF"
 //! description = "Large streamed glTF scene used to stress-test lighting and traversal."
 //! order = 620
@@ -24,7 +24,7 @@ struct HttpGltfExample {
 
 impl AppHandler for HttpGltfExample {
     fn init(engine: &mut Engine, _window: &dyn Window) -> Self {
-        let map_path = format!("{}envs/royal_esplanade_2k.hdr.jpg", ASSET_PATH);
+        let map_path = format!("{}envs/blouberg_sunrise_2_1k.hdr", ASSET_PATH);
 
         let env_texture_handle = engine
             .assets
@@ -34,6 +34,9 @@ impl AppHandler for HttpGltfExample {
         let scene = engine.scene_manager.active_scene_mut().unwrap();
 
         scene.environment.set_env_map(Some(env_texture_handle));
+        scene
+            .background
+            .set_mode(BackgroundMode::equirectangular(env_texture_handle, 1.0));
 
         scene.ssao.enabled = true;
 

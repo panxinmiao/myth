@@ -206,11 +206,11 @@ $$ if CELESTIAL_STARBOX_EQUIRECT
     let wrapped_uv = vec2<f32>(fract(star_uv.x), clamp(star_uv.y, 0.0, 1.0));
     var color = textureSampleLevel(t_starbox_2d, s_skybox, wrapped_uv, 0.0).rgb;
     color = max(color - vec3<f32>(0.05), vec3<f32>(0.0));
-    return pow(color, vec3<f32>(2.5));
+    return pow(color, vec3<f32>(1.5));
 $$ elif CELESTIAL_STARBOX_CUBE
     var color = textureSampleLevel(t_starbox_cube, s_skybox, dir, 0.0).rgb;
     color = max(color - vec3<f32>(0.05), vec3<f32>(0.0));
-    return pow(color, vec3<f32>(2.5));
+    return pow(color, vec3<f32>(1.5));
 $$ else
     return vec3<f32>(0.0);
 $$ endif
@@ -224,6 +224,7 @@ fn compute_celestial_lighting(
 
     var color = vec3<f32>(0.0);
 
+    // skip sun disk in PMREM to avoid double counting
     $$ if SKYBOX_PROCEDURAL
     // sun
     color += sun_disk(dir, view_transmittance);
