@@ -21,8 +21,5 @@ lasso = { workspace = true }
 [target.'cfg(not(target_arch = "wasm32"))'.dependencies]
 lasso = { workspace = true, features = ["multi-threaded"] }
 
-[target.'cfg(target_arch = "wasm32")'.dependencies]
-web-time = { workspace = true }
-
 [lints]
 workspace = true

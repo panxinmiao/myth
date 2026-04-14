@@ -42,6 +42,7 @@ enum CommandKind {
 struct Options {
     command: CommandKind,
     profile: Profile,
+    features: Option<String>,
 }
 
 #[derive(Debug, Default, Deserialize)]
@@ -102,6 +103,7 @@ struct ExampleGalleryMetadata {
     order: Option<i32>,
     web: Option<bool>,
     note: Option<String>,
+    features: Option<Vec<String>>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -117,6 +119,7 @@ struct DemoAppGalleryMetadata {
     order: Option<i32>,
     web: Option<bool>,
     note: Option<String>,
+    features: Option<Vec<String>>,
 }
 
 #[derive(Debug, Clone, Copy)]
@@ -146,6 +149,7 @@ struct ExampleSpec {
     source_url: Option<String>,
     web_supported: bool,
     note: Option<String>,
+    features: Vec<String>,
 }
 
 #[derive(Debug, Clone)]
@@ -162,6 +166,7 @@ struct AppSpec {
     web_supported: bool,
     note: Option<String>,
     manifest_dir: PathBuf,
+    features: Vec<String>,
 }
 
 #[derive(Debug, Clone)]
@@ -214,6 +219,7 @@ fn main() -> Result<()> {
             &metadata,
             &config,
             options.profile,
+            options.features.as_deref(),
             only.as_deref(),
         ),
         CommandKind::BuildApp { selected } => build_apps(
@@ -221,6 +227,7 @@ fn main() -> Result<()> {
             &metadata,
             &config,
             options.profile,
+            options.features.as_deref(),
             Some(selected.as_str()),
         ),
         CommandKind::BuildApps { only } => build_apps(
@@ -228,6 +235,7 @@ fn main() -> Result<()> {
             &metadata,
             &config,
             options.profile,
+            options.features.as_deref(),
             only.as_deref(),
         ),
     }
@@ -241,34 +249,38 @@ fn parse_args() -> Result<Options> {
 
     match command.as_str() {
         "build-gallery" => {
-            let (profile, only) = parse_build_flags(args.collect())?;
+            let (profile, only, features) = parse_build_flags(args.collect())?;
             Ok(Options {
                 command: CommandKind::BuildGallery { only },
                 profile,
+                features,
             })
         }
         "build-app" => {
             let selected = args.next().context("build-app requires an app id")?;
-            let (profile, _) = parse_build_flags(args.collect())?;
+            let (profile, _, features) = parse_build_flags(args.collect())?;
             Ok(Options {
                 command: CommandKind::BuildApp { selected },
                 profile,
+                features,
             })
         }
         "build-apps" => {
-            let (profile, only) = parse_build_flags(args.collect())?;
+            let (profile, only, features) = parse_build_flags(args.collect())?;
             Ok(Options {
                 command: CommandKind::BuildApps { only },
                 profile,
+                features,
             })
         }
         other => bail!("unknown xtask command: {other}"),
     }
 }
 
-fn parse_build_flags(args: Vec<String>) -> Result<(Profile, Option<String>)> {
+fn parse_build_flags(args: Vec<String>) -> Result<(Profile, Option<String>, Option<String>)> {
     let mut profile = Profile::Release;
     let mut only = None;
+    let mut features = None;
     let mut index = 0;
 
     while index < args.len() {
@@ -283,13 +295,21 @@ fn parse_build_flags(args: Vec<String>) -> Result<(Profile, Option<String>)> {
                 only = Some(value);
                 index += 1;
             }
+            "--features" => {
+                let value = args
+                    .get(index + 1)
+                    .context("--features requires a value")?
+                    .clone();
+                features = Some(value);
+                index += 1;
+            }
             other => bail!("unknown xtask argument: {other}"),
         }
 
         index += 1;
     }
 
-    Ok((profile, only))
+    Ok((profile, only, features))
 }
 
 fn workspace_root() -> Result<PathBuf> {
@@ -305,6 +325,7 @@ fn build_gallery(
     metadata: &Metadata,
     config: &WorkspaceGalleryConfig,
     profile: Profile,
+    features: Option<&str>,
     only: Option<&str>,
 ) -> Result<()> {
     let repo_url = repository_url(metadata)?;
@@ -330,12 +351,12 @@ fn build_gallery(
 
     let wasm_root = prepare_clean_dir(&gallery_root.join(&config.wasm_dist_dir))?;
     for spec in examples.iter().filter(|spec| spec.web_supported) {
-        build_example_target(workspace_root, profile, spec, &wasm_root)?;
+        build_example_target(workspace_root, profile, features, spec, &wasm_root)?;
     }
 
     if only.is_none() {
         for app in apps.iter().filter(|spec| spec.web_supported) {
-            build_app_spec(workspace_root, profile, app, &dist_root)?;
+            build_app_spec(workspace_root, profile, features, app, &dist_root)?;
         }
     }
 
@@ -347,6 +368,7 @@ fn build_apps(
     metadata: &Metadata,
     config: &WorkspaceGalleryConfig,
     profile: Profile,
+    features: Option<&str>,
     selected: Option<&str>,
 ) -> Result<()> {
     let repo_url = repository_url(metadata)?;
@@ -362,7 +384,7 @@ fn build_apps(
     sync_shared_assets(workspace_root, config, &dist_root)?;
 
     for app in apps.iter().filter(|spec| spec.web_supported) {
-        build_app_spec(workspace_root, profile, app, &dist_root)?;
+        build_app_spec(workspace_root, profile, features, app, &dist_root)?;
     }
 
     Ok(())
@@ -422,6 +444,7 @@ fn collect_examples(
             source_url: Some(source_url(repo_url, &source_rel)),
             web_supported: gallery.web.unwrap_or(true),
             note: gallery.note,
+            features: gallery.features.unwrap_or_default(),
         });
     }
 
@@ -482,6 +505,7 @@ fn collect_demo_apps(
             web_supported: gallery.web.unwrap_or(true),
             note: gallery.note,
             manifest_dir,
+            features: gallery.features.unwrap_or_default(),
         });
     }
 
@@ -675,6 +699,7 @@ fn stage_gallery_frontend(
 fn build_example_target(
     workspace_root: &Path,
     profile: Profile,
+    features: Option<&str>,
     spec: &ExampleSpec,
     wasm_root: &Path,
 ) -> Result<()> {
@@ -692,6 +717,19 @@ fn build_example_target(
             &spec.target_name,
         ])
         .args(profile.cargo_args());
+
+    let mut all_features = Vec::new();
+    if let Some(feats) = features {
+        all_features.push(feats.to_string());
+    }
+    if !spec.features.is_empty() {
+        all_features.push(spec.features.join(","));
+    }
+
+    if !all_features.is_empty() {
+        cargo.args(["--features", &all_features.join(",")]);
+    }
+
     run_command(&mut cargo, &format!("building gallery example {}", spec.id))?;
 
     let wasm_path = workspace_root
@@ -708,6 +746,7 @@ fn build_example_target(
 fn build_app_spec(
     workspace_root: &Path,
     profile: Profile,
+    features: Option<&str>,
     spec: &AppSpec,
     dist_root: &Path,
 ) -> Result<()> {
@@ -723,6 +762,19 @@ fn build_app_spec(
             "wasm32-unknown-unknown",
         ])
         .args(profile.cargo_args());
+
+    let mut all_features = Vec::new();
+    if let Some(feats) = features {
+        all_features.push(feats.to_string());
+    }
+    if !spec.features.is_empty() {
+        all_features.push(spec.features.join(","));
+    }
+
+    if !all_features.is_empty() {
+        cargo.args(["--features", &all_features.join(",")]);
+    }
+
     run_command(&mut cargo, &format!("building app {}", spec.id))?;
 
     let wasm_path = workspace_root

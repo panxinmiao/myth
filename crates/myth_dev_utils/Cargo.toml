@@ -31,6 +31,7 @@ egui-wgpu = { workspace = true, features = ["winit"] }
 egui-winit = { workspace = true, default-features = false, features = ["links"] }
 wgpu = { workspace = true, features = ["webgpu", "fragile-send-sync-non-atomic-wasm"] }
 winit = { workspace = true }
+web-time = { workspace = true }
 
 [lints]
 workspace = true
