@@ -1,9 +1,11 @@
-//! [gallery]
-//! name = "Shadow Spot"
-//! category = "Shadows"
-//! description = "Focused spot-light shadows over a simple floor-and-sphere composition."
-//! order = 420
-//!
+// //! [gallery]
+// //! name = "Shadow Spot"
+// //! category = "Shadows"
+// //! description = "Focused spot-light shadows over a simple floor-and-sphere composition."
+// //! order = 420
+// //!
+// todo: When new shadow API is ready, update this example to demonstrate spot shadows and re-enable in gallery.
+// For now, this serves as a reference for the old API and a reminder of the need for a new one.
 
 use myth::prelude::*;
 use myth_dev_utils::FpsCounter;

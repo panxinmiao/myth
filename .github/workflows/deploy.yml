@@ -1,4 +1,4 @@
-name: GH-Pages
+name: Deploy Gallery
 
 on:
   # push:
@@ -6,7 +6,9 @@ on:
   workflow_dispatch:
 
 permissions:
-  contents: write
+  contents: read
+  pages: write
+  id-token: write
 
 jobs:
   build-and-deploy:
@@ -20,59 +22,28 @@ jobs:
         with:
           targets: wasm32-unknown-unknown
 
+      - name: Rust Cache
+        uses: Swatinem/rust-cache@v2
+
       - name: Install wasm-bindgen-cli
         uses: jetli/wasm-bindgen-action@v0.2.0
         with:
-          version: 0.2.115
+          version: 0.2.117
 
-      - name: Install LLVM Toolchain
-        run: sudo apt-get update && sudo apt-get install -y llvm clang
+      - name: Install LLVM Toolchain and Optimization Tools
+        run: sudo apt-get update && sudo apt-get install -y llvm clang binaryen
 
-      - name: Build WASM Examples
-        run: |
-          chmod +x scripts/build_wasm.sh
-          
-          echo "🚀 Building Showcase (Main Page)..."
-          export SKIP_ASSETS_SYNC=0
-          export MYTH_ASSET_PATH="assets/"
-          ./scripts/build_wasm.sh showcase release --features gltf-meshopt
-          
-          echo "🚀 Building glTF Viewer (Sub Page)..."
-          export SKIP_ASSETS_SYNC=1
-          export MYTH_ASSET_PATH="../assets/"
-          ./scripts/build_wasm.sh gltf_viewer release --features "gltf-meshopt, rdg_inspector"
+      - name: Build Gallery & Demo Apps
+        run: cargo xtask build-gallery --release
 
-          echo "🚀 Building glTF Shower (Sub Page)..."
-          export SKIP_ASSETS_SYNC=1
-          export MYTH_ASSET_PATH="../assets/"
-          ./scripts/build_wasm.sh gltf_shower release --features gltf-meshopt
+      - name: Setup Pages
+        uses: actions/configure-pages@v4
 
-      - name: Organize Deployment Files
-        run: |
-          # create dist directory
-          mkdir -p dist
-          
-          # 1. Copy Showcase to root directory (as main page)
-          # Note: cp -r copies all contents of the directory
-          cp -r examples/showcase/web/* dist/
-          
-          # 2. Copy glTF Viewer to subdirectory
-          mkdir -p dist/gltf_viewer
-          cp -r examples/gltf_viewer/web/* dist/gltf_viewer/
-
-          # 3. Copy glTF shower to subdirectory
-          mkdir -p dist/gltf
-          cp -r examples/gltf_shower/web/* dist/gltf/
-          
-          # 4. Clean up .gitignore files
-          # build_wasm.sh generates .gitignore in pkg and assets, which need to be removed for deployment
-          find dist -name ".gitignore" -type f -delete
-          
-          echo "✅ Deployment folder structure prepared:"
-          ls -R dist
-
-      - name: Deploy
-        uses: JamesIves/github-pages-deploy-action@v4
+      - name: Upload Artifacts
+        uses: actions/upload-pages-artifact@v3
         with:
-          branch: gh-pages
-          folder: dist
+          path: './dist'
+
+      - name: Deploy to GitHub Pages
+        id: deployment
+        uses: actions/deploy-pages@v4
