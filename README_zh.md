@@ -12,9 +12,9 @@
 [![License](https://img.shields.io/badge/license-MIT%2FApache-blue.svg)](LICENSE)
 [![WebGPU Ready](https://img.shields.io/badge/WebGPU-Ready-green.svg)](https://gpuweb.github.io/gpuweb/)
 
-[![Myth Engine Hero](https://raw.githubusercontent.com/panxinmiao/myth/main/docs/images/hero.jpg)](https://panxinmiao.github.io/myth/)
+[![Myth Engine Hero](https://raw.githubusercontent.com/panxinmiao/myth/main/docs/images/hero.jpg)](https://panxinmiao.github.io/myth/showcase)
 
-[**演示案例**](https://panxinmiao.github.io/myth/) | [**glTF 示例**](https://panxinmiao.github.io/myth/gltf/) | [**glTF 查看器与检查器**](https://panxinmiao.github.io/myth/gltf_viewer/)  | [**示例代码**](examples/)
+[**演示案例**](https://panxinmiao.github.io/myth/) | [**示例代码**](examples/)
 
 </div>
 
@@ -82,7 +82,7 @@ Myth 使用了严格的基于 SSA 的 RenderGraph，因此引擎能够：
 
 所有这些都无需手动设置内存屏障。
 
-深入了解：[docs/RenderGraph_CN.md](https://github.com/panxinmiao/myth/blob/main/docs/RenderGraph_CN.md)
+深入了解：[docs/RenderGraph_zh.md](https://github.com/panxinmiao/myth/blob/main/docs/RenderGraph_zh.md)
 
 以下是 Myth 引擎在渲染复杂帧时，自动生成的 RenderGraph 的真实拓扑转储：
 
@@ -229,13 +229,13 @@ flowchart TD
 
 </details>
 
-## 在线演示
+## 在线独立展示应用
 
 直接在你的浏览器中体验引擎（WebGPU 需要 Chrome/Edge 113+）：
 
-  - **[Showcase (首页)](https://panxinmiao.github.io/myth/)**：高性能渲染展示。
-  - **[glTF 查看器与检查器](https://panxinmiao.github.io/myth/gltf_viewer/)**：拖拽你自己的 .glb 文件进行查看。
-  - **[glTF 示例模型](https://panxinmiao.github.io/myth/gltf/)**：浏览多个使用 Myth 渲染的 Khronos 官方 glTF 资产。
+  - **[Showcase (首页)](https://panxinmiao.github.io/myth/showcase)**：高性能渲染展示。
+  - **[glTF 查看器与检查器](https://panxinmiao.github.io/myth/gltf_viewer)**：拖拽你自己的 .glb 文件进行查看。
+  - **[glTF 示例模型](https://panxinmiao.github.io/myth/gltf_shower)**：浏览多个使用 Myth 渲染的 Khronos 官方 glTF 资产。
 
 ## 快速开始
 
@@ -300,23 +300,13 @@ fn main() -> myth::Result<()> {
 克隆仓库并直接运行示例代码：
 
 ```bash
-# 运行 earth 示例
+# 运行示例（例如 Earth 演示）
 cargo run --example earth --release
 
-# 运行 glTF 查看器 (桌面端)
-cargo run --example gltf_viewer --release
-
-# 运行影视级演示案例 (Web/WASM)
-# 添加 `gltf-meshopt` 特性以启用使用 MeshOptimizer 优化的 glTF 网格。
-./scripts/build_wasm.sh showcase --features="gltf-meshopt"
-python3 -m http.server 8080 --directory examples/showcase/web
-
-# 运行 glTF 查看器 (Web/WASM)
-# 添加 `rdg_inspector` 特性以启用精美的 RenderGraph 可视化。
-./scripts/build_wasm.sh gltf_viewer --features="rdg_inspector"
-python3 -m http.server 8080 --directory examples/gltf_viewer/web
-
+# 运行独立应用（例如 glTF 查看器）
+cargo run -p gltf_viewer --release
 ```
+构建并运行Web/WASM示例，请参阅 [Myth xtask 指南](xtask/README_zh.md)
 
 ### Python 绑定
 

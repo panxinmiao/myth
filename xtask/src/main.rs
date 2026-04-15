@@ -882,7 +882,7 @@ fn optimize_wasm(profile: Profile, output_dir: &Path, module_name: &str) -> Resu
     }
 
     let status = Command::new("wasm-opt")
-        .args(["-Oz", "-o"])
+        .args(["-Os", "-o"])
         .arg(&input)
         .arg(&input)
         .status();

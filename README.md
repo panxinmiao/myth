@@ -12,9 +12,9 @@
 [![License](https://img.shields.io/badge/license-MIT%2FApache-blue.svg)](LICENSE)
 [![WebGPU Ready](https://img.shields.io/badge/WebGPU-Ready-green.svg)](https://gpuweb.github.io/gpuweb/)
 
-[![Myth Engine Hero](https://raw.githubusercontent.com/panxinmiao/myth/main/docs/images/hero.jpg)](https://panxinmiao.github.io/myth/)
+[![Myth Engine Hero](https://raw.githubusercontent.com/panxinmiao/myth/main/docs/images/hero.jpg)](https://panxinmiao.github.io/myth/showcase)
 
-[**Showcase**](https://panxinmiao.github.io/myth/) | [**glTF Samples**](https://panxinmiao.github.io/myth/gltf/) | [**glTF Viewer & Inspector**](https://panxinmiao.github.io/myth/gltf_viewer/)  | [**Examples**](examples/)
+[**Gallery**](https://panxinmiao.github.io/myth) | [**Examples**](examples/)
 
 </div>
 
@@ -226,13 +226,13 @@ flowchart TD
 *(* **Legend:** *Single arrow `-->` represents logical data dependency; Double arrow `==>` represents physical memory aliasing / in-place reuse)*
 </details>
 
-## Online Demo
+## Online Standalone Demo Apps
 
 Experience the engine directly in your browser (Chrome/Edge 113+ required for WebGPU):
 
-- **[Showcase (Home)](https://panxinmiao.github.io/myth/)**: High-performance rendering showcase.
-- **[glTF Viewer & Inspector](https://panxinmiao.github.io/myth/gltf_viewer/)**: Drag & drop your own .glb files.
-- **[glTF Sample Models](https://panxinmiao.github.io/myth/gltf/)**: Explore multiple official glTF assets from Khronos rendered with Myth.
+- **[Showcase (Home)](https://panxinmiao.github.io/myth/showcase)**: High-performance rendering showcase.
+- **[glTF Viewer & Inspector](https://panxinmiao.github.io/myth/gltf_viewer)**: Drag & drop your own .glb files.
+- **[glTF Sample Models](https://panxinmiao.github.io/myth/gltf_shower)**: Explore multiple official glTF assets from Khronos rendered with Myth.
 
 ![Web Editor Preview](https://raw.githubusercontent.com/panxinmiao/myth/main/docs/images/inspector.gif)
 
@@ -300,23 +300,13 @@ fn main() -> myth::Result<()> {
 Clone the repository and run the examples directly:
 
 ```bash
-# Run the earth example
+# Run the examples (e.g., Earth demo)
 cargo run --example earth --release
 
-# Run the glTF Viewer (Desktop)
-cargo run --example gltf_viewer --release
-
-# Run the Cinematic Showcase (Web/WASM)
-# Add `gltf-meshopt` feature to enable glTF mesh optimization with MeshOptimizer.
-./scripts/build_wasm.sh showcase --features="gltf-meshopt"
-python3 -m http.server 8080 --directory examples/showcase/web
-
-# Run the glTF Viewer (Web/WASM)
-# Add `rdg_inspector` feature to enable beautiful RenderGraph visualization.
-./scripts/build_wasm.sh gltf_viewer --features="rdg_inspector"
-python3 -m http.server 8080 --directory examples/gltf_viewer/web
-
+# Run standalone Apps (e.g., glTF Viewer)
+cargo run -p gltf_viewer --release
 ```
+For building and running Web/WASM examples, please refer to the [myth xtask Guide](xtask/README.md).
 
 ### Python Bindings
 Myth Engine also provides Python bindings for rapid prototyping and scientific visualization.
