@@ -1,6 +1,7 @@
 # === Assets ===
 assets/** linguist-vendored=true
 examples/**/assets/** linguist-vendored=true
+demo_apps/gallery/** linguist-vendored=true
 
 # === 3D Models ===
 *.gltf binary linguist-vendored=true
