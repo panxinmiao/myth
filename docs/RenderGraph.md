@@ -1,6 +1,6 @@
 # Myth Engine Architecture: Building an SSA-Based Declarative Render Graph
 
-*(Note: The original text was written in [Chinese](RenderGraph_CN.md) and translated and polished into English by Gemini.)*
+*(Note: The original text was written in [Chinese](RenderGraph_zh.md) and translated and polished into English by Gemini.)*
 
 ## 0. Introduction
 

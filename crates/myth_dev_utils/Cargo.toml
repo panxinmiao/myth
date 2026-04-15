@@ -19,18 +19,18 @@ myth_render = { workspace = true }
 egui = { workspace = true }
 rustc-hash = { workspace = true }
 half = { workspace = true }
+winit = { workspace = true }
 
 [target.'cfg(not(target_arch = "wasm32"))'.dependencies]
 egui-wgpu = { workspace = true, features = ["winit"] }
 egui-winit = { workspace = true }
 wgpu = { workspace = true }
-winit = { workspace = true }
+
 
 [target.'cfg(target_arch = "wasm32")'.dependencies]
 egui-wgpu = { workspace = true, features = ["winit"] }
 egui-winit = { workspace = true, default-features = false, features = ["links"] }
 wgpu = { workspace = true, features = ["webgpu", "fragile-send-sync-non-atomic-wasm"] }
-winit = { workspace = true }
 web-time = { workspace = true }
 
 [lints]

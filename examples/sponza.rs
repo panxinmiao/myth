@@ -1,5 +1,5 @@
 //! [gallery]
-//! name = "Sponza(SSAO & Shadows)"
+//! name = "Sponza (SSAO & Shadows)"
 //! category = "Scenes & glTF"
 //! description = "Large streamed glTF scene used to stress-test lighting and traversal."
 //! order = 620

@@ -204,27 +204,23 @@ uuid = { workspace = true }
 bytemuck = { workspace = true }
 parking_lot = { workspace = true }
 half = { workspace = true }
+winit = { workspace = true }
+ehttp = { workspace = true }
 
 [target.'cfg(not(target_arch = "wasm32"))'.dev-dependencies]
 criterion = { workspace = true, features = ["html_reports"] }
-egui      = { workspace = true }
 tokio = { workspace = true, features = ["fs", "rt-multi-thread", "macros"] }
-ehttp = { workspace = true }
 wgpu = { workspace = true }
-winit = { workspace = true }
 
 [target.'cfg(target_arch = "wasm32")'.dev-dependencies]
 wasm-bindgen-test = { workspace = true }
 criterion = { workspace = true, default-features = false }
-egui      = { workspace = true }
 wasm-bindgen = { workspace = true }
 wasm-bindgen-futures = { workspace = true }
 console_error_panic_hook = { workspace = true }
 console_log = { workspace = true }
 tokio = { workspace = true, features = ["macros", "sync", "rt", "time"] }
-ehttp = { workspace = true }
 wgpu = { workspace = true, features = ["webgpu", "fragile-send-sync-non-atomic-wasm"] }
-winit = { workspace = true }
 web-sys = { workspace = true, features = ["Window", "Document", "Element", "DomTokenList", "Location", "UrlSearchParams"] }
 
 [[bench]]

@@ -7,9 +7,8 @@
 
 use std::any::Any;
 
-use egui::Slider;
 use myth::prelude::*;
-use myth_dev_utils::{FpsCounter, UiPass, UiPassNode};
+use myth_dev_utils::*;
 use myth_resources::Key;
 use winit::event::WindowEvent;
 
@@ -162,8 +161,13 @@ impl AppHandler for ProceduralSkyDemo {
                 ui.label("Procedural atmosphere and celestial motion");
                 ui.separator();
                 ui.checkbox(&mut self.cycle.auto_tick, "Auto animate");
-                ui.add(Slider::new(&mut self.cycle.time_of_day, 0.0..=24.0).text("Solar time"));
-                ui.add(Slider::new(&mut self.cycle.time_speed, -2.0..=2.0).text("Hours / second"));
+                ui.add(
+                    egui::Slider::new(&mut self.cycle.time_of_day, 0.0..=24.0).text("Solar time"),
+                );
+                ui.add(
+                    egui::Slider::new(&mut self.cycle.time_speed, -2.0..=2.0)
+                        .text("Hours / second"),
+                );
                 ui.label(format!("Day count: {:.2}", self.cycle.day_count));
                 ui.label("Keyboard shortcuts remain available for quick tweaks.");
             });

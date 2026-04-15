@@ -8,6 +8,7 @@ pub mod fps_counter;
 pub mod time;
 pub mod ui_pass;
 
+pub use egui;
 pub use fps_counter::FpsCounter;
 pub use time::Timer;
 pub use ui_pass::{UiPass, UiPassNode};
