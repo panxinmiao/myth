@@ -30,8 +30,11 @@ jobs:
         with:
           version: 0.2.117
 
-      - name: Install LLVM Toolchain and Optimization Tools
-        run: sudo apt-get update && sudo apt-get install -y llvm clang binaryen
+      - name: Install LLVM Toolchain
+        run: sudo apt-get update && sudo apt-get install -y llvm clang
+
+      - name: Install latest wasm-opt
+        run: npm install -g wasm-opt
 
       - name: Build Gallery & Demo Apps
         run: cargo xtask build-gallery --release

@@ -514,7 +514,7 @@ fn collect_demo_apps(
             order: gallery.order.unwrap_or(0),
             source_path: source_rel.clone(),
             source_url: Some(source_url(repo_url, &source_rel)),
-            url: format!("../{}/index.html", package.name),
+            url: format!("./{}/index.html", package.name),
             web_supported: gallery.web.unwrap_or(true),
             note: gallery.note,
             manifest_dir,
@@ -648,7 +648,7 @@ fn build_manifest_entries(examples: &[ExampleSpec], apps: &[AppSpec]) -> Vec<Man
                     source_path: app.source_path.clone(),
                     source_url: app.source_url.clone(),
                     url: Some(format!(
-                        "../{}/viewer.html?model={}",
+                        "./{}/viewer.html?model={}",
                         app.package_name, encoded_url
                     )),
                     web_supported: app.web_supported,
@@ -766,7 +766,7 @@ fn build_example_target(
     let mut cargo = Command::new("cargo");
     cargo
         .current_dir(workspace_root)
-        .env("MYTH_ASSET_PATH", "../assets/")
+        .env("MYTH_ASSET_PATH", "assets/")
         .args([
             "build",
             "--package",

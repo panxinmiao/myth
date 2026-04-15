@@ -1,5 +1,7 @@
 # Myth xtask - Web Gallery 构建工具
 
+[English](README.md)
+
 ## 环境准备
 
 在运行构建脚本之前，请确保您的开发环境已安装以下工具链：
