@@ -380,12 +380,9 @@ enum ViewerEvent {
     LutTextureReady { name: String, handle: TextureHandle },
 }
 
-#[cfg(not(target_arch = "wasm32"))]
-const ASSET_PATH: &str = "examples/assets/";
-#[cfg(target_arch = "wasm32")]
 const ASSET_PATH: &str = match option_env!("MYTH_ASSET_PATH") {
-    Some(path) => path, // CI or user-defined path via build_wasm.sh
-    None => "assets/",  // Local default path for testing with build_wasm.sh
+    Some(path) => path,
+    None => "examples/assets/",
 };
 
 impl AppHandler for GltfViewer {
