@@ -62,9 +62,9 @@ use crate::graph::frame::{PreparedSkyboxDraw, RenderLists};
 use crate::graph::passes::utils::add_msaa_resolve_pass;
 use crate::graph::passes::{
     AtmosphereFeature, BloomFeature, BrdfLutFeature, CasFeature, EquirectToCubeFeature,
-    FxaaFeature, IblComputeFeature, MsaaSyncFeature, OpaqueFeature, PrepassFeature, ShadowFeature,
-    SimpleForwardFeature, SkyboxFeature, SsaoFeature, SsssFeature, TaaFeature, ToneMappingFeature,
-    TransmissionCopyFeature, TransparentFeature,
+    FxaaFeature, GaussianSplattingFeature, IblComputeFeature, MsaaSyncFeature, OpaqueFeature,
+    PrepassFeature, ShadowFeature, SimpleForwardFeature, SkyboxFeature, SsaoFeature, SsssFeature,
+    TaaFeature, ToneMappingFeature, TransmissionCopyFeature, TransparentFeature,
 };
 use crate::pipeline::PipelineCache;
 use crate::pipeline::ShaderManager;
@@ -122,6 +122,9 @@ pub struct ComposerContext<'a> {
     pub equirect_to_cube_pass: &'a mut EquirectToCubeFeature,
     pub ibl_pass: &'a mut IblComputeFeature,
     pub atmosphere_pass: &'a mut AtmosphereFeature,
+
+    // Gaussian Splatting
+    pub gaussian_splatting_pass: &'a mut GaussianSplattingFeature,
 
     // Debug view (compile-time gated)
     #[cfg(feature = "debug_view")]
@@ -628,6 +631,13 @@ impl<'a> FrameComposer<'a> {
                             procedural_skybox_dependencies,
                         );
                     }
+
+                    // 5b. Gaussian Splatting
+                    active_color = self.ctx.gaussian_splatting_pass.add_to_graph(
+                        c,
+                        active_color,
+                        opaque_out.active_depth,
+                    );
 
                     // ── 6. TAA Resolve ────────────────────────────────────────────
                     // Resolve temporal anti-aliasing before bloom/tone-mapping.

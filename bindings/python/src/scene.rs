@@ -140,6 +140,25 @@ impl PyScene {
     }
 
     // ----------------------------------------------------------------
+    // Gaussian Splatting
+    // ----------------------------------------------------------------
+
+    /// Add a Gaussian splatting point cloud to the scene.
+    ///
+    /// Args:
+    ///     name: Display name for the scene node.
+    ///     cloud: A ``GaussianCloud`` loaded via ``engine.load_gaussian_ply()``.
+    ///
+    /// Returns an ``Object3D`` handle for positioning the cloud.
+    fn add_gaussian_cloud(
+        &self,
+        name: &str,
+        cloud: &crate::gaussian::PyGaussianCloud,
+    ) -> PyResult<PyObject3D> {
+        crate::gaussian::add_gaussian_cloud_impl(name, cloud)
+    }
+
+    // ----------------------------------------------------------------
     // Hierarchy
     // ----------------------------------------------------------------
 

@@ -209,10 +209,12 @@ pub use myth_resources::{
     RenderableMaterialTrait, ShaderDefines, Side, TaaSettings, Texture, TextureSlot,
     TextureTransform, ToneMappingMode, ToneMappingSettings, UnlitMaterial, VertexFormat,
 };
+pub use myth_resources::gaussian_splat::GaussianCloud;
 
 // Assets
 pub use myth_assets::{AssetServer, GeometryHandle, ImageHandle, MaterialHandle, TextureHandle};
 pub use myth_assets::{ColorSpace, GeometryQuery, ResolveGeometry, ResolveMaterial, SceneExt};
+pub use myth_assets::loaders::ply::load_gaussian_ply;
 
 // Animation
 pub use myth_animation::{

@@ -14,9 +14,9 @@ use crate::graph::frame::RenderLists;
 use crate::graph::passes::DebugViewFeature;
 use crate::graph::passes::{
     AtmosphereFeature, BloomFeature, BrdfLutFeature, CasFeature, EquirectToCubeFeature,
-    FxaaFeature, IblComputeFeature, MsaaSyncFeature, OpaqueFeature, PrepassFeature, ShadowFeature,
-    SimpleForwardFeature, SkyboxFeature, SsaoFeature, SsssFeature, TaaFeature, ToneMappingFeature,
-    TransmissionCopyFeature, TransparentFeature,
+    FxaaFeature, GaussianSplattingFeature, IblComputeFeature, MsaaSyncFeature, OpaqueFeature,
+    PrepassFeature, ShadowFeature, SimpleForwardFeature, SkyboxFeature, SsaoFeature, SsssFeature,
+    TaaFeature, ToneMappingFeature, TransmissionCopyFeature, TransparentFeature,
 };
 use myth_assets::AssetServer;
 use myth_core::Result;
@@ -95,6 +95,9 @@ struct RendererState {
     pub(crate) equirect_to_cube_pass: EquirectToCubeFeature,
     pub(crate) ibl_pass: IblComputeFeature,
     pub(crate) atmosphere_pass: AtmosphereFeature,
+
+    // Gaussian Splatting
+    pub(crate) gaussian_splatting_pass: GaussianSplattingFeature,
 
     // Debug view (compile-time gated)
     #[cfg(feature = "debug_view")]
@@ -256,6 +259,8 @@ impl Renderer {
             equirect_to_cube_pass,
             ibl_pass,
             atmosphere_pass: AtmosphereFeature::new(),
+
+            gaussian_splatting_pass: GaussianSplattingFeature::new(),
 
             #[cfg(feature = "debug_view")]
             debug_view_pass: DebugViewFeature::new(),
@@ -460,6 +465,21 @@ impl Renderer {
                 );
             }
 
+            // Gaussian Splatting
+            if scene.has_gaussian_clouds() {
+                // Prepare the first cloud found.
+                // TODO: support multiple clouds in the scene.
+                for (_handle, cloud) in &scene.gaussian_clouds {
+                    state.gaussian_splatting_pass.extract_and_prepare(
+                        &mut extract_ctx,
+                        cloud,
+                        &camera,
+                        self.size,
+                    );
+                    break;
+                }
+            }
+
             if is_hf {
                 if let Some(taa_settins) = camera.aa_mode.taa_settings() {
                     state.taa_pass.extract_and_prepare(
@@ -603,6 +623,8 @@ impl Renderer {
             equirect_to_cube_pass: &mut state.equirect_to_cube_pass,
             ibl_pass: &mut state.ibl_pass,
             atmosphere_pass: &mut state.atmosphere_pass,
+
+            gaussian_splatting_pass: &mut state.gaussian_splatting_pass,
 
             #[cfg(feature = "debug_view")]
             debug_view_pass: &mut state.debug_view_pass,

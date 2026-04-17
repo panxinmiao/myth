@@ -23,6 +23,7 @@ pub mod bloom;
 pub mod buffer;
 pub mod builder;
 pub mod fxaa;
+pub mod gaussian_splat;
 pub mod geometry;
 pub mod handles;
 pub mod image;
@@ -61,6 +62,7 @@ pub use anti_aliasing::AntiAliasingMode;
 pub use bloom::BloomSettings;
 pub use buffer::BufferRef;
 pub use fxaa::{FxaaQuality, FxaaSettings};
+pub use gaussian_splat::{GaussianCloud, GaussianSHCoefficients, GaussianSplat, Splat2D};
 pub use geometry::{
     Attribute, BoundingBox, BoundingSphere, Geometry, IndexAttribute, IndexFormat, VertexFormat,
 };
