@@ -21,10 +21,12 @@ use myth_resources::{GeometryHandle, ImageHandle, MaterialHandle, TextureHandle}
 use myth_resources::{
     Material, PhysicalFeatures, PhysicalMaterial, TextureSampler, TextureSlot, TextureTransform,
 };
+use myth_scene::{Camera, Light};
 use serde_json::Value;
 use smallvec::SmallVec;
 use std::borrow::Cow;
 use std::collections::HashMap;
+use std::f32;
 use std::sync::Arc;
 use wgpu::{BufferUsages, PrimitiveTopology, VertexFormat, VertexStepMode};
 
@@ -1385,7 +1387,7 @@ impl GltfLoader {
         self.load_skins(gltf, buffers);
 
         for node in gltf.nodes() {
-            self.bind_node_mesh_and_skin(&node, buffers);
+            self.bind_node_components(&node, buffers);
         }
 
         let root_indices: Vec<usize> =
@@ -1547,7 +1549,7 @@ impl GltfLoader {
         engine_mesh
     }
 
-    fn bind_node_mesh_and_skin(&mut self, node: &gltf::Node, buffers: &[Vec<u8>]) {
+    fn bind_node_components(&mut self, node: &gltf::Node, buffers: &[Vec<u8>]) {
         let node_idx = node.index();
 
         let skin_index = node.skin().map(|s| s.index());
@@ -1604,6 +1606,47 @@ impl GltfLoader {
                     }
                 }
             }
+        }
+
+        if let Some(gltf_camera) = node.camera() {
+            let camera = match gltf_camera.projection() {
+                gltf::camera::Projection::Orthographic(orthographic) => Camera::new_orthographic(
+                    orthographic.ymag(),
+                    orthographic.xmag() / orthographic.ymag(),
+                    orthographic.znear(),
+                    orthographic.zfar(),
+                ),
+                gltf::camera::Projection::Perspective(perspective) => Camera::new_perspective(
+                    perspective.yfov().to_degrees(),
+                    perspective.aspect_ratio().unwrap_or(1.0), // Should use viewport aspect if None
+                    perspective.znear(),
+                ),
+            };
+            self.prefab_nodes[node_idx].camera = Some(camera);
+        }
+
+        if let Some(gltf_light) = node.light() {
+            let light = match gltf_light.kind() {
+                gltf::khr_lights_punctual::Kind::Directional => {
+                    Light::new_directional(gltf_light.color().into(), gltf_light.intensity())
+                }
+                gltf::khr_lights_punctual::Kind::Point => Light::new_point(
+                    gltf_light.color().into(),
+                    gltf_light.intensity(),
+                    gltf_light.range().unwrap_or(f32::MAX),
+                ),
+                gltf::khr_lights_punctual::Kind::Spot {
+                    inner_cone_angle,
+                    outer_cone_angle,
+                } => Light::new_spot(
+                    gltf_light.color().into(),
+                    gltf_light.intensity(),
+                    gltf_light.range().unwrap_or(f32::MAX),
+                    inner_cone_angle,
+                    outer_cone_angle,
+                ),
+            };
+            self.prefab_nodes[node_idx].light = Some(light);
         }
     }
 

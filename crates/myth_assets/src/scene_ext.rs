@@ -81,6 +81,14 @@ impl SceneExt for Scene {
                 self.set_mesh(handle, mesh.clone());
             }
 
+            if let Some(camera) = &p_node.camera {
+                self.set_camera(handle, camera.clone());
+            }
+
+            if let Some(light) = &p_node.light {
+                self.set_light(handle, light.clone());
+            }
+
             if let Some(weights) = &p_node.morph_weights {
                 self.set_morph_weights(handle, weights.clone());
             }
