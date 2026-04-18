@@ -9,17 +9,20 @@
 //! 3. **Render** — render pass: vertex-pulled quad drawing with Gaussian
 //!    kernel evaluation, front-to-back alpha blending.
 //!
-//! # Architecture
+//! # Multi-Cloud Architecture
 //!
-//! - **[`GaussianSplattingFeature`]** — persistent GPU resource owner.
-//!   Holds compute/render pipelines, bind group layouts, and per-cloud
-//!   GPU buffers. Lazily initialised by [`extract_and_prepare`].
+//! Supports multiple `GaussianCloud` objects in a scene. Each cloud has
+//! its own GPU buffers and per-cloud preprocess + sort passes. At render
+//! time, clouds are drawn in back-to-front order (object-level sorting
+//! by bounding-box center distance to camera) within a single render pass.
 //!
-//! - **[`GaussianSplattingPassNode`]** — ephemeral pass node.
-//!   References Feature-owned bind groups and pipelines. Emits GPU
-//!   commands during `execute()`.
+//! The RDG topology is static (one compute node + one render node). The
+//! compute node loops over all active clouds; the render node draws them
+//! in sorted order. Complexity is O(N) inside the nodes.
 
 use std::sync::Arc;
+
+use glam::Vec3A;
 
 use crate::HDR_TEXTURE_FORMAT;
 use crate::core::gpu::Tracked;
@@ -31,6 +34,7 @@ use crate::pipeline::{
     ColorTargetKey, ComputePipelineId, ComputePipelineKey, FullscreenPipelineKey,
     RenderPipelineId, ShaderCompilationOptions, ShaderSource,
 };
+use myth_resources::GaussianCloudHandle;
 use myth_resources::gaussian_splat::{GaussianCloud, Splat2D};
 use myth_scene::camera::RenderCamera;
 
@@ -142,6 +146,11 @@ struct CloudGpuData {
 
 /// Persistent feature owning GPU pipelines, layouts, and per-cloud buffers
 /// for 3D Gaussian Splatting rendering.
+///
+/// Manages multiple clouds simultaneously. Each cloud gets independent GPU
+/// buffers, bind groups, and preprocess/sort dispatches. Clouds are drawn
+/// in back-to-front order determined by bounding-box center distance to the
+/// camera.
 pub struct GaussianSplattingFeature {
     // ─── Compute Pipelines ─────────────────────────────────────────
     preprocess_pipeline: Option<ComputePipelineId>,
@@ -166,14 +175,14 @@ pub struct GaussianSplattingFeature {
     render_layout_g1: Option<Tracked<wgpu::BindGroupLayout>>,
 
     // ─── Per-Cloud GPU Data ────────────────────────────────────────
-    /// Currently active cloud data. `None` when no cloud is loaded.
-    cloud_data: Option<CloudGpuData>,
+    /// All currently active clouds with their GPU resources.
+    /// Keyed by `GaussianCloudHandle` for O(1) lookup.
+    clouds: Vec<(GaussianCloudHandle, u64, CloudGpuData)>,
 
-    /// Fingerprint of the currently uploaded cloud (pointer + num_points),
-    /// used to detect when GPU re-upload is needed.
-    cloud_fingerprint: u64,
+    /// Back-to-front sorted indices into `clouds` for the current frame.
+    sorted_order: Vec<usize>,
 
-    /// Whether we have an active cloud to render this frame.
+    /// Whether we have any active clouds to render this frame.
     active: bool,
 }
 
@@ -202,8 +211,8 @@ impl GaussianSplattingFeature {
             render_layout_g0: None,
             render_layout_g1: None,
 
-            cloud_data: None,
-            cloud_fingerprint: 0,
+            clouds: Vec::new(),
+            sorted_order: Vec::new(),
             active: false,
         }
     }
@@ -212,21 +221,86 @@ impl GaussianSplattingFeature {
     // Extract & Prepare
     // =========================================================================
 
-    /// Prepare GPU resources for Gaussian Splatting rendering.
+    /// Prepare GPU resources for rendering multiple Gaussian clouds.
     ///
-    /// Called before the render graph is built. Ensures layouts, pipelines,
-    /// and per-cloud GPU buffers are ready. Uploads cloud data if changed.
+    /// `cloud_entries` contains `(handle, cloud_data, world_position)` tuples
+    /// for every cloud visible this frame. The world position is the cloud
+    /// node's world-space translation (used for object-level sorting).
+    ///
+    /// Clouds are sorted back-to-front by distance from `camera_position`.
     pub fn extract_and_prepare(
         &mut self,
         ctx: &mut ExtractContext,
-        cloud: &Arc<GaussianCloud>,
+        cloud_entries: &[(GaussianCloudHandle, Arc<GaussianCloud>, Vec3A)],
         camera: &RenderCamera,
         viewport_size: (u32, u32),
     ) {
+        if cloud_entries.is_empty() {
+            self.active = false;
+            return;
+        }
+
         self.ensure_layouts(ctx.device);
         self.ensure_pipelines(ctx);
-        self.ensure_cloud_data(ctx.device, ctx.queue, cloud);
-        self.update_uniforms(ctx.queue, camera, cloud, viewport_size);
+
+        // ── Remove stale clouds no longer in the scene ─────────────
+        let active_handles: Vec<GaussianCloudHandle> =
+            cloud_entries.iter().map(|(h, _, _)| *h).collect();
+        self.clouds.retain(|(h, _, _)| active_handles.contains(h));
+
+        // ── Ensure GPU data for each cloud ─────────────────────────
+        for (handle, cloud, _world_pos) in cloud_entries {
+            let handle = *handle;
+            let fingerprint = {
+                let ptr = Arc::as_ptr(cloud) as u64;
+                let mut h = ptr;
+                h ^= cloud.num_points as u64;
+                h
+            };
+
+            // Check if already uploaded with same fingerprint
+            let existing = self.clouds.iter().position(|(h, _, _)| *h == handle);
+            match existing {
+                Some(idx) if self.clouds[idx].1 == fingerprint => {
+                    // Already up-to-date, just update uniforms
+                }
+                Some(idx) => {
+                    // Cloud changed, re-upload
+                    let gpu_data =
+                        self.create_cloud_gpu_data(ctx.device, ctx.queue, cloud);
+                    self.clouds[idx] = (handle, fingerprint, gpu_data);
+                }
+                None => {
+                    // New cloud
+                    let gpu_data =
+                        self.create_cloud_gpu_data(ctx.device, ctx.queue, cloud);
+                    self.clouds.push((handle, fingerprint, gpu_data));
+                }
+            }
+        }
+
+        // ── Update uniforms for every cloud ────────────────────────
+        for (handle, cloud, _) in cloud_entries {
+            if let Some((_, _, gpu_data)) = self.clouds.iter().find(|(h, _, _)| *h == *handle) {
+                Self::update_cloud_uniforms(ctx.queue, gpu_data, camera, cloud, viewport_size);
+            }
+        }
+
+        // ── Object-level back-to-front sort ────────────────────────
+        let cam_pos = camera.position;
+        // Build (index_into_self.clouds, distance²) pairs
+        let mut cloud_order: Vec<(usize, f32)> = cloud_entries
+            .iter()
+            .filter_map(|&(ref handle, _, world_pos)| {
+                let idx = self.clouds.iter().position(|(h, _, _)| *h == *handle)?;
+                let dist_sq = cam_pos.distance_squared(world_pos);
+                Some((idx, dist_sq))
+            })
+            .collect();
+        // Sort back-to-front (farthest first)
+        cloud_order.sort_by(|a, b| b.1.partial_cmp(&a.1).unwrap_or(std::cmp::Ordering::Equal));
+        self.sorted_order = cloud_order.into_iter().map(|(idx, _)| idx).collect();
+
         self.active = true;
     }
 
@@ -530,23 +604,12 @@ impl GaussianSplattingFeature {
     // Per-Cloud GPU Buffer Management
     // =========================================================================
 
-    fn ensure_cloud_data(
-        &mut self,
+    fn create_cloud_gpu_data(
+        &self,
         device: &wgpu::Device,
         queue: &wgpu::Queue,
-        cloud: &Arc<GaussianCloud>,
-    ) {
-        // Check fingerprint to avoid re-upload
-        let fingerprint = {
-            let ptr = Arc::as_ptr(cloud) as u64;
-            let mut h = ptr;
-            h ^= cloud.num_points as u64;
-            h
-        };
-
-        if self.cloud_fingerprint == fingerprint && self.cloud_data.is_some() {
-            return;
-        }
+        cloud: &GaussianCloud,
+    ) -> CloudGpuData {
 
         let n = cloud.num_points as u64;
         let gaussian_size = std::mem::size_of::<myth_resources::gaussian_splat::GaussianSplat>() as u64;
@@ -771,7 +834,7 @@ impl GaussianSplattingFeature {
             ],
         });
 
-        self.cloud_data = Some(CloudGpuData {
+        CloudGpuData {
             num_points: cloud.num_points as u32,
             gaussian_buf,
             sh_buf,
@@ -793,19 +856,16 @@ impl GaussianSplattingFeature {
             sort_bg1,
             render_bg0,
             render_bg1,
-        });
-
-        self.cloud_fingerprint = fingerprint;
+        }
     }
 
-    fn update_uniforms(
-        &self,
+    fn update_cloud_uniforms(
         queue: &wgpu::Queue,
+        data: &CloudGpuData,
         camera: &RenderCamera,
         cloud: &GaussianCloud,
         viewport_size: (u32, u32),
     ) {
-        let data = self.cloud_data.as_ref().unwrap();
 
         let view = camera.view_matrix;
         let proj = camera.projection_matrix;
@@ -879,8 +939,8 @@ impl GaussianSplattingFeature {
     /// Emit the Gaussian Splatting passes into the RDG.
     ///
     /// Inserts:
-    /// 1. A compute pass for preprocessing + radix sort
-    /// 2. A render pass for final quad rendering
+    /// 1. One compute pass that preprocesses and sorts **all** active clouds.
+    /// 2. One render pass that draws all clouds in back-to-front order.
     ///
     /// The render pass writes to `active_color` with front-to-back blending.
     pub fn add_to_graph<'a>(
@@ -889,13 +949,11 @@ impl GaussianSplattingFeature {
         active_color: TextureNodeId,
         active_depth: TextureNodeId,
     ) -> TextureNodeId {
-        if !self.active {
+        if !self.active || self.sorted_order.is_empty() {
             return active_color;
         }
 
-        let cloud_data = self.cloud_data.as_ref().unwrap();
-
-        // ─── Compute Pass: Preprocess + Sort ───────────────────────
+        // ─── Resolve pipelines ─────────────────────────────────────
         let preprocess_pipeline = self
             .preprocess_pipeline
             .map(|id| ctx.pipeline_cache.get_compute_pipeline(id));
@@ -908,16 +966,34 @@ impl GaussianSplattingFeature {
         let sort_scatter_pipeline = self
             .sort_scatter_pipeline
             .map(|id| ctx.pipeline_cache.get_compute_pipeline(id));
+        let render_pipeline = self
+            .render_pipeline
+            .map(|id| ctx.pipeline_cache.get_render_pipeline(id));
 
-        let num_points = cloud_data.num_points;
-        let preprocess_bg0 = &cloud_data.preprocess_bg0;
-        let preprocess_bg1 = &cloud_data.preprocess_bg1;
-        let preprocess_bg2 = &cloud_data.preprocess_bg2;
-        let preprocess_bg3 = &cloud_data.preprocess_bg3;
-        let sort_bg0 = &cloud_data.sort_bg0;
-        let sort_bg1 = &cloud_data.sort_bg1;
-        let sort_infos_buf = &cloud_data.sort_infos_buf;
+        // ─── Collect per-cloud references in sorted order ──────────
+        let mut compute_entries: Vec<CloudComputeEntry<'a>> = Vec::new();
+        let mut render_entries: Vec<CloudRenderEntry<'a>> = Vec::new();
 
+        for &cloud_idx in &self.sorted_order {
+            let (_, _, ref gpu) = self.clouds[cloud_idx];
+            compute_entries.push(CloudComputeEntry {
+                preprocess_bg0: &gpu.preprocess_bg0,
+                preprocess_bg1: &gpu.preprocess_bg1,
+                preprocess_bg2: &gpu.preprocess_bg2,
+                preprocess_bg3: &gpu.preprocess_bg3,
+                sort_bg0: &gpu.sort_bg0,
+                sort_bg1: &gpu.sort_bg1,
+                sort_infos_buf: &gpu.sort_infos_buf,
+                num_points: gpu.num_points,
+            });
+            render_entries.push(CloudRenderEntry {
+                render_bg0: &gpu.render_bg0,
+                render_bg1: &gpu.render_bg1,
+                num_points: gpu.num_points,
+            });
+        }
+
+        // ─── Compute Pass: Preprocess + Sort (all clouds) ──────────
         ctx.graph.add_pass("GS_Compute", |builder| {
             builder.mark_side_effect();
             (
@@ -926,37 +1002,22 @@ impl GaussianSplattingFeature {
                     sort_histogram_pipeline,
                     sort_prefix_pipeline,
                     sort_scatter_pipeline,
-                    preprocess_bg0,
-                    preprocess_bg1,
-                    preprocess_bg2,
-                    preprocess_bg3,
-                    sort_bg0,
-                    sort_bg1,
-                    sort_infos_buf,
-                    num_points,
+                    clouds: compute_entries,
                 },
                 (),
             )
         });
 
-        // ─── Render Pass: Quad Drawing ─────────────────────────────
-        let render_pipeline = self
-            .render_pipeline
-            .map(|id| ctx.pipeline_cache.get_render_pipeline(id));
-        let render_bg0 = &cloud_data.render_bg0;
-        let render_bg1 = &cloud_data.render_bg1;
-
+        // ─── Render Pass: Quad Drawing (all clouds, back-to-front) ─
         let gs_color = ctx.graph.add_pass("GS_Render", |builder| {
             let color_out = builder.mutate_texture(active_color, "GS_Color");
             let _depth_in = builder.read_texture(active_depth);
             (
                 GaussianRenderPassNode {
                     render_pipeline,
-                    render_bg0,
-                    render_bg1,
+                    clouds: render_entries,
                     color_target: color_out,
                     depth_target: active_depth,
-                    num_points,
                 },
                 color_out,
             )
@@ -967,14 +1028,10 @@ impl GaussianSplattingFeature {
 }
 
 // =============================================================================
-// Compute PassNode (Preprocess + Sort)
+// Per-Cloud Entry Types (references into Feature-owned data)
 // =============================================================================
 
-struct GaussianComputePassNode<'a> {
-    preprocess_pipeline: Option<&'a wgpu::ComputePipeline>,
-    sort_histogram_pipeline: Option<&'a wgpu::ComputePipeline>,
-    sort_prefix_pipeline: Option<&'a wgpu::ComputePipeline>,
-    sort_scatter_pipeline: Option<&'a wgpu::ComputePipeline>,
+struct CloudComputeEntry<'a> {
     preprocess_bg0: &'a wgpu::BindGroup,
     preprocess_bg1: &'a wgpu::BindGroup,
     preprocess_bg2: &'a wgpu::BindGroup,
@@ -985,6 +1042,24 @@ struct GaussianComputePassNode<'a> {
     num_points: u32,
 }
 
+struct CloudRenderEntry<'a> {
+    render_bg0: &'a wgpu::BindGroup,
+    render_bg1: &'a wgpu::BindGroup,
+    num_points: u32,
+}
+
+// =============================================================================
+// Compute PassNode (Preprocess + Sort) — iterates all clouds
+// =============================================================================
+
+struct GaussianComputePassNode<'a> {
+    preprocess_pipeline: Option<&'a wgpu::ComputePipeline>,
+    sort_histogram_pipeline: Option<&'a wgpu::ComputePipeline>,
+    sort_prefix_pipeline: Option<&'a wgpu::ComputePipeline>,
+    sort_scatter_pipeline: Option<&'a wgpu::ComputePipeline>,
+    clouds: Vec<CloudComputeEntry<'a>>,
+}
+
 impl PassNode<'_> for GaussianComputePassNode<'_> {
     fn execute(&self, _ctx: &ExecuteContext, encoder: &mut wgpu::CommandEncoder) {
         let preprocess = self.preprocess_pipeline.expect("GS preprocess pipeline missing");
@@ -992,110 +1067,88 @@ impl PassNode<'_> for GaussianComputePassNode<'_> {
         let sort_prefix = self.sort_prefix_pipeline.expect("GS sort prefix pipeline missing");
         let sort_scatter = self.sort_scatter_pipeline.expect("GS sort scatter pipeline missing");
 
-        let dispatch_wgs = (self.num_points + WG_SIZE - 1) / WG_SIZE;
+        for cloud in &self.clouds {
+            let dispatch_wgs = (cloud.num_points + WG_SIZE - 1) / WG_SIZE;
 
-        // ─── Step 1: Preprocess ────────────────────────────────────
-        {
-            let mut cpass = encoder.begin_compute_pass(&wgpu::ComputePassDescriptor {
-                label: Some("GS Preprocess"),
-                timestamp_writes: None,
-            });
-            cpass.set_pipeline(preprocess);
-            cpass.set_bind_group(0, self.preprocess_bg0, &[]);
-            cpass.set_bind_group(1, self.preprocess_bg1, &[]);
-            cpass.set_bind_group(2, self.preprocess_bg2, &[]);
-            cpass.set_bind_group(3, self.preprocess_bg3, &[]);
-            cpass.dispatch_workgroups(dispatch_wgs, 1, 1);
-        }
-
-        // ─── Step 2: Radix Sort (4 byte passes) ───────────────────
-        // For each of the 4 8-bit radix passes, we update the sort_infos
-        // buffer with the current pass index and even/odd flags, then
-        // dispatch histogram → prefix → scatter.
-        //
-        // Note: We must issue CPU-side buffer writes between passes.
-        // In a more optimized version, this would be done via indirect
-        // dispatch or push constants. For correctness, we use 4 separate
-        // compute pass invocations per radix pass.
-        let num_sort_wgs = (self.num_points as u64 + SORT_KEYS_PER_WG as u64 - 1) / SORT_KEYS_PER_WG as u64;
-        let prefix_wgs = ((256 * num_sort_wgs) + 255) / 256;
-
-        for pass_idx in 0u32..4 {
-            let even_pass = if pass_idx % 2 == 0 { 1u32 } else { 0u32 };
-            let odd_pass = if pass_idx % 2 == 1 { 1u32 } else { 0u32 };
-
-            // Update sort_infos: passes = pass_idx, even_pass, odd_pass
-            // We need to write the pass index into the buffer.
-            // Since we can't write buffers during a compute pass, we write
-            // before starting each sub-pass.
-            let sort_infos_update = GpuSortInfos {
-                keys_size: 0, // Will be kept from preprocess (atomic)
-                padded_size: 0,
-                passes: pass_idx,
-                even_pass,
-                odd_pass,
-            };
-            // Write only the non-atomic fields (offset past keys_size)
-            _ctx.queue.write_buffer(
-                self.sort_infos_buf,
-                4, // skip keys_size (atomic, set by preprocess)
-                bytemuck::bytes_of(&sort_infos_update.padded_size),
-            );
-            // Actually, we need to write padded_size, passes, even_pass, odd_pass
-            // which is 4 * u32 = 16 bytes starting at offset 4
-            let pass_data = [0u32, pass_idx, even_pass, odd_pass];
-            _ctx.queue.write_buffer(self.sort_infos_buf, 4, bytemuck::cast_slice(&pass_data));
-
-            // Histogram
+            // ─── Step 1: Preprocess ────────────────────────────
             {
                 let mut cpass = encoder.begin_compute_pass(&wgpu::ComputePassDescriptor {
-                    label: Some("GS Sort Histogram"),
+                    label: Some("GS Preprocess"),
                     timestamp_writes: None,
                 });
-                cpass.set_pipeline(sort_histogram);
-                cpass.set_bind_group(0, self.sort_bg0, &[]);
-                cpass.set_bind_group(1, self.sort_bg1, &[]);
-                cpass.dispatch_workgroups(num_sort_wgs as u32, 1, 1);
+                cpass.set_pipeline(preprocess);
+                cpass.set_bind_group(0, cloud.preprocess_bg0, &[]);
+                cpass.set_bind_group(1, cloud.preprocess_bg1, &[]);
+                cpass.set_bind_group(2, cloud.preprocess_bg2, &[]);
+                cpass.set_bind_group(3, cloud.preprocess_bg3, &[]);
+                cpass.dispatch_workgroups(dispatch_wgs, 1, 1);
             }
 
-            // Prefix Sum
-            {
-                let mut cpass = encoder.begin_compute_pass(&wgpu::ComputePassDescriptor {
-                    label: Some("GS Sort Prefix"),
-                    timestamp_writes: None,
-                });
-                cpass.set_pipeline(sort_prefix);
-                cpass.set_bind_group(0, self.sort_bg0, &[]);
-                cpass.set_bind_group(1, self.sort_bg1, &[]);
-                cpass.dispatch_workgroups(prefix_wgs as u32, 1, 1);
-            }
+            // ─── Step 2: Radix Sort (4 byte passes) ───────────
+            let num_sort_wgs = (cloud.num_points as u64 + SORT_KEYS_PER_WG as u64 - 1)
+                / SORT_KEYS_PER_WG as u64;
+            let prefix_wgs = ((256 * num_sort_wgs) + 255) / 256;
 
-            // Scatter
-            {
-                let mut cpass = encoder.begin_compute_pass(&wgpu::ComputePassDescriptor {
-                    label: Some("GS Sort Scatter"),
-                    timestamp_writes: None,
-                });
-                cpass.set_pipeline(sort_scatter);
-                cpass.set_bind_group(0, self.sort_bg0, &[]);
-                cpass.set_bind_group(1, self.sort_bg1, &[]);
-                cpass.dispatch_workgroups(num_sort_wgs as u32, 1, 1);
+            for pass_idx in 0u32..4 {
+                let even_pass = if pass_idx % 2 == 0 { 1u32 } else { 0u32 };
+                let odd_pass = if pass_idx % 2 == 1 { 1u32 } else { 0u32 };
+
+                let pass_data = [0u32, pass_idx, even_pass, odd_pass];
+                _ctx.queue.write_buffer(
+                    cloud.sort_infos_buf,
+                    4,
+                    bytemuck::cast_slice(&pass_data),
+                );
+
+                // Histogram
+                {
+                    let mut cpass = encoder.begin_compute_pass(&wgpu::ComputePassDescriptor {
+                        label: Some("GS Sort Histogram"),
+                        timestamp_writes: None,
+                    });
+                    cpass.set_pipeline(sort_histogram);
+                    cpass.set_bind_group(0, cloud.sort_bg0, &[]);
+                    cpass.set_bind_group(1, cloud.sort_bg1, &[]);
+                    cpass.dispatch_workgroups(num_sort_wgs as u32, 1, 1);
+                }
+
+                // Prefix Sum
+                {
+                    let mut cpass = encoder.begin_compute_pass(&wgpu::ComputePassDescriptor {
+                        label: Some("GS Sort Prefix"),
+                        timestamp_writes: None,
+                    });
+                    cpass.set_pipeline(sort_prefix);
+                    cpass.set_bind_group(0, cloud.sort_bg0, &[]);
+                    cpass.set_bind_group(1, cloud.sort_bg1, &[]);
+                    cpass.dispatch_workgroups(prefix_wgs as u32, 1, 1);
+                }
+
+                // Scatter
+                {
+                    let mut cpass = encoder.begin_compute_pass(&wgpu::ComputePassDescriptor {
+                        label: Some("GS Sort Scatter"),
+                        timestamp_writes: None,
+                    });
+                    cpass.set_pipeline(sort_scatter);
+                    cpass.set_bind_group(0, cloud.sort_bg0, &[]);
+                    cpass.set_bind_group(1, cloud.sort_bg1, &[]);
+                    cpass.dispatch_workgroups(num_sort_wgs as u32, 1, 1);
+                }
             }
         }
     }
 }
 
 // =============================================================================
-// Render PassNode
+// Render PassNode — draws all clouds back-to-front
 // =============================================================================
 
 struct GaussianRenderPassNode<'a> {
     render_pipeline: Option<&'a wgpu::RenderPipeline>,
-    render_bg0: &'a wgpu::BindGroup,
-    render_bg1: &'a wgpu::BindGroup,
+    clouds: Vec<CloudRenderEntry<'a>>,
     color_target: TextureNodeId,
     depth_target: TextureNodeId,
-    num_points: u32,
 }
 
 impl PassNode<'_> for GaussianRenderPassNode<'_> {
@@ -1119,9 +1172,14 @@ impl PassNode<'_> for GaussianRenderPassNode<'_> {
         });
 
         rpass.set_pipeline(pipeline);
-        rpass.set_bind_group(0, self.render_bg0, &[]);
-        rpass.set_bind_group(1, self.render_bg1, &[]);
-        // 4 vertices per quad × num_points quads
-        rpass.draw(0..self.num_points * 4, 0..1);
+
+        // Draw all clouds in back-to-front order (sorted_order
+        // was already applied when building the entries).
+        for cloud in &self.clouds {
+            rpass.set_bind_group(0, cloud.render_bg0, &[]);
+            rpass.set_bind_group(1, cloud.render_bg1, &[]);
+            // 4 vertices per quad × num_points quads
+            rpass.draw(0..cloud.num_points * 4, 0..1);
+        }
     }
 }

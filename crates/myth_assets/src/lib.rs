@@ -18,7 +18,7 @@ pub mod skeleton_asset;
 pub mod storage;
 
 pub use myth_resources::{
-    GeometryHandle, ImageHandle, MaterialHandle, PrefabHandle, TextureHandle,
+    GaussianCloudHandle, GeometryHandle, ImageHandle, MaterialHandle, PrefabHandle, TextureHandle,
 };
 pub use server::AssetServer;
 

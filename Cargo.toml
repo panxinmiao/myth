@@ -94,6 +94,7 @@ slotmap = { version = "1.1.1", features = ["serde"] }
 smallvec = "1.15"
 half = "2.7"
 rustc-hash = "2.1.2"
+zip = { version = "8.5", default-features = false, features = ["deflate"] }
 lasso = "0.7"
 parking_lot = "0.12"
 futures = "0.3.32"
@@ -228,9 +229,10 @@ name = "render_graph_bench"
 harness = false
 
 [features]
-default = ["winit", "gltf", "http"]
+default = ["winit", "gltf", "http", "gaussian-npz"]
 winit = ["myth_app/winit"]
 gltf = ["myth_assets/gltf"]
+gaussian-npz = ["myth_assets/gaussian-npz"]
 rdg_inspector = ["myth_render/rdg_inspector"]
 debug_view = ["myth_render/debug_view", "myth_scene/debug_view"]
 gltf-meshopt = ["gltf", "myth_assets/gltf-meshopt"]

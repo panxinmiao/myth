@@ -467,16 +467,23 @@ impl Renderer {
 
             // Gaussian Splatting
             if scene.has_gaussian_clouds() {
-                // Prepare the first cloud found.
-                // TODO: support multiple clouds in the scene.
-                for (_handle, cloud) in &scene.gaussian_clouds {
+                let mut cloud_entries = Vec::new();
+                for (node_handle, cloud_handle) in &scene.gaussian_clouds {
+                    if let Some(cloud) = assets.gaussian_clouds.get(*cloud_handle) {
+                        let world_pos = scene
+                            .get_node(node_handle)
+                            .map(|n| n.transform.world_matrix.translation)
+                            .unwrap_or_default();
+                        cloud_entries.push((*cloud_handle, cloud, world_pos));
+                    }
+                }
+                if !cloud_entries.is_empty() {
                     state.gaussian_splatting_pass.extract_and_prepare(
                         &mut extract_ctx,
-                        cloud,
+                        &cloud_entries,
                         &camera,
                         self.size,
                     );
-                    break;
                 }
             }
 

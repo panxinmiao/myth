@@ -213,8 +213,10 @@ pub use myth_resources::gaussian_splat::GaussianCloud;
 
 // Assets
 pub use myth_assets::{AssetServer, GeometryHandle, ImageHandle, MaterialHandle, TextureHandle};
-pub use myth_assets::{ColorSpace, GeometryQuery, ResolveGeometry, ResolveMaterial, SceneExt};
+pub use myth_assets::{ColorSpace, GaussianCloudHandle, GeometryQuery, ResolveGeometry, ResolveMaterial, SceneExt};
 pub use myth_assets::loaders::ply::load_gaussian_ply;
+#[cfg(feature = "gaussian-npz")]
+pub use myth_assets::loaders::npz::load_gaussian_npz;
 
 // Animation
 pub use myth_animation::{

@@ -1,13 +1,12 @@
 use std::borrow::Cow;
 use std::sync::atomic::{AtomicU32, Ordering};
-use std::sync::Arc;
 
 use myth_animation::{AnimationMixer, AnimationTarget};
 use myth_core::{NodeHandle, SkeletonKey, Transform};
 use myth_resources::Input;
+use myth_resources::GaussianCloudHandle;
 use myth_resources::bloom::BloomSettings;
 use myth_resources::buffer::CpuBuffer;
-use myth_resources::gaussian_splat::GaussianCloud;
 use myth_resources::mesh::Mesh;
 use myth_resources::screen_space::ScreenSpaceSettings;
 use myth_resources::shader_defines::ShaderDefines;
@@ -127,8 +126,8 @@ pub struct Scene {
     pub rest_transforms: SparseSecondaryMap<NodeHandle, Transform>,
     /// Split primitive tags
     pub split_primitive_tags: SparseSecondaryMap<NodeHandle, SplitPrimitiveTag>,
-    /// Gaussian splatting point clouds attached to nodes
-    pub gaussian_clouds: SparseSecondaryMap<NodeHandle, Arc<GaussianCloud>>,
+    /// Gaussian splatting point cloud handles attached to nodes.
+    pub gaussian_clouds: SparseSecondaryMap<NodeHandle, GaussianCloudHandle>,
 
     // === Resource Pools (only truly shared resources) ===
     /// Skeleton is a shared resource - multiple characters may reference the same skeleton definition
@@ -411,20 +410,24 @@ impl Scene {
         self.meshes.get_mut(handle)
     }
 
-    /// Attaches a Gaussian splatting point cloud to a node.
-    pub fn set_gaussian_cloud(&mut self, handle: NodeHandle, cloud: Arc<GaussianCloud>) {
+    /// Attaches a Gaussian splatting point cloud handle to a node.
+    pub fn set_gaussian_cloud(&mut self, handle: NodeHandle, cloud: GaussianCloudHandle) {
         self.gaussian_clouds.insert(handle, cloud);
     }
 
-    /// Gets a reference to the node's Gaussian cloud component.
-    pub fn get_gaussian_cloud(&self, handle: NodeHandle) -> Option<&Arc<GaussianCloud>> {
-        self.gaussian_clouds.get(handle)
+    /// Gets the Gaussian cloud handle attached to a node.
+    pub fn get_gaussian_cloud(&self, handle: NodeHandle) -> Option<GaussianCloudHandle> {
+        self.gaussian_clouds.get(handle).copied()
     }
 
-    /// Creates a node with a Gaussian splatting point cloud and adds it as a root.
-    pub fn add_gaussian_cloud(&mut self, name: &str, cloud: Arc<GaussianCloud>) -> NodeHandle {
+    /// Creates a named node with a Gaussian splatting point cloud and adds it as a root.
+    pub fn add_gaussian_cloud(
+        &mut self,
+        name: &str,
+        cloud_handle: GaussianCloudHandle,
+    ) -> NodeHandle {
         let handle = self.create_node_with_name(name);
-        self.gaussian_clouds.insert(handle, cloud);
+        self.gaussian_clouds.insert(handle, cloud_handle);
         self.root_nodes.push(handle);
         handle
     }

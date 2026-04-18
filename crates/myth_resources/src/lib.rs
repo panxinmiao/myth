@@ -42,7 +42,8 @@ pub mod version_tracker;
 
 // Re-export handle types
 pub use handles::{
-    GeometryHandle, GpuBufferHandle, ImageHandle, MaterialHandle, PrefabHandle, TextureHandle,
+    GaussianCloudHandle, GeometryHandle, GpuBufferHandle, ImageHandle, MaterialHandle,
+    PrefabHandle, TextureHandle,
 };
 
 // Re-export common resource types

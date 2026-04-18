@@ -20,6 +20,8 @@ new_key_type! {
     ///
     /// Internally a SlotMap key with built-in generation checking.
     pub struct GpuBufferHandle;
+    /// Handle to a 3D Gaussian Splatting point cloud asset.
+    pub struct GaussianCloudHandle;
 }
 
 const DUMMY_ENV_MAP_ID: u64 = 0xFFFF_FFFF_FFFF_FFFF;

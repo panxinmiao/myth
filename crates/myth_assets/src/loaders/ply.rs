@@ -181,7 +181,7 @@ fn parse_header<R: BufRead>(reader: &mut R) -> Result<PlyHeader> {
 
 /// Numerically stable sigmoid activation.
 #[inline]
-fn sigmoid(x: f32) -> f32 {
+pub(crate) fn sigmoid(x: f32) -> f32 {
     if x >= 0.0 {
         1.0 / (1.0 + (-x).exp())
     } else {
@@ -194,7 +194,7 @@ fn sigmoid(x: f32) -> f32 {
 /// quaternion `q` and log-space scale `s`.
 ///
 /// Returns `[c00, c01, c02, c11, c12, c22]`.
-fn build_covariance(q: [f32; 4], s: [f32; 3]) -> [f32; 6] {
+pub(crate) fn build_covariance(q: [f32; 4], s: [f32; 3]) -> [f32; 6] {
     // Rotation matrix from quaternion (w, x, y, z)
     let (w, x, y, z) = (q[0], q[1], q[2], q[3]);
     let r00 = 1.0 - 2.0 * (y * y + z * z);
@@ -231,7 +231,7 @@ fn build_covariance(q: [f32; 4], s: [f32; 3]) -> [f32; 6] {
 
 /// Packs two `f32` values into a single `u32` via `f16` conversion.
 #[inline]
-fn pack2x16float(a: f32, b: f32) -> u32 {
+pub(crate) fn pack2x16float(a: f32, b: f32) -> u32 {
     let lo = f16::from_f32(a).to_bits();
     let hi = f16::from_f32(b).to_bits();
     (lo as u32) | ((hi as u32) << 16)

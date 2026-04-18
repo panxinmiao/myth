@@ -1,0 +1,49 @@
+"""
+Myth Engine — 3D Gaussian Splatting Demo (Python)
+==================================================
+
+Loads and renders a 3D Gaussian Splatting point cloud from a compressed NPZ file.
+
+Usage:
+    pip install maturin
+    maturin develop --release
+    python examples/gaussian_splatting.py
+"""
+
+import myth
+
+app = myth.App(
+    title="Myth Engine — 3D Gaussian Splatting",
+    vsync=True,
+)
+
+# Orbit controls — initial camera from training data
+orbit = myth.OrbitControls(position=[2.86, 1.52, -0.69], target=[0, 0, 0])
+
+cam = None
+
+
+@app.init
+def on_init(ctx: myth.Engine):
+    global cam
+    scene = ctx.create_scene()
+
+    # Load the compressed NPZ Gaussian cloud
+    cloud = ctx.load_gaussian_npz("examples/assets/3dgs/point_cloud.npz")
+    gs_node = scene.add_gaussian_cloud("gaussian_cloud", cloud)
+
+    # Camera
+    cam = scene.add_camera(myth.PerspectiveCamera(fov=45, near=0.1))
+    cam.position = [2.86, 1.52, -0.69]
+    cam.look_at([0, 0, 0])
+    scene.active_camera = cam
+
+    print(f"Loaded Gaussian cloud with {cloud.count} splats")
+
+
+@app.update
+def on_update(ctx: myth.Engine, frame: myth.FrameState):
+    orbit.update(ctx, frame)
+
+
+app.run()
