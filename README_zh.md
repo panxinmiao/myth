@@ -246,7 +246,7 @@ flowchart TD
 myth-engine = "0.2.0"
 
 # 或者从 GitHub 获取最新版本
-# myth-engine = { git = "[https://github.com/panxinmiao/myth](https://github.com/panxinmiao/myth)", branch = "main" }
+# myth-engine = { git = "https://github.com/panxinmiao/myth", branch = "main" }
 
 ```
 

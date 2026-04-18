@@ -295,7 +295,7 @@ fn main() -> myth::Result<()> {
 }
 ```
 
-### Running Examples
+### Run Examples
 
 Clone the repository and run the examples directly:
 
