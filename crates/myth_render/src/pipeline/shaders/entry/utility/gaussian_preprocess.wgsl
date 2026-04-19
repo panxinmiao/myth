@@ -40,9 +40,9 @@ struct Gaussian {
 };
 
 struct Splat {
+    pos: vec2<f32>,
     v_0: u32,
     v_1: u32,
-    pos: u32,
     depth: f32,
     color_0: u32,
     color_1: u32,
@@ -193,7 +193,7 @@ fn main(@builtin(global_invocation_id) gid: vec3<u32>) {
 
     let J = mat3x3<f32>(
         focal.x / camspace.z, 0.0, -(focal.x * camspace.x) / (camspace.z * camspace.z),
-        0.0, -focal.y / camspace.z, (focal.y * camspace.y) / (camspace.z * camspace.z),
+        0.0, focal.y / camspace.z, -(focal.y * camspace.y) / (camspace.z * camspace.z),
         0.0, 0.0, 0.0
     );
 
@@ -241,9 +241,9 @@ fn main(@builtin(global_invocation_id) gid: vec3<u32>) {
     let store_idx = atomicAdd(&sort_infos.keys_size, 1u);
     let v = vec4<f32>(v1 / viewport, v2 / viewport);
     points_2d[store_idx] = Splat(
+        center_ndc,
         pack2x16float(v.xy),
         pack2x16float(v.zw),
-        pack2x16float(center_ndc),
         center_depth,
         pack2x16float(color.rg),
         pack2x16float(color.ba),

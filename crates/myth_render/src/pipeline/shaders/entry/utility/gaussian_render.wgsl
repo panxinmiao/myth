@@ -13,9 +13,9 @@ struct VertexOutput {
 };
 
 struct Splat {
+    pos: vec2<f32>,
     v_0: u32,
     v_1: u32,
-    pos: u32,
     depth: f32,
     color_0: u32,
     color_1: u32,
@@ -31,9 +31,9 @@ fn vs_main(@builtin(vertex_index) vertex_idx: u32, @builtin(instance_index) inst
     let sorted_idx = sort_indices[instance_idx];
     let splat = splats[sorted_idx];
 
+    let center_ndc = splat.pos;
     let axis_0 = unpack2x16float(splat.v_0);
     let axis_1 = unpack2x16float(splat.v_1);
-    let center_ndc = unpack2x16float(splat.pos);
     let color_rg = unpack2x16float(splat.color_0);
     let color_ba = unpack2x16float(splat.color_1);
 
@@ -52,7 +52,7 @@ fn vs_main(@builtin(vertex_index) vertex_idx: u32, @builtin(instance_index) inst
 @fragment
 fn fs_main(in: VertexOutput) -> @location(0) vec4<f32> {
     let radius_sq = dot(in.local_pos, in.local_pos);
-    if radius_sq > 2.0 * CUTOFF {
+    if radius_sq > CUTOFF * CUTOFF {
         discard;
     }
 

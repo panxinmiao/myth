@@ -52,18 +52,20 @@ pub struct GaussianSHCoefficients {
 #[repr(C)]
 #[derive(Clone, Copy, Debug, Pod, Zeroable)]
 pub struct Splat2D {
+    /// Screen-space centre
+    pub pos: [f32; 2],
     /// Scaled eigenvector 0 (2 × f16 packed).
     pub v0: u32,
     /// Scaled eigenvector 1 (2 × f16 packed).
     pub v1: u32,
-    /// Screen-space centre (2 × f16 packed).
-    pub pos: u32,
     /// Reverse-Z NDC depth at the splat centre.
     pub depth: f32,
     /// RGBA colour channels 0–1 (2 × f16 packed).
     pub color_rg: u32,
     /// RGBA colour channels 2–3 (2 × f16 packed).
     pub color_ba: u32,
+
+    pub _pad: u32,
 }
 
 // ─── High-Level Asset ──────────────────────────────────────────────────────
