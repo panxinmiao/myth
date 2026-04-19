@@ -411,6 +411,15 @@ impl<'a> RenderGraph<'a> {
         Self { storage, arena }
     }
 
+    /// Allocates a copy of `src` on the per-frame arena.
+    ///
+    /// Returns a slice reference valid for the frame lifetime `'a`.
+    /// Requires `T: Copy` to ensure no `Drop` glue.
+    #[inline]
+    pub(crate) fn alloc_slice<T: Copy>(&self, src: &[T]) -> &'a [T] {
+        self.arena.alloc_slice_copy(src)
+    }
+
     // ─── Logical Grouping (Inspector) ────────────────────────────────
 
     #[cfg(feature = "rdg_inspector")]

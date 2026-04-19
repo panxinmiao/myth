@@ -24,8 +24,8 @@ struct SortInfos {
 @group(1) @binding(1) var<storage, read_write> assist_b: array<u32>;
 @group(1) @binding(2) var<storage, read_write> histograms: array<atomic<u32>>;
 
-fn extract_digit(key: u32, pass: u32) -> u32 {
-    return (key >> (pass * 8u)) & 0xFFu;
+fn extract_digit(key: u32, radix_pass: u32) -> u32 {
+    return (key >> (radix_pass * 8u)) & 0xFFu;
 }
 
 @compute @workgroup_size(256, 1, 1)
@@ -38,15 +38,15 @@ fn main(
         return;
     }
     let num_wgs = (num_keys + KEYS_PER_WG - 1u) / KEYS_PER_WG;
-    let pass = sort_infos.passes;
+    let radix_pass = sort_infos.passes;
     let wg = gid.x / WG_SIZE;
 
     for (var i = 0u; i < KEYS_PER_THREAD; i++) {
         let data_idx = wg * KEYS_PER_WG + i * WG_SIZE + lid.x;
         if data_idx < num_keys {
             let key = select(sort_depths[sort_indices[data_idx]], sort_depths[data_idx], bool(sort_infos.even_pass));
-            let digit = extract_digit(key, pass);
-            atomicAdd(&histograms[pass * num_wgs * 256u + digit * num_wgs + wg], 1u);
+            let digit = extract_digit(key, radix_pass);
+            atomicAdd(&histograms[radix_pass * num_wgs * 256u + digit * num_wgs + wg], 1u);
         }
     }
 }

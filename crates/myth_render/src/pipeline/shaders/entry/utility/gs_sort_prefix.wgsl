@@ -37,10 +37,10 @@ fn main(
         return;
     }
     let num_wgs = (num_keys + KEYS_PER_WG - 1u) / KEYS_PER_WG;
-    let pass = sort_infos.passes;
+    let radix_pass = sort_infos.passes;
 
     let histo_idx = wid.x * WG_SIZE + lid.x;
-    let global_offset = pass * num_wgs * 256u;
+    let global_offset = radix_pass * num_wgs * 256u;
 
     var val = 0u;
     if histo_idx < 256u * num_wgs {

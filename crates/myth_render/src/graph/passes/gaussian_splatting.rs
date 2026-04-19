@@ -31,8 +31,7 @@ use crate::graph::core::{
     ExecuteContext, ExtractContext, PassNode, RenderTargetOps, TextureNodeId,
 };
 use crate::pipeline::{
-    ColorTargetKey, ComputePipelineId, ComputePipelineKey, FullscreenPipelineKey,
-    RenderPipelineId, ShaderCompilationOptions, ShaderSource,
+    ColorTargetKey, ComputePipelineId, ComputePipelineKey, DepthStencilKey, FullscreenPipelineKey, RenderPipelineId, ShaderCompilationOptions, ShaderSource
 };
 use myth_resources::GaussianCloudHandle;
 use myth_resources::gaussian_splat::{GaussianCloud, Splat2D};
@@ -584,10 +583,19 @@ impl GaussianSplattingFeature {
                 write_mask: wgpu::ColorWrites::ALL,
             });
 
+            let depth_stencil = DepthStencilKey::from(wgpu::DepthStencilState{
+                format: ctx.wgpu_ctx.depth_format,
+                depth_write_enabled: Some(false),
+                depth_compare: Some(wgpu::CompareFunction::LessEqual),
+                stencil: wgpu::StencilState::default(),
+                bias: wgpu::DepthBiasState::default(),
+            });
+
             let key = FullscreenPipelineKey::fullscreen(
                 hash,
                 smallvec::smallvec![color_target],
-                None, // No depth test for Gaussian splatting (pre-sorted)
+                // None, // No depth test for Gaussian splatting (pre-sorted)
+                Some(depth_stencil)
             );
 
             self.render_pipeline = Some(ctx.pipeline_cache.get_or_create_fullscreen(
@@ -971,8 +979,10 @@ impl GaussianSplattingFeature {
             .map(|id| ctx.pipeline_cache.get_render_pipeline(id));
 
         // ─── Collect per-cloud references in sorted order ──────────
-        let mut compute_entries: Vec<CloudComputeEntry<'a>> = Vec::new();
-        let mut render_entries: Vec<CloudRenderEntry<'a>> = Vec::new();
+        let mut compute_entries: Vec<CloudComputeEntry<'a>> =
+            Vec::with_capacity(self.sorted_order.len());
+        let mut render_entries: Vec<CloudRenderEntry<'a>> =
+            Vec::with_capacity(self.sorted_order.len());
 
         for &cloud_idx in &self.sorted_order {
             let (_, _, ref gpu) = self.clouds[cloud_idx];
@@ -993,6 +1003,11 @@ impl GaussianSplattingFeature {
             });
         }
 
+        // Allocate entry slices on the per-frame arena so PassNodes hold
+        // only `&'a [T]` (no Vec, no Drop) — required by AssertNoDrop.
+        let compute_slice = ctx.graph.alloc_slice(&compute_entries);
+        let render_slice = ctx.graph.alloc_slice(&render_entries);
+
         // ─── Compute Pass: Preprocess + Sort (all clouds) ──────────
         ctx.graph.add_pass("GS_Compute", |builder| {
             builder.mark_side_effect();
@@ -1002,7 +1017,7 @@ impl GaussianSplattingFeature {
                     sort_histogram_pipeline,
                     sort_prefix_pipeline,
                     sort_scatter_pipeline,
-                    clouds: compute_entries,
+                    clouds: compute_slice,
                 },
                 (),
             )
@@ -1015,7 +1030,7 @@ impl GaussianSplattingFeature {
             (
                 GaussianRenderPassNode {
                     render_pipeline,
-                    clouds: render_entries,
+                    clouds: render_slice,
                     color_target: color_out,
                     depth_target: active_depth,
                 },
@@ -1031,6 +1046,7 @@ impl GaussianSplattingFeature {
 // Per-Cloud Entry Types (references into Feature-owned data)
 // =============================================================================
 
+#[derive(Clone, Copy)]
 struct CloudComputeEntry<'a> {
     preprocess_bg0: &'a wgpu::BindGroup,
     preprocess_bg1: &'a wgpu::BindGroup,
@@ -1042,6 +1058,7 @@ struct CloudComputeEntry<'a> {
     num_points: u32,
 }
 
+#[derive(Clone, Copy)]
 struct CloudRenderEntry<'a> {
     render_bg0: &'a wgpu::BindGroup,
     render_bg1: &'a wgpu::BindGroup,
@@ -1057,7 +1074,7 @@ struct GaussianComputePassNode<'a> {
     sort_histogram_pipeline: Option<&'a wgpu::ComputePipeline>,
     sort_prefix_pipeline: Option<&'a wgpu::ComputePipeline>,
     sort_scatter_pipeline: Option<&'a wgpu::ComputePipeline>,
-    clouds: Vec<CloudComputeEntry<'a>>,
+    clouds: &'a [CloudComputeEntry<'a>],
 }
 
 impl PassNode<'_> for GaussianComputePassNode<'_> {
@@ -1067,7 +1084,7 @@ impl PassNode<'_> for GaussianComputePassNode<'_> {
         let sort_prefix = self.sort_prefix_pipeline.expect("GS sort prefix pipeline missing");
         let sort_scatter = self.sort_scatter_pipeline.expect("GS sort scatter pipeline missing");
 
-        for cloud in &self.clouds {
+        for cloud in self.clouds {
             let dispatch_wgs = (cloud.num_points + WG_SIZE - 1) / WG_SIZE;
 
             // ─── Step 1: Preprocess ────────────────────────────
@@ -1146,7 +1163,7 @@ impl PassNode<'_> for GaussianComputePassNode<'_> {
 
 struct GaussianRenderPassNode<'a> {
     render_pipeline: Option<&'a wgpu::RenderPipeline>,
-    clouds: Vec<CloudRenderEntry<'a>>,
+    clouds: &'a [CloudRenderEntry<'a>],
     color_target: TextureNodeId,
     depth_target: TextureNodeId,
 }
@@ -1175,7 +1192,7 @@ impl PassNode<'_> for GaussianRenderPassNode<'_> {
 
         // Draw all clouds in back-to-front order (sorted_order
         // was already applied when building the entries).
-        for cloud in &self.clouds {
+        for cloud in self.clouds {
             rpass.set_bind_group(0, cloud.render_bg0, &[]);
             rpass.set_bind_group(1, cloud.render_bg1, &[]);
             // 4 vertices per quad × num_points quads

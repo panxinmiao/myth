@@ -27,8 +27,8 @@ struct SortInfos {
 var<workgroup> s_local_histo: array<atomic<u32>, 256>;
 var<workgroup> s_prefix: array<u32, 256>;
 
-fn extract_digit(key: u32, pass: u32) -> u32 {
-    return (key >> (pass * 8u)) & 0xFFu;
+fn extract_digit(key: u32, radix_pass: u32) -> u32 {
+    return (key >> (radix_pass * 8u)) & 0xFFu;
 }
 
 @compute @workgroup_size(256, 1, 1)
@@ -42,9 +42,9 @@ fn main(
         return;
     }
     let num_wgs = (num_keys + KEYS_PER_WG - 1u) / KEYS_PER_WG;
-    let pass = sort_infos.passes;
+    let radix_pass = sort_infos.passes;
     let wg = wid.x;
-    let global_offset = pass * num_wgs * 256u;
+    let global_offset = radix_pass * num_wgs * 256u;
 
     // Clear local histogram
     atomicStore(&s_local_histo[lid.x], 0u);
@@ -55,7 +55,7 @@ fn main(
         let data_idx = wg * KEYS_PER_WG + i * WG_SIZE + lid.x;
         if data_idx < num_keys {
             let key = select(sort_depths[sort_indices[data_idx]], sort_depths[data_idx], bool(sort_infos.even_pass));
-            let digit = extract_digit(key, pass);
+            let digit = extract_digit(key, radix_pass);
             atomicAdd(&s_local_histo[digit], 1u);
         }
     }
@@ -85,7 +85,7 @@ fn main(
         if data_idx < num_keys {
             let key = select(sort_depths[sort_indices[data_idx]], sort_depths[data_idx], bool(sort_infos.even_pass));
             let value = select(sort_indices[data_idx], data_idx, bool(sort_infos.even_pass));
-            let digit = extract_digit(key, pass);
+            let digit = extract_digit(key, radix_pass);
 
             let local_offset = atomicAdd(&s_local_histo[digit], 1u);
 
