@@ -29,6 +29,8 @@ use super::types::{
 /// - Create / cache `wgpu::BindGroupLayout`s
 /// - Compile pipelines via [`PipelineCache`]
 /// - Upload non-transient GPU data (uniform buffers, noise textures, etc.)
+/// - Assemble cached persistent bind groups through
+///   [`ExtractContext::build_bind_group`]
 ///
 /// After this phase, Features hold only lightweight pipeline IDs.  The
 /// per-frame ephemeral `PassNode` created by `Feature::add_to_graph()`
@@ -161,13 +163,14 @@ pub enum GraphBinding<'a> {
     Texture(TextureNodeId),
     TrackedBuffer(&'a Tracked<wgpu::Buffer>),
     TrackedTextureView(&'a Tracked<wgpu::TextureView>),
+    TrackedSampler(&'a Tracked<wgpu::Sampler>),
     RawBuffer(RawBufferBinding<'a>),
     RawTextureView(RawTextureViewBinding<'a>),
     Sampler(RawSamplerBinding<'a>),
     CommonSampler(CommonSampler),
 }
 
-/// Fluent bind-group builder for RDG prepare-time code.
+/// Fluent bind-group builder shared by feature extract code and RDG prepare.
 ///
 /// The critical safety property lives in [`Self::bind_buffer`]: binding a
 /// `BufferNodeId` always resolves through [`ViewResolver::get_buffer_binding`],
@@ -175,7 +178,7 @@ pub enum GraphBinding<'a> {
 /// size. This prevents shaders from reading stale bytes past the logical end
 /// of a transient power-of-two buffer allocation.
 pub struct BindGroupBuilder<'ctx, 'frame> {
-    views: &'ctx ViewResolver<'frame>,
+    views: Option<&'ctx ViewResolver<'frame>>,
     cache: &'ctx mut GlobalBindGroupCache,
     device: &'ctx wgpu::Device,
     sampler_registry: &'ctx SamplerRegistry,
@@ -188,7 +191,7 @@ pub struct BindGroupBuilder<'ctx, 'frame> {
 
 impl<'ctx, 'frame> BindGroupBuilder<'ctx, 'frame> {
     fn new(
-        views: &'ctx ViewResolver<'frame>,
+        views: Option<&'ctx ViewResolver<'frame>>,
         cache: &'ctx mut GlobalBindGroupCache,
         device: &'ctx wgpu::Device,
         sampler_registry: &'ctx SamplerRegistry,
@@ -226,6 +229,7 @@ impl<'ctx, 'frame> BindGroupBuilder<'ctx, 'frame> {
             GraphBinding::Texture(id) => self.bind_texture(binding, id),
             GraphBinding::TrackedBuffer(buffer) => self.bind_tracked_buffer(binding, buffer),
             GraphBinding::TrackedTextureView(view) => self.bind_tracked_texture_view(binding, view),
+            GraphBinding::TrackedSampler(sampler) => self.bind_tracked_sampler(binding, sampler),
             GraphBinding::RawBuffer(buffer) => self.bind_raw_buffer(binding, buffer),
             GraphBinding::RawTextureView(view) => self.bind_raw_texture_view(binding, view),
             GraphBinding::Sampler(sampler) => self.bind_raw_sampler(binding, sampler),
@@ -244,14 +248,20 @@ impl<'ctx, 'frame> BindGroupBuilder<'ctx, 'frame> {
     /// Binds an RDG buffer with automatic logical-size truncation.
     #[must_use]
     pub fn bind_buffer(self, binding: u32, id: BufferNodeId) -> Self {
-        let resource_id = self.views.get_physical_buffer_uid(id);
-        let resource = wgpu::BindingResource::Buffer(self.views.get_buffer_binding(id));
+        let views = self
+            .views
+            .expect("BufferNodeId binding requires PrepareContext-backed RDG views");
+        let resource_id = views.get_physical_buffer_uid(id);
+        let resource = wgpu::BindingResource::Buffer(views.get_buffer_binding(id));
         self.push_entry(binding, resource_id, resource)
     }
 
     #[must_use]
     pub fn bind_texture(self, binding: u32, id: TextureNodeId) -> Self {
-        let view = self.views.get_texture_view(id);
+        let views = self
+            .views
+            .expect("TextureNodeId binding requires PrepareContext-backed RDG views");
+        let view = views.get_texture_view(id);
         self.push_entry(
             binding,
             view.id(),
@@ -260,8 +270,26 @@ impl<'ctx, 'frame> BindGroupBuilder<'ctx, 'frame> {
     }
 
     #[must_use]
+    pub fn bind_tracked_buffer_with_size(
+        self,
+        binding: u32,
+        buffer: &'ctx Tracked<wgpu::Buffer>,
+        size: Option<wgpu::BufferSize>,
+    ) -> Self {
+        self.push_entry(
+            binding,
+            buffer.id(),
+            wgpu::BindingResource::Buffer(wgpu::BufferBinding {
+                buffer,
+                offset: 0,
+                size,
+            }),
+        )
+    }
+
+    #[must_use]
     pub fn bind_tracked_buffer(self, binding: u32, buffer: &'ctx Tracked<wgpu::Buffer>) -> Self {
-        self.push_entry(binding, buffer.id(), buffer.as_entire_binding())
+        self.bind_tracked_buffer_with_size(binding, buffer, None)
     }
 
     #[must_use]
@@ -271,6 +299,15 @@ impl<'ctx, 'frame> BindGroupBuilder<'ctx, 'frame> {
         view: &'ctx Tracked<wgpu::TextureView>,
     ) -> Self {
         self.push_entry(binding, view.id(), wgpu::BindingResource::TextureView(view))
+    }
+
+    #[must_use]
+    pub fn bind_tracked_sampler(
+        self,
+        binding: u32,
+        sampler: &'ctx Tracked<wgpu::Sampler>,
+    ) -> Self {
+        self.push_entry(binding, sampler.id(), wgpu::BindingResource::Sampler(sampler))
     }
 
     #[must_use]
@@ -428,6 +465,16 @@ impl<'ctx, 'frame> BindableResource<'ctx, 'frame> for &'ctx Tracked<wgpu::Textur
     }
 }
 
+impl<'ctx, 'frame> BindableResource<'ctx, 'frame> for &'ctx Tracked<wgpu::Sampler> {
+    fn add_to_builder(
+        self,
+        binding: u32,
+        builder: BindGroupBuilder<'ctx, 'frame>,
+    ) -> BindGroupBuilder<'ctx, 'frame> {
+        builder.bind_tracked_sampler(binding, self)
+    }
+}
+
 impl<'ctx, 'frame> BindableResource<'ctx, 'frame> for RawBufferBinding<'ctx> {
     fn add_to_builder(
         self,
@@ -488,10 +535,30 @@ impl<'frame> PrepareContext<'frame> {
         label: Option<&'static str>,
     ) -> BindGroupBuilder<'ctx, 'frame> {
         BindGroupBuilder::new(
-            &self.views,
+            Some(&self.views),
             self.global_bind_group_cache,
             self.device,
             self.sampler_registry,
+            layout,
+            label,
+        )
+    }
+}
+
+impl ExtractContext<'_> {
+    /// Starts a cached bind-group build for persistent resources during
+    /// feature extract-and-prepare.
+    #[must_use]
+    pub fn build_bind_group<'ctx>(
+        &'ctx mut self,
+        layout: &'ctx Tracked<wgpu::BindGroupLayout>,
+        label: Option<&'static str>,
+    ) -> BindGroupBuilder<'ctx, 'ctx> {
+        BindGroupBuilder::new(
+            None,
+            self.global_bind_group_cache,
+            self.device,
+            &self.resource_manager.sampler_registry,
             layout,
             label,
         )

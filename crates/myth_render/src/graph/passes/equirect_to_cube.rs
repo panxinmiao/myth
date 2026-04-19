@@ -8,7 +8,7 @@
 use rustc_hash::FxHashMap;
 
 use crate::core::ResourceManager;
-use crate::core::gpu::CubeSourceType;
+use crate::core::gpu::{CubeSourceType, Tracked};
 use crate::graph::composer::GraphBuilderContext;
 use crate::graph::core::TextureNodeId;
 use crate::graph::core::context::{ExecuteContext, ExtractContext};
@@ -52,81 +52,85 @@ struct SceneSourceConvertState {
 pub struct EquirectToCubeFeature {
     equirect_pipeline_id: Option<ComputePipelineId>,
     cubemap_pipeline_id: Option<ComputePipelineId>,
-    equirect_layout: wgpu::BindGroupLayout,
-    cubemap_layout: wgpu::BindGroupLayout,
-    equirect_sampler: wgpu::Sampler,
-    cubemap_sampler: wgpu::Sampler,
+    equirect_layout: Tracked<wgpu::BindGroupLayout>,
+    cubemap_layout: Tracked<wgpu::BindGroupLayout>,
+    equirect_sampler: Tracked<wgpu::Sampler>,
+    cubemap_sampler: Tracked<wgpu::Sampler>,
     scene_states: FxHashMap<u32, SceneSourceConvertState>,
 }
 
 impl EquirectToCubeFeature {
     #[must_use]
     pub fn new(device: &wgpu::Device) -> Self {
-        let equirect_layout = device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
-            label: Some("Environment EquirectToCube BGL"),
-            entries: &[
-                wgpu::BindGroupLayoutEntry {
-                    binding: 0,
-                    visibility: wgpu::ShaderStages::COMPUTE,
-                    ty: wgpu::BindingType::Texture {
-                        sample_type: wgpu::TextureSampleType::Float { filterable: true },
-                        view_dimension: wgpu::TextureViewDimension::D2,
-                        multisampled: false,
+        let equirect_layout = Tracked::new(device.create_bind_group_layout(
+            &wgpu::BindGroupLayoutDescriptor {
+                label: Some("Environment EquirectToCube BGL"),
+                entries: &[
+                    wgpu::BindGroupLayoutEntry {
+                        binding: 0,
+                        visibility: wgpu::ShaderStages::COMPUTE,
+                        ty: wgpu::BindingType::Texture {
+                            sample_type: wgpu::TextureSampleType::Float { filterable: true },
+                            view_dimension: wgpu::TextureViewDimension::D2,
+                            multisampled: false,
+                        },
+                        count: None,
                     },
-                    count: None,
-                },
-                wgpu::BindGroupLayoutEntry {
-                    binding: 1,
-                    visibility: wgpu::ShaderStages::COMPUTE,
-                    ty: wgpu::BindingType::Sampler(wgpu::SamplerBindingType::Filtering),
-                    count: None,
-                },
-                wgpu::BindGroupLayoutEntry {
-                    binding: 2,
-                    visibility: wgpu::ShaderStages::COMPUTE,
-                    ty: wgpu::BindingType::StorageTexture {
-                        access: wgpu::StorageTextureAccess::WriteOnly,
-                        format: wgpu::TextureFormat::Rgba16Float,
-                        view_dimension: wgpu::TextureViewDimension::D2Array,
+                    wgpu::BindGroupLayoutEntry {
+                        binding: 1,
+                        visibility: wgpu::ShaderStages::COMPUTE,
+                        ty: wgpu::BindingType::Sampler(wgpu::SamplerBindingType::Filtering),
+                        count: None,
                     },
-                    count: None,
-                },
-            ],
-        });
+                    wgpu::BindGroupLayoutEntry {
+                        binding: 2,
+                        visibility: wgpu::ShaderStages::COMPUTE,
+                        ty: wgpu::BindingType::StorageTexture {
+                            access: wgpu::StorageTextureAccess::WriteOnly,
+                            format: wgpu::TextureFormat::Rgba16Float,
+                            view_dimension: wgpu::TextureViewDimension::D2Array,
+                        },
+                        count: None,
+                    },
+                ],
+            },
+        ));
 
-        let cubemap_layout = device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
-            label: Some("Environment CubeToCube BGL"),
-            entries: &[
-                wgpu::BindGroupLayoutEntry {
-                    binding: 0,
-                    visibility: wgpu::ShaderStages::COMPUTE,
-                    ty: wgpu::BindingType::Texture {
-                        sample_type: wgpu::TextureSampleType::Float { filterable: true },
-                        view_dimension: wgpu::TextureViewDimension::Cube,
-                        multisampled: false,
+        let cubemap_layout = Tracked::new(device.create_bind_group_layout(
+            &wgpu::BindGroupLayoutDescriptor {
+                label: Some("Environment CubeToCube BGL"),
+                entries: &[
+                    wgpu::BindGroupLayoutEntry {
+                        binding: 0,
+                        visibility: wgpu::ShaderStages::COMPUTE,
+                        ty: wgpu::BindingType::Texture {
+                            sample_type: wgpu::TextureSampleType::Float { filterable: true },
+                            view_dimension: wgpu::TextureViewDimension::Cube,
+                            multisampled: false,
+                        },
+                        count: None,
                     },
-                    count: None,
-                },
-                wgpu::BindGroupLayoutEntry {
-                    binding: 1,
-                    visibility: wgpu::ShaderStages::COMPUTE,
-                    ty: wgpu::BindingType::Sampler(wgpu::SamplerBindingType::Filtering),
-                    count: None,
-                },
-                wgpu::BindGroupLayoutEntry {
-                    binding: 2,
-                    visibility: wgpu::ShaderStages::COMPUTE,
-                    ty: wgpu::BindingType::StorageTexture {
-                        access: wgpu::StorageTextureAccess::WriteOnly,
-                        format: wgpu::TextureFormat::Rgba16Float,
-                        view_dimension: wgpu::TextureViewDimension::D2Array,
+                    wgpu::BindGroupLayoutEntry {
+                        binding: 1,
+                        visibility: wgpu::ShaderStages::COMPUTE,
+                        ty: wgpu::BindingType::Sampler(wgpu::SamplerBindingType::Filtering),
+                        count: None,
                     },
-                    count: None,
-                },
-            ],
-        });
+                    wgpu::BindGroupLayoutEntry {
+                        binding: 2,
+                        visibility: wgpu::ShaderStages::COMPUTE,
+                        ty: wgpu::BindingType::StorageTexture {
+                            access: wgpu::StorageTextureAccess::WriteOnly,
+                            format: wgpu::TextureFormat::Rgba16Float,
+                            view_dimension: wgpu::TextureViewDimension::D2Array,
+                        },
+                        count: None,
+                    },
+                ],
+            },
+        ));
 
-        let equirect_sampler = device.create_sampler(&wgpu::SamplerDescriptor {
+        let equirect_sampler = Tracked::new(device.create_sampler(&wgpu::SamplerDescriptor {
             label: Some("Environment Equirect Sampler"),
             address_mode_u: EQUIRECT_SAMPLER_KEY.address_mode_u,
             address_mode_v: EQUIRECT_SAMPLER_KEY.address_mode_v,
@@ -139,9 +143,9 @@ impl EquirectToCubeFeature {
             compare: EQUIRECT_SAMPLER_KEY.compare,
             anisotropy_clamp: EQUIRECT_SAMPLER_KEY.anisotropy_clamp.unwrap_or(1),
             border_color: EQUIRECT_SAMPLER_KEY.border_color,
-        });
+        }));
 
-        let cubemap_sampler = device.create_sampler(&wgpu::SamplerDescriptor {
+        let cubemap_sampler = Tracked::new(device.create_sampler(&wgpu::SamplerDescriptor {
             label: Some("Environment Cubemap Sampler"),
             address_mode_u: CUBEMAP_SAMPLER_KEY.address_mode_u,
             address_mode_v: CUBEMAP_SAMPLER_KEY.address_mode_v,
@@ -154,7 +158,7 @@ impl EquirectToCubeFeature {
             compare: CUBEMAP_SAMPLER_KEY.compare,
             anisotropy_clamp: CUBEMAP_SAMPLER_KEY.anisotropy_clamp.unwrap_or(1),
             border_color: CUBEMAP_SAMPLER_KEY.border_color,
-        });
+        }));
 
         Self {
             equirect_pipeline_id: None,
@@ -192,42 +196,34 @@ impl EquirectToCubeFeature {
             return;
         }
 
-        let dest_view = &gpu_env.base_cube_storage_view;
+        let source_view = resolved_source.view.clone();
+        let source_view_id = resolved_source.view_id;
+        let dest_view = gpu_env.base_cube_storage_view.clone();
+        let dest_view_id = dest_view.id();
         let frame_index = ctx.resource_manager.frame_index();
         let needs_rebuild = self.scene_states.get(&scene_id).is_none_or(|state| {
             state.source_type != source_type
-                || state.source_view_id != resolved_source.view_id
-                || state.dest_view_id != dest_view.id()
+                || state.source_view_id != source_view_id
+                || state.dest_view_id != dest_view_id
         });
 
         if needs_rebuild {
             let (layout, sampler, _) = self
                 .layout_and_sampler(source_type)
                 .expect("procedural atmosphere should not reach source conversion");
-            let bind_group = ctx.device.create_bind_group(&wgpu::BindGroupDescriptor {
-                label: Some("Environment Source Convert BG"),
-                layout,
-                entries: &[
-                    wgpu::BindGroupEntry {
-                        binding: 0,
-                        resource: wgpu::BindingResource::TextureView(resolved_source.view),
-                    },
-                    wgpu::BindGroupEntry {
-                        binding: 1,
-                        resource: wgpu::BindingResource::Sampler(sampler),
-                    },
-                    wgpu::BindGroupEntry {
-                        binding: 2,
-                        resource: wgpu::BindingResource::TextureView(dest_view),
-                    },
-                ],
-            });
+            let bind_group = ctx
+                .build_bind_group(layout, Some("Environment Source Convert BG"))
+                .bind_texture_view_with_id(0, &source_view, source_view_id)
+                .bind_tracked_sampler(1, sampler)
+                .bind_tracked_texture_view(2, &dest_view)
+                .build()
+                .clone();
             self.scene_states.insert(
                 scene_id,
                 SceneSourceConvertState {
                     source_type,
-                    source_view_id: resolved_source.view_id,
-                    dest_view_id: dest_view.id(),
+                    source_view_id,
+                    dest_view_id,
                     bind_group,
                     last_used_frame: frame_index,
                 },
@@ -315,7 +311,11 @@ impl EquirectToCubeFeature {
     fn layout_and_sampler(
         &self,
         source_type: CubeSourceType,
-    ) -> Option<(&wgpu::BindGroupLayout, &wgpu::Sampler, CubeSourceType)> {
+    ) -> Option<(
+        &Tracked<wgpu::BindGroupLayout>,
+        &Tracked<wgpu::Sampler>,
+        CubeSourceType,
+    )> {
         match source_type {
             CubeSourceType::Equirectangular => {
                 Some((&self.equirect_layout, &self.equirect_sampler, source_type))

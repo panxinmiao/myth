@@ -40,6 +40,7 @@
 use glam::Mat4;
 use myth_scene::light::LightKind;
 
+use crate::core::gpu::Tracked;
 use crate::core::view::ViewTarget;
 use crate::graph::composer::GraphBuilderContext;
 use crate::graph::core::{ExecuteContext, ExtractContext, PassNode, TextureDesc, TextureNodeId};
@@ -67,15 +68,15 @@ pub struct ShadowOutput {
 /// no GPU memory is allocated at all.
 pub struct ShadowFeature {
     /// Per-light VP matrix buffer (dynamic uniform, stride-aligned).
-    uniform_buffer: wgpu::Buffer,
+    uniform_buffer: Tracked<wgpu::Buffer>,
     /// Current buffer capacity in layers.
     uniform_capacity: u32,
     /// Aligned stride between consecutive VP matrices.
     uniform_stride: u32,
     /// Bind group referencing `uniform_buffer`.
-    bind_group: wgpu::BindGroup,
+    bind_group: Option<wgpu::BindGroup>,
     /// Bind group layout for shadow light uniforms.
-    bind_group_layout: wgpu::BindGroupLayout,
+    bind_group_layout: Tracked<wgpu::BindGroupLayout>,
 
     /// All shadow light instances this frame (both 2D and cube).
     shadow_lights: Vec<ShadowLightInstance>,
@@ -99,45 +100,35 @@ impl ShadowFeature {
         let min_alignment = device.limits().min_uniform_buffer_offset_alignment.max(1);
         let stride = align_to(std::mem::size_of::<Mat4>() as u32, min_alignment);
 
-        let bind_group_layout = device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
-            label: Some("Shadow Light BGL"),
-            entries: &[wgpu::BindGroupLayoutEntry {
-                binding: 0,
-                visibility: wgpu::ShaderStages::VERTEX,
-                ty: wgpu::BindingType::Buffer {
-                    ty: wgpu::BufferBindingType::Uniform,
-                    has_dynamic_offset: true,
-                    min_binding_size: wgpu::BufferSize::new(std::mem::size_of::<Mat4>() as u64),
-                },
-                count: None,
-            }],
-        });
+        let bind_group_layout = Tracked::new(device.create_bind_group_layout(
+            &wgpu::BindGroupLayoutDescriptor {
+                label: Some("Shadow Light BGL"),
+                entries: &[wgpu::BindGroupLayoutEntry {
+                    binding: 0,
+                    visibility: wgpu::ShaderStages::VERTEX,
+                    ty: wgpu::BindingType::Buffer {
+                        ty: wgpu::BufferBindingType::Uniform,
+                        has_dynamic_offset: true,
+                        min_binding_size:
+                            wgpu::BufferSize::new(std::mem::size_of::<Mat4>() as u64),
+                    },
+                    count: None,
+                }],
+            },
+        ));
 
-        let uniform_buffer = device.create_buffer(&wgpu::BufferDescriptor {
+        let uniform_buffer = Tracked::new(device.create_buffer(&wgpu::BufferDescriptor {
             label: Some("Shadow VP Buffer"),
             size: u64::from(stride),
             usage: wgpu::BufferUsages::UNIFORM | wgpu::BufferUsages::COPY_DST,
             mapped_at_creation: false,
-        });
-
-        let bind_group = device.create_bind_group(&wgpu::BindGroupDescriptor {
-            label: Some("Shadow Light BG"),
-            layout: &bind_group_layout,
-            entries: &[wgpu::BindGroupEntry {
-                binding: 0,
-                resource: wgpu::BindingResource::Buffer(wgpu::BufferBinding {
-                    buffer: &uniform_buffer,
-                    offset: 0,
-                    size: wgpu::BufferSize::new(std::mem::size_of::<Mat4>() as u64),
-                }),
-            }],
-        });
+        }));
 
         Self {
             uniform_buffer,
             uniform_capacity: 1,
             uniform_stride: stride,
-            bind_group,
+            bind_group: None,
             bind_group_layout,
             shadow_lights: Vec::with_capacity(16),
             d2_lights: Vec::with_capacity(16),
@@ -151,9 +142,9 @@ impl ShadowFeature {
 
     /// Grow the uniform buffer (and recreate the bind group) if the current
     /// capacity is insufficient.
-    fn ensure_capacity(&mut self, device: &wgpu::Device, required_count: u32) {
+    fn ensure_capacity(&mut self, device: &wgpu::Device, required_count: u32) -> bool {
         if required_count <= self.uniform_capacity {
-            return;
+            return false;
         }
 
         let mut capacity = self.uniform_capacity.max(1);
@@ -161,30 +152,28 @@ impl ShadowFeature {
             capacity = capacity.saturating_mul(2);
         }
 
-        self.uniform_buffer = device.create_buffer(&wgpu::BufferDescriptor {
+        self.uniform_buffer = Tracked::new(device.create_buffer(&wgpu::BufferDescriptor {
             label: Some("Shadow VP Buffer"),
             size: u64::from(self.uniform_stride) * u64::from(capacity),
             usage: wgpu::BufferUsages::UNIFORM | wgpu::BufferUsages::COPY_DST,
             mapped_at_creation: false,
-        });
+        }));
 
-        self.recreate_bind_group(device);
         self.uniform_capacity = capacity;
+        true
     }
 
-    fn recreate_bind_group(&mut self, device: &wgpu::Device) {
-        self.bind_group = device.create_bind_group(&wgpu::BindGroupDescriptor {
-            label: Some("Shadow Light BG"),
-            layout: &self.bind_group_layout,
-            entries: &[wgpu::BindGroupEntry {
-                binding: 0,
-                resource: wgpu::BindingResource::Buffer(wgpu::BufferBinding {
-                    buffer: &self.uniform_buffer,
-                    offset: 0,
-                    size: wgpu::BufferSize::new(std::mem::size_of::<Mat4>() as u64),
-                }),
-            }],
-        });
+    fn rebuild_bind_group(&mut self, ctx: &mut ExtractContext) {
+        self.bind_group = Some(
+            ctx.build_bind_group(&self.bind_group_layout, Some("Shadow Light BG"))
+                .bind_tracked_buffer_with_size(
+                    0,
+                    &self.uniform_buffer,
+                    wgpu::BufferSize::new(std::mem::size_of::<Mat4>() as u64),
+                )
+                .build()
+                .clone(),
+        );
     }
 }
 
@@ -310,8 +299,10 @@ impl ShadowFeature {
 
         // Ensure buffer capacity for all uniform slots
         let total_uniform_slots = uniform_index;
-        self.ensure_capacity(ctx.device, total_uniform_slots);
-        self.recreate_bind_group(ctx.device);
+        let resized = self.ensure_capacity(ctx.device, total_uniform_slots);
+        if resized || self.bind_group.is_none() {
+            self.rebuild_bind_group(ctx);
+        }
 
         // Upload VP matrices — one contiguous range, indexed by insertion order
         let mut uniform_data =
@@ -345,6 +336,11 @@ impl ShadowFeature {
             return output;
         }
 
+        let bind_group = self
+            .bind_group
+            .as_ref()
+            .expect("Shadow bind group must be prepared before graph build");
+
         // Collect 2D and cube shadow light slices
         let has_2d = self.total_2d_layers > 0;
         let has_cube = self.total_cube_layers > 0;
@@ -367,7 +363,7 @@ impl ShadowFeature {
                 let tex_id = builder.create_texture("Shadow_2D_Array", desc);
 
                 let node = Shadow2DPassNode {
-                    bind_group: &self.bind_group,
+                    bind_group,
                     lights: d2_lights,
                     uniform_stride: stride,
                     texture_id: tex_id,
@@ -396,7 +392,7 @@ impl ShadowFeature {
                 let tex_id = builder.create_texture("Shadow_Cube_Array", desc);
 
                 let node = ShadowCubePassNode {
-                    bind_group: &self.bind_group,
+                    bind_group,
                     lights: cube_lights,
                     uniform_stride: stride,
                     texture_id: tex_id,

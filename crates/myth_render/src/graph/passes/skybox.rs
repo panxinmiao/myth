@@ -22,11 +22,10 @@
 
 use rustc_hash::FxHashMap;
 
-use crate::core::binding::BindGroupKey;
 use crate::core::gpu::{ResourceState, Tracked};
 use crate::graph::composer::GraphBuilderContext;
 use crate::graph::core::{
-    ExecuteContext, ExtractContext, PassNode, RenderTargetOps, TextureNodeId,
+    ExecuteContext, ExtractContext, PassNode, RawBufferBinding, RenderTargetOps, TextureNodeId,
 };
 use crate::graph::passes::atmosphere::ProceduralSkyboxResources;
 use crate::pipeline::{
@@ -576,18 +575,18 @@ impl SkyboxFeature {
         resource_manager: &'a crate::core::ResourceManager,
         source: &TextureSource,
         mapping: BackgroundMapping,
-    ) -> Option<&'a wgpu::TextureView> {
+    ) -> Option<ResolvedTextureView<'a>> {
         let resolved = Self::resolve_texture_view_with_dimension(resource_manager, source)?;
         match mapping {
             BackgroundMapping::Cube
                 if resolved.view_dimension == wgpu::TextureViewDimension::Cube =>
             {
-                Some(resolved.view)
+                Some(resolved)
             }
             BackgroundMapping::Equirectangular | BackgroundMapping::Planar
                 if resolved.view_dimension == wgpu::TextureViewDimension::D2 =>
             {
-                Some(resolved.view)
+                Some(resolved)
             }
             _ => None,
         }
@@ -652,9 +651,6 @@ impl SkyboxFeature {
             return;
         };
 
-        // GPU buffer was already ensured by the Composer; use pushed IDs.
-        let bg_uniforms_id = ctx.resource_manager.ensure_buffer_id(bg_uniforms);
-
         if let BackgroundMode::Texture {
             source: TextureSource::Asset(handle),
             ..
@@ -708,36 +704,42 @@ impl SkyboxFeature {
         let texture_view = match background_mode {
             BackgroundMode::Texture {
                 source, mapping, ..
-            } => Self::resolve_texture_view(ctx.resource_manager, source, *mapping),
-            BackgroundMode::Procedural(_) => {
-                procedural_resources.map(|resources| &**resources.sky_view_view)
-            }
+            } => Self::resolve_texture_view(ctx.resource_manager, source, *mapping)
+                .map(|resolved| (resolved.view.clone(), resolved.resource_key)),
             _ => None,
         };
         let procedural_starbox = match background_mode {
             BackgroundMode::Procedural(params) => params.starbox_texture.and_then(|source| {
                 Self::resolve_procedural_starbox_view(ctx.resource_manager, &source)
+                    .map(|starbox| (starbox.view.clone(), starbox.kind, starbox.resource_key))
             }),
             _ => None,
         };
         let procedural_moon = match background_mode {
-            BackgroundMode::Procedural(params) => Some(Self::resolve_procedural_moon_view(
-                ctx.resource_manager,
-                params.moon_albedo_texture,
-            )),
+            BackgroundMode::Procedural(params) => {
+                let moon =
+                    Self::resolve_procedural_moon_view(ctx.resource_manager, params.moon_albedo_texture);
+                Some((moon.view.clone(), moon.resource_key, moon.enabled))
+            }
             _ => None,
         };
-        let procedural_starbox_kind =
-            procedural_starbox.map_or(ProceduralStarboxKind::None, |starbox| starbox.kind);
+        let procedural_starbox_kind = procedural_starbox
+            .as_ref()
+            .map_or(ProceduralStarboxKind::None, |(_, kind, _)| *kind);
+        let procedural_moon_enabled = procedural_moon
+            .as_ref()
+            .is_some_and(|(_, _, enabled)| *enabled);
+        let procedural_starbox_binding = procedural_starbox.clone();
+        let procedural_moon_binding = procedural_moon.clone();
 
         // Build bind group (group 1)
         let layout = self.layout_for_variant(variant, procedural_starbox_kind);
-        let layout_id = layout.id();
         let sampler = ctx
             .resource_manager
             .sampler_registry
             .get_sampler_by_index(sampler_id)
-            .expect("Skybox sampler index must be valid");
+            .expect("Skybox sampler index must be valid")
+            .clone();
 
         let bind_group = if variant == SkyboxVariant::Procedural {
             let Some(resources) = procedural_resources else {
@@ -745,161 +747,68 @@ impl SkyboxFeature {
                 self.current_pipeline = None;
                 return;
             };
-            let moon = procedural_moon.expect("procedural moon view must exist");
+            let (moon_view, moon_resource_key, _) =
+                procedural_moon_binding.expect("procedural moon view must exist");
             let sampler = self
                 .procedural_sampler
                 .as_ref()
                 .expect("procedural skybox sampler must exist");
 
-            let key = BindGroupKey::new(layout_id)
-                .with_resource(resources.bake_params_buffer.id())
-                .with_resource(resources.sky_view_view.id())
-                .with_resource(resources.transmittance_view.id())
-                .with_resource(sampler.id())
-                .with_resource(moon.resource_key);
-
-            let key = if let Some(starbox) = procedural_starbox {
-                key.with_resource(starbox.resource_key)
+            let label = if procedural_starbox.is_some() {
+                Some("Skybox BG (Procedural+Starbox)")
             } else {
-                key
+                Some("Skybox BG (Procedural)")
             };
 
-            if let Some(cached) = ctx.global_bind_group_cache.get(&key) {
-                cached.clone()
-            } else {
-                let bg = match procedural_starbox {
-                    Some(starbox) => ctx.device.create_bind_group(&wgpu::BindGroupDescriptor {
-                        label: Some("Skybox BG (Procedural+Starbox)"),
-                        layout,
-                        entries: &[
-                            wgpu::BindGroupEntry {
-                                binding: 0,
-                                resource: resources.bake_params_buffer.as_entire_binding(),
-                            },
-                            wgpu::BindGroupEntry {
-                                binding: 1,
-                                resource: wgpu::BindingResource::TextureView(
-                                    resources.sky_view_view,
-                                ),
-                            },
-                            wgpu::BindGroupEntry {
-                                binding: 2,
-                                resource: wgpu::BindingResource::Sampler(sampler),
-                            },
-                            wgpu::BindGroupEntry {
-                                binding: 3,
-                                resource: wgpu::BindingResource::TextureView(
-                                    resources.transmittance_view,
-                                ),
-                            },
-                            wgpu::BindGroupEntry {
-                                binding: 4,
-                                resource: wgpu::BindingResource::TextureView(moon.view),
-                            },
-                            wgpu::BindGroupEntry {
-                                binding: 5,
-                                resource: wgpu::BindingResource::TextureView(starbox.view),
-                            },
-                        ],
-                    }),
-                    None => ctx.device.create_bind_group(&wgpu::BindGroupDescriptor {
-                        label: Some("Skybox BG (Procedural)"),
-                        layout,
-                        entries: &[
-                            wgpu::BindGroupEntry {
-                                binding: 0,
-                                resource: resources.bake_params_buffer.as_entire_binding(),
-                            },
-                            wgpu::BindGroupEntry {
-                                binding: 1,
-                                resource: wgpu::BindingResource::TextureView(
-                                    resources.sky_view_view,
-                                ),
-                            },
-                            wgpu::BindGroupEntry {
-                                binding: 2,
-                                resource: wgpu::BindingResource::Sampler(sampler),
-                            },
-                            wgpu::BindGroupEntry {
-                                binding: 3,
-                                resource: wgpu::BindingResource::TextureView(
-                                    resources.transmittance_view,
-                                ),
-                            },
-                            wgpu::BindGroupEntry {
-                                binding: 4,
-                                resource: wgpu::BindingResource::TextureView(moon.view),
-                            },
-                        ],
-                    }),
-                };
-                ctx.global_bind_group_cache.insert(key, bg.clone());
-                bg
+            let builder = ctx
+                .build_bind_group(layout, label)
+                .bind_tracked_buffer(0, resources.bake_params_buffer)
+                .bind_tracked_texture_view(1, resources.sky_view_view)
+                .bind_tracked_sampler(2, sampler)
+                .bind_tracked_texture_view(3, resources.transmittance_view)
+                .bind_texture_view_with_id(4, &moon_view, moon_resource_key);
+
+            match procedural_starbox_binding {
+                Some((starbox_view, _, starbox_resource_key)) => builder
+                    .bind_texture_view_with_id(5, &starbox_view, starbox_resource_key)
+                    .build(),
+                None => builder.build(),
             }
+            .clone()
         } else if variant.needs_texture() {
-            let Some(tex_view) = texture_view else {
+            let Some((tex_view, tex_view_resource_key)) = texture_view else {
                 self.current_bind_group = None;
                 self.current_pipeline = None;
                 return;
             };
 
-            let tex_view_key = std::ptr::from_ref::<wgpu::TextureView>(tex_view) as u64;
-            let key = BindGroupKey::new(layout_id)
-                .with_resource(bg_uniforms_id)
-                .with_resource(tex_view_key)
-                .with_resource(sampler_id as u64);
-
-            if let Some(cached) = ctx.global_bind_group_cache.get(&key) {
-                cached.clone()
-            } else {
+            let (params_buffer, params_buffer_id) = {
                 let params_gpu = bg_uniforms
                     .gpu_handle()
                     .and_then(|h| ctx.resource_manager.gpu_buffers.get(h))
                     .expect("Skybox params GPU buffer must exist");
+                (params_gpu.buffer.clone(), params_gpu.id)
+            };
 
-                let bg = ctx.device.create_bind_group(&wgpu::BindGroupDescriptor {
-                    label: Some("Skybox BG (Texture)"),
-                    layout,
-                    entries: &[
-                        wgpu::BindGroupEntry {
-                            binding: 0,
-                            resource: params_gpu.buffer.as_entire_binding(),
-                        },
-                        wgpu::BindGroupEntry {
-                            binding: 1,
-                            resource: wgpu::BindingResource::TextureView(tex_view),
-                        },
-                        wgpu::BindGroupEntry {
-                            binding: 2,
-                            resource: wgpu::BindingResource::Sampler(sampler),
-                        },
-                    ],
-                });
-                ctx.global_bind_group_cache.insert(key, bg.clone());
-                bg
-            }
+            ctx.build_bind_group(layout, Some("Skybox BG (Texture)"))
+                .bind_raw_buffer(0, RawBufferBinding::new(&params_buffer, params_buffer_id, None))
+                .bind_texture_view_with_id(1, &tex_view, tex_view_resource_key)
+                .bind_sampler_with_id(2, &sampler, sampler_id as u64)
+                .build()
+                .clone()
         } else {
-            let key = BindGroupKey::new(layout_id).with_resource(bg_uniforms_id);
-
-            if let Some(cached) = ctx.global_bind_group_cache.get(&key) {
-                cached.clone()
-            } else {
+            let (params_buffer, params_buffer_id) = {
                 let params_gpu = bg_uniforms
                     .gpu_handle()
                     .and_then(|h| ctx.resource_manager.gpu_buffers.get(h))
                     .expect("Skybox params GPU buffer must exist");
+                (params_gpu.buffer.clone(), params_gpu.id)
+            };
 
-                let bg = ctx.device.create_bind_group(&wgpu::BindGroupDescriptor {
-                    label: Some("Skybox BG (Gradient)"),
-                    layout,
-                    entries: &[wgpu::BindGroupEntry {
-                        binding: 0,
-                        resource: params_gpu.buffer.as_entire_binding(),
-                    }],
-                });
-                ctx.global_bind_group_cache.insert(key, bg.clone());
-                bg
-            }
+            ctx.build_bind_group(layout, Some("Skybox BG (Gradient)"))
+                .bind_raw_buffer(0, RawBufferBinding::new(&params_buffer, params_buffer_id, None))
+                .build()
+                .clone()
         };
 
         self.current_bind_group = Some(bind_group.clone());
@@ -913,7 +822,7 @@ impl SkyboxFeature {
                 ProceduralStarboxKind::None
             },
             procedural_moon_texture: if variant == SkyboxVariant::Procedural {
-                procedural_moon.is_some_and(|moon| moon.enabled)
+                procedural_moon_enabled
             } else {
                 false
             },

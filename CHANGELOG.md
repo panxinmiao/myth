@@ -5,6 +5,10 @@
 ### Major Changes
 - Added a **procedural sky system** powered by a physically-based atmospheric scattering model (Hillaire 2020), enabling high-quality real-time sky rendering with procedural celestial bodies (sun, moon, and stars).
 Also includes a `DayNightCycle` component for dynamic time progression, automatically syncing the trajectories of the sun, moon, and star field with scene parameters.
+- Overhauled the **RenderGraph** into a more complete typed-resource system: buffers and textures are now first-class SSA resources with unified dependency tracking, zero-cost typed node handles, and transient power-of-two buffer pooling for aggressive VRAM reuse.
+Also migrated major compute-heavy paths such as 3D Gaussian Splatting, atmosphere baking, and PMREM/environment processing onto RDG-managed buffer lifetimes, removing ad-hoc side channels around the graph.
+- Introduced a unified cached bind-group assembly API across `PrepareContext` and `ExtractContext`, centered around a fluent builder plus `myth_bind_group!`.
+This removes large amounts of repetitive WGPU boilerplate, unifies static and transient bind-group construction, and guarantees that RDG buffer bindings clamp pooled physical allocations back to their logical resource sizes.
 
 ### Refactored / Changed
 - Removed the `compose_frame` method from `AppHandler` and narrowed its responsibility to providing only a high-level render trigger, with full render graph orchestration delegated to the `Engine`.
