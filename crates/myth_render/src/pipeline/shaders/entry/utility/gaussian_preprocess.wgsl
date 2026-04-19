@@ -167,7 +167,8 @@ fn main(@builtin(global_invocation_id) gid: vec3<u32>) {
     let viewport = camera.viewport;
     let vertex = gaussians[idx];
     let a = unpack2x16float(vertex.opacity);
-    let xyz = vec3<f32>(vertex.x, vertex.y, vertex.z);
+    // flip y and z to convert from right-handed to left-handed coordinate system
+    let xyz = vec3<f32>(vertex.x, -vertex.y, -vertex.z);
     var opacity = a.x;
 
     let camspace = camera.view * vec4<f32>(xyz, 1.0);
@@ -182,7 +183,11 @@ fn main(@builtin(global_invocation_id) gid: vec3<u32>) {
         return;
     }
 
-    let cov_sparse = cov_coefs(idx);
+    let raw_c = cov_coefs(idx);
+    let cov_sparse = array<f32, 6>(
+        raw_c[0], -raw_c[1], -raw_c[2], // c00, -c01, -c02
+        raw_c[3], raw_c[4], raw_c[5]    // c11, c12, c22
+    );
     let scaling = render_settings.gaussian_scaling;
 
     let Vrk = mat3x3<f32>(
@@ -233,8 +238,11 @@ fn main(@builtin(global_invocation_id) gid: vec3<u32>) {
 
     let camera_pos = camera.view_inv[3].xyz;
     let dir = normalize(xyz - camera_pos);
+
+    let dir_colmap = vec3<f32>(dir.x, -dir.y, -dir.z);
+
     let color = vec4<f32>(
-        max(vec3<f32>(0.0), evaluate_sh(dir, idx, render_settings.max_sh_deg)),
+        max(vec3<f32>(0.0), evaluate_sh(dir_colmap, idx, render_settings.max_sh_deg)),
         opacity
     );
 
