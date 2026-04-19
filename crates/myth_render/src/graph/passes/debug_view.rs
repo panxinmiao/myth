@@ -31,7 +31,6 @@
 use bytemuck::{Pod, Zeroable};
 use wgpu::CommandEncoder;
 
-use crate::core::binding::BindGroupKey;
 use crate::core::gpu::{CommonSampler, Tracked};
 use crate::graph::composer::GraphBuilderContext;
 use crate::graph::core::{
@@ -346,29 +345,9 @@ struct DebugViewPassNode<'a> {
 
 impl<'a> PassNode<'a> for DebugViewPassNode<'a> {
     fn prepare(&mut self, ctx: &mut PrepareContext<'a>) {
-        let PrepareContext {
-            views,
-            global_bind_group_cache: cache,
-            device,
-            ..
-        } = ctx;
-        let device = *device;
-        let source_view = views.get_texture_view(self.source_tex);
-        let layout = self.transient_layout;
-
-        let key = BindGroupKey::new(layout.id()).with_resource(source_view.id());
-
-        let bg = cache.get_or_create_bg(key, || {
-            device.create_bind_group(&wgpu::BindGroupDescriptor {
-                label: Some("DebugView Transient BG (G1)"),
-                layout,
-                entries: &[wgpu::BindGroupEntry {
-                    binding: 0,
-                    resource: wgpu::BindingResource::TextureView(source_view),
-                }],
-            })
-        });
-        self.transient_bg = Some(bg);
+        self.transient_bg = Some(crate::myth_bind_group!(ctx, self.transient_layout, Some("DebugView Transient BG (G1)"), [
+            0 => self.source_tex,
+        ]));
     }
 
     fn execute(&self, ctx: &ExecuteContext, encoder: &mut CommandEncoder) {

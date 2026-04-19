@@ -1,15 +1,15 @@
 //! PMREM generation pass.
 //!
 //! Reads the persistent scene-owned base cubemap and writes the persistent
-//! scene-owned PMREM cubemap. The pass owns only command dispatch during
-//! execute; all static bind groups and parameter buffers are prepared during
-//! the feature extract stage.
+//! scene-owned PMREM cubemap. Parameter buffers are prepared during the
+//! feature extract stage, while mip-specific bind groups are rebuilt in the
+//! RDG prepare phase so they participate in the shared transient binding path.
 
 use rustc_hash::FxHashMap;
 
 use crate::core::gpu::Tracked;
 use crate::graph::composer::GraphBuilderContext;
-use crate::graph::core::TextureNodeId;
+use crate::graph::core::{BufferDesc, BufferNodeId, PrepareContext, TextureNodeId};
 use crate::graph::core::context::{ExecuteContext, ExtractContext};
 use crate::graph::core::node::PassNode;
 use crate::pipeline::{
@@ -31,16 +31,15 @@ struct IblSceneState {
     pmrem_view_ids: Vec<u64>,
     pmrem_size: u32,
     pipeline_variant: IblPipelineVariant,
-    _params_buffers: Vec<Tracked<wgpu::Buffer>>,
-    source_bind_groups: Vec<wgpu::BindGroup>,
-    dest_bind_groups: Vec<wgpu::BindGroup>,
+    params_buffers: Vec<Tracked<wgpu::Buffer>>,
+    pmrem_views: Vec<Tracked<wgpu::TextureView>>,
     last_used_frame: u64,
 }
 
 pub struct IblComputeFeature {
     pipeline_ids: FxHashMap<IblPipelineVariant, ComputePipelineId>,
-    source_layout: wgpu::BindGroupLayout,
-    dest_layout: wgpu::BindGroupLayout,
+    source_layout: Tracked<wgpu::BindGroupLayout>,
+    dest_layout: Tracked<wgpu::BindGroupLayout>,
     sampler: wgpu::Sampler,
     scene_states: FxHashMap<u32, IblSceneState>,
 }
@@ -48,7 +47,7 @@ pub struct IblComputeFeature {
 impl IblComputeFeature {
     #[must_use]
     pub fn new(device: &wgpu::Device) -> Self {
-        let source_layout = device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
+        let source_layout = Tracked::new(device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
             label: Some("IBL Source BGL"),
             entries: &[
                 wgpu::BindGroupLayoutEntry {
@@ -78,9 +77,9 @@ impl IblComputeFeature {
                     count: None,
                 },
             ],
-        });
+        }));
 
-        let dest_layout = device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
+        let dest_layout = Tracked::new(device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
             label: Some("IBL Dest BGL"),
             entries: &[wgpu::BindGroupLayoutEntry {
                 binding: 0,
@@ -92,7 +91,7 @@ impl IblComputeFeature {
                 },
                 count: None,
             }],
-        });
+        }));
 
         let sampler = device.create_sampler(&wgpu::SamplerDescriptor {
             label: Some("IBL PMREM Sampler"),
@@ -156,8 +155,7 @@ impl IblComputeFeature {
             let roughness_denominator = (mip_levels.saturating_sub(1)).max(1) as f32;
 
             let mut params_buffers = Vec::with_capacity(mip_levels as usize);
-            let mut source_bind_groups = Vec::with_capacity(mip_levels as usize);
-            let mut dest_bind_groups = Vec::with_capacity(mip_levels as usize);
+            let mut pmrem_views = Vec::with_capacity(mip_levels as usize);
 
             for mip in 0..mip_levels {
                 let mip_size = (pmrem_size >> mip).max(1);
@@ -177,37 +175,8 @@ impl IblComputeFeature {
                 ctx.queue
                     .write_buffer(&buffer, 0, bytemuck::cast_slice(&params));
 
-                let source_bg = ctx.device.create_bind_group(&wgpu::BindGroupDescriptor {
-                    label: Some("IBL Source BG"),
-                    layout: &self.source_layout,
-                    entries: &[
-                        wgpu::BindGroupEntry {
-                            binding: 0,
-                            resource: wgpu::BindingResource::TextureView(&gpu_env.base_cube_view),
-                        },
-                        wgpu::BindGroupEntry {
-                            binding: 1,
-                            resource: wgpu::BindingResource::Sampler(&self.sampler),
-                        },
-                        wgpu::BindGroupEntry {
-                            binding: 2,
-                            resource: buffer.as_entire_binding(),
-                        },
-                    ],
-                });
-
-                let dest_bg = ctx.device.create_bind_group(&wgpu::BindGroupDescriptor {
-                    label: Some("IBL Dest BG"),
-                    layout: &self.dest_layout,
-                    entries: &[wgpu::BindGroupEntry {
-                        binding: 0,
-                        resource: wgpu::BindingResource::TextureView(gpu_env.pmrem_mip_view(mip)),
-                    }],
-                });
-
                 params_buffers.push(buffer);
-                source_bind_groups.push(source_bg);
-                dest_bind_groups.push(dest_bg);
+                pmrem_views.push(gpu_env.pmrem_mip_view(mip).clone());
             }
 
             self.scene_states.insert(
@@ -217,9 +186,8 @@ impl IblComputeFeature {
                     pmrem_view_ids,
                     pmrem_size,
                     pipeline_variant,
-                    _params_buffers: params_buffers,
-                    source_bind_groups,
-                    dest_bind_groups,
+                    params_buffers,
+                    pmrem_views,
                     last_used_frame: frame_index,
                 },
             );
@@ -305,29 +273,83 @@ impl IblComputeFeature {
             .pipeline_ids
             .get(&state.pipeline_variant)
             .map(|&id| ctx.pipeline_cache.get_compute_pipeline(id));
+        let source_layout = &self.source_layout;
+        let dest_layout = &self.dest_layout;
+        let sampler = &self.sampler;
+        let params_desc = BufferDesc::new(
+            std::mem::size_of::<[f32; 4]>() as u64,
+            wgpu::BufferUsages::UNIFORM | wgpu::BufferUsages::COPY_DST,
+        );
 
         ctx.graph.add_pass("IBL_Compute", |builder| {
             builder.read_texture(base_cube);
             builder.write_texture(pmrem);
+
+            let mut mip_states = Vec::with_capacity(state.params_buffers.len());
+            for (params_buffer, pmrem_mip_view) in
+                state.params_buffers.iter().zip(state.pmrem_views.iter())
+            {
+                let params_buffer =
+                    builder.read_external_buffer("IBL_Params", params_desc, params_buffer);
+                mip_states.push(IblMipState {
+                    params_buffer,
+                    pmrem_mip_view,
+                    source_bg: None,
+                    dest_bg: None,
+                });
+            }
+            let mip_states = builder.graph.alloc_slice_mut(&mip_states);
+
             let node = IblComputePassNode {
+                base_cube,
                 pmrem,
                 pipeline,
-                source_bind_groups: &state.source_bind_groups,
-                dest_bind_groups: &state.dest_bind_groups,
+                source_layout,
+                dest_layout,
+                sampler,
+                mips: mip_states,
             };
             (node, ())
         });
     }
 }
 
-struct IblComputePassNode<'a> {
-    pmrem: TextureNodeId,
-    pipeline: Option<&'a wgpu::ComputePipeline>,
-    source_bind_groups: &'a [wgpu::BindGroup],
-    dest_bind_groups: &'a [wgpu::BindGroup],
+#[derive(Clone, Copy)]
+struct IblMipState<'a> {
+    params_buffer: BufferNodeId,
+    pmrem_mip_view: &'a Tracked<wgpu::TextureView>,
+    source_bg: Option<&'a wgpu::BindGroup>,
+    dest_bg: Option<&'a wgpu::BindGroup>,
 }
 
-impl PassNode<'_> for IblComputePassNode<'_> {
+struct IblComputePassNode<'a> {
+    base_cube: TextureNodeId,
+    pmrem: TextureNodeId,
+    pipeline: Option<&'a wgpu::ComputePipeline>,
+    source_layout: &'a Tracked<wgpu::BindGroupLayout>,
+    dest_layout: &'a Tracked<wgpu::BindGroupLayout>,
+    sampler: &'a wgpu::Sampler,
+    mips: &'a mut [IblMipState<'a>],
+}
+
+impl<'a> PassNode<'a> for IblComputePassNode<'a> {
+    fn prepare(&mut self, ctx: &mut PrepareContext<'a>) {
+        for mip in self.mips.iter_mut() {
+            mip.source_bg = Some(
+                ctx.build_bind_group(self.source_layout, Some("IBL Source BG"))
+                    .bind_texture(0, self.base_cube)
+                    .bind_sampler(1, self.sampler)
+                    .bind_buffer(2, mip.params_buffer)
+                    .build(),
+            );
+            mip.dest_bg = Some(
+                ctx.build_bind_group(self.dest_layout, Some("IBL Dest BG"))
+                    .bind_tracked_texture_view(0, mip.pmrem_mip_view)
+                    .build(),
+            );
+        }
+    }
+
     fn execute(&self, ctx: &ExecuteContext, encoder: &mut wgpu::CommandEncoder) {
         let pipeline = self.pipeline.expect("IBL pipeline must exist");
         let mip_levels = ctx.get_texture(self.pmrem).mip_level_count();
@@ -339,8 +361,8 @@ impl PassNode<'_> for IblComputePassNode<'_> {
                 timestamp_writes: None,
             });
             cpass.set_pipeline(pipeline);
-            cpass.set_bind_group(0, &self.source_bind_groups[mip], &[]);
-            cpass.set_bind_group(1, &self.dest_bind_groups[mip], &[]);
+            cpass.set_bind_group(0, self.mips[mip].source_bg.expect("IBL source BG missing"), &[]);
+            cpass.set_bind_group(1, self.mips[mip].dest_bg.expect("IBL dest BG missing"), &[]);
             let group_count = mip_size.div_ceil(8);
             cpass.dispatch_workgroups(group_count, group_count, 6);
         }

@@ -30,7 +30,6 @@
 //!    after the Opaque resolve.
 
 use crate::HDR_TEXTURE_FORMAT;
-use crate::core::binding::BindGroupKey;
 use crate::core::gpu::{CommonSampler, Tracked};
 use crate::graph::composer::GraphBuilderContext;
 use crate::graph::core::{
@@ -210,38 +209,10 @@ struct MsaaSyncPassNode<'a> {
 
 impl<'a> PassNode<'a> for MsaaSyncPassNode<'a> {
     fn prepare(&mut self, ctx: &mut PrepareContext<'a>) {
-        let PrepareContext {
-            views,
-            global_bind_group_cache: cache,
-            device,
-            sampler_registry,
-            ..
-        } = ctx;
-        let device = *device;
-        let src_view = views.get_texture_view(self.src_hdr);
-        let sampler = sampler_registry.get_common(CommonSampler::LinearClamp);
-
-        let key = BindGroupKey::new(self.layout.id()).with_resource(src_view.id());
-        // .with_resource(CommonSampler::LinearClamp as u64);
-
-        let layout = &**self.layout;
-        let bg = cache.get_or_create_bg(key, || {
-            device.create_bind_group(&wgpu::BindGroupDescriptor {
-                label: Some("MSAA Sync BindGroup"),
-                layout,
-                entries: &[
-                    wgpu::BindGroupEntry {
-                        binding: 0,
-                        resource: wgpu::BindingResource::TextureView(src_view),
-                    },
-                    wgpu::BindGroupEntry {
-                        binding: 1,
-                        resource: wgpu::BindingResource::Sampler(sampler),
-                    },
-                ],
-            })
-        });
-        self.transient_bg = Some(bg);
+        self.transient_bg = Some(crate::myth_bind_group!(ctx, self.layout, Some("MSAA Sync BindGroup"), [
+            0 => self.src_hdr,
+            1 => CommonSampler::LinearClamp,
+        ]));
     }
 
     fn execute(&self, ctx: &ExecuteContext, encoder: &mut CommandEncoder) {

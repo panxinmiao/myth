@@ -17,12 +17,11 @@
 //! | 1       | `sampler`     | Nearest clamp sampler   |
 //! | 2       | `uniform`     | CasParams { sharpness } |
 
-use crate::core::binding::BindGroupKey;
 use crate::core::gpu::{CommonSampler, Tracked};
 use crate::graph::composer::GraphBuilderContext;
 use crate::graph::core::{
-    ExecuteContext, ExtractContext, PassNode, PrepareContext, RenderTargetOps, TextureDesc,
-    TextureNodeId,
+    BufferDesc, BufferNodeId, ExecuteContext, ExtractContext, PassNode, PrepareContext,
+    RenderTargetOps, TextureDesc, TextureNodeId,
 };
 use crate::pipeline::{
     ColorTargetKey, FullscreenPipelineKey, RenderPipelineId, ShaderCompilationOptions, ShaderSource,
@@ -200,6 +199,14 @@ impl CasFeature {
 
         ctx.graph.add_pass("CAS_Pass", |builder| {
             builder.read_texture(input_color);
+            let params_buffer = builder.read_external_buffer(
+                "CAS_Params",
+                BufferDesc::new(
+                    16,
+                    wgpu::BufferUsages::UNIFORM | wgpu::BufferUsages::COPY_DST,
+                ),
+                params_buffer,
+            );
             let output = builder.create_texture("CAS_Output", cas_desc);
 
             let node = CasPassNode {
@@ -224,51 +231,17 @@ struct CasPassNode<'a> {
     output_tex: TextureNodeId,
     pipeline: &'a wgpu::RenderPipeline,
     layout: &'a Tracked<wgpu::BindGroupLayout>,
-    params_buffer: &'a Tracked<wgpu::Buffer>,
+    params_buffer: BufferNodeId,
     transient_bg: Option<&'a wgpu::BindGroup>,
 }
 
 impl<'a> PassNode<'a> for CasPassNode<'a> {
     fn prepare(&mut self, ctx: &mut PrepareContext<'a>) {
-        let PrepareContext {
-            views,
-            global_bind_group_cache: cache,
-            device,
-            sampler_registry,
-            ..
-        } = ctx;
-        let device = *device;
-        let input_view = views.get_texture_view(self.input_tex);
-        let sampler = sampler_registry.get_common(CommonSampler::NearestClamp);
-
-        let key = BindGroupKey::new(self.layout.id())
-            .with_resource(input_view.id())
-            // .with_resource(CommonSampler::NearestClamp as u64)
-            .with_resource(self.params_buffer.id());
-
-        let layout = self.layout;
-        let params_buf = self.params_buffer;
-        let bg = cache.get_or_create_bg(key, || {
-            device.create_bind_group(&wgpu::BindGroupDescriptor {
-                label: Some("CAS BindGroup"),
-                layout,
-                entries: &[
-                    wgpu::BindGroupEntry {
-                        binding: 0,
-                        resource: wgpu::BindingResource::TextureView(input_view),
-                    },
-                    wgpu::BindGroupEntry {
-                        binding: 1,
-                        resource: wgpu::BindingResource::Sampler(sampler),
-                    },
-                    wgpu::BindGroupEntry {
-                        binding: 2,
-                        resource: params_buf.as_entire_binding(),
-                    },
-                ],
-            })
-        });
-        self.transient_bg = Some(bg);
+        self.transient_bg = Some(crate::myth_bind_group!(ctx, self.layout, Some("CAS BindGroup"), [
+            0 => self.input_tex,
+            1 => CommonSampler::NearestClamp,
+            2 => self.params_buffer,
+        ]));
     }
 
     fn execute(&self, ctx: &ExecuteContext, encoder: &mut CommandEncoder) {

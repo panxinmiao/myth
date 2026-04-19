@@ -38,7 +38,6 @@
 //! - **temp_blur TransientTexture**: `Rgba16Float`, same size as scene colour.
 
 use crate::HDR_TEXTURE_FORMAT;
-use crate::core::binding::BindGroupKey;
 use crate::core::gpu::{CommonSampler, Tracked};
 use crate::graph::composer::GraphBuilderContext;
 use crate::graph::core::{
@@ -376,71 +375,15 @@ struct SsssHorizontalNode<'a> {
 
 impl<'a> PassNode<'a> for SsssHorizontalNode<'a> {
     fn prepare(&mut self, ctx: &mut PrepareContext<'a>) {
-        let PrepareContext {
-            views,
-            global_bind_group_cache: cache,
-            device,
-            sampler_registry,
-            ..
-        } = ctx;
-        let device = *device;
-
-        let depth_view = views.get_texture_view(self.depth_in);
-        let color_in_view = views.get_texture_view(self.scene_color_in);
-        let normal_view = views.get_texture_view(self.normal_in);
-        let feature_view = views.get_texture_view(self.feature_id);
-        let specular_view = views.get_texture_view(self.specular_tex);
-
-        let layout = self.bind_group_layout;
-        let sampler = sampler_registry.get_common(CommonSampler::LinearClamp);
-        let profiles_buffer = self.profiles_buffer;
-
-        let key = BindGroupKey::new(layout.id())
-            .with_resource(color_in_view.id())
-            .with_resource(normal_view.id())
-            .with_resource(depth_view.id())
-            .with_resource(profiles_buffer.id())
-            // .with_resource(CommonSampler::LinearClamp as u64)
-            .with_resource(feature_view.id())
-            .with_resource(specular_view.id());
-
-        let bg = cache.get_or_create_bg(key, || {
-            device.create_bind_group(&wgpu::BindGroupDescriptor {
-                label: Some("SSSS Horizontal Bind Group"),
-                layout,
-                entries: &[
-                    wgpu::BindGroupEntry {
-                        binding: 0,
-                        resource: wgpu::BindingResource::TextureView(color_in_view),
-                    },
-                    wgpu::BindGroupEntry {
-                        binding: 1,
-                        resource: wgpu::BindingResource::TextureView(normal_view),
-                    },
-                    wgpu::BindGroupEntry {
-                        binding: 2,
-                        resource: wgpu::BindingResource::TextureView(depth_view),
-                    },
-                    wgpu::BindGroupEntry {
-                        binding: 3,
-                        resource: profiles_buffer.as_entire_binding(),
-                    },
-                    wgpu::BindGroupEntry {
-                        binding: 4,
-                        resource: wgpu::BindingResource::Sampler(sampler),
-                    },
-                    wgpu::BindGroupEntry {
-                        binding: 5,
-                        resource: wgpu::BindingResource::TextureView(feature_view),
-                    },
-                    wgpu::BindGroupEntry {
-                        binding: 6,
-                        resource: wgpu::BindingResource::TextureView(specular_view),
-                    },
-                ],
-            })
-        });
-        self.bind_group = Some(bg);
+        self.bind_group = Some(crate::myth_bind_group!(ctx, self.bind_group_layout, Some("SSSS Horizontal Bind Group"), [
+            0 => self.scene_color_in,
+            1 => self.normal_in,
+            2 => self.depth_in,
+            3 => self.profiles_buffer,
+            4 => CommonSampler::LinearClamp,
+            5 => self.feature_id,
+            6 => self.specular_tex,
+        ]));
     }
 
     fn execute(&self, ctx: &ExecuteContext, encoder: &mut wgpu::CommandEncoder) {
@@ -489,71 +432,15 @@ struct SsssVerticalNode<'a> {
 
 impl<'a> PassNode<'a> for SsssVerticalNode<'a> {
     fn prepare(&mut self, ctx: &mut PrepareContext<'a>) {
-        let PrepareContext {
-            views,
-            global_bind_group_cache: cache,
-            device,
-            sampler_registry,
-            ..
-        } = ctx;
-        let device = *device;
-
-        let depth_view = views.get_texture_view(self.depth_in);
-        let temp_blur_view = views.get_texture_view(self.temp_blur);
-        let normal_view = views.get_texture_view(self.normal_in);
-        let feature_view = views.get_texture_view(self.feature_id);
-        let specular_view = views.get_texture_view(self.specular_tex);
-
-        let layout = self.bind_group_layout;
-        let sampler = sampler_registry.get_common(CommonSampler::LinearClamp);
-        let profiles_buffer = self.profiles_buffer;
-
-        let key = BindGroupKey::new(layout.id())
-            .with_resource(temp_blur_view.id())
-            .with_resource(normal_view.id())
-            .with_resource(depth_view.id())
-            .with_resource(profiles_buffer.id())
-            // .with_resource(CommonSampler::LinearClamp as u64)
-            .with_resource(feature_view.id())
-            .with_resource(specular_view.id());
-
-        let bg = cache.get_or_create_bg(key, || {
-            device.create_bind_group(&wgpu::BindGroupDescriptor {
-                label: Some("SSSS Vertical Bind Group"),
-                layout,
-                entries: &[
-                    wgpu::BindGroupEntry {
-                        binding: 0,
-                        resource: wgpu::BindingResource::TextureView(temp_blur_view),
-                    },
-                    wgpu::BindGroupEntry {
-                        binding: 1,
-                        resource: wgpu::BindingResource::TextureView(normal_view),
-                    },
-                    wgpu::BindGroupEntry {
-                        binding: 2,
-                        resource: wgpu::BindingResource::TextureView(depth_view),
-                    },
-                    wgpu::BindGroupEntry {
-                        binding: 3,
-                        resource: profiles_buffer.as_entire_binding(),
-                    },
-                    wgpu::BindGroupEntry {
-                        binding: 4,
-                        resource: wgpu::BindingResource::Sampler(sampler),
-                    },
-                    wgpu::BindGroupEntry {
-                        binding: 5,
-                        resource: wgpu::BindingResource::TextureView(feature_view),
-                    },
-                    wgpu::BindGroupEntry {
-                        binding: 6,
-                        resource: wgpu::BindingResource::TextureView(specular_view),
-                    },
-                ],
-            })
-        });
-        self.bind_group = Some(bg);
+        self.bind_group = Some(crate::myth_bind_group!(ctx, self.bind_group_layout, Some("SSSS Vertical Bind Group"), [
+            0 => self.temp_blur,
+            1 => self.normal_in,
+            2 => self.depth_in,
+            3 => self.profiles_buffer,
+            4 => CommonSampler::LinearClamp,
+            5 => self.feature_id,
+            6 => self.specular_tex,
+        ]));
     }
 
     fn execute(&self, ctx: &ExecuteContext, encoder: &mut wgpu::CommandEncoder) {

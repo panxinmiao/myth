@@ -28,12 +28,11 @@
 //! | 7       | `uniform`                 | TaaParams                    |
 
 use crate::HDR_TEXTURE_FORMAT;
-use crate::core::binding::BindGroupKey;
 use crate::core::gpu::{CommonSampler, Tracked};
 use crate::graph::composer::GraphBuilderContext;
 use crate::graph::core::{
-    ExecuteContext, ExtractContext, PassNode, PrepareContext, RenderTargetOps, TextureDesc,
-    TextureNodeId,
+    BufferDesc, BufferNodeId, ExecuteContext, ExtractContext, PassNode, PrepareContext,
+    RenderTargetOps, TextureDesc, TextureNodeId,
 };
 use crate::graph::passes::utils::CopyTextureNode;
 use crate::pipeline::{
@@ -378,6 +377,14 @@ impl TaaFeature {
             builder.read_texture(active_color);
             builder.read_texture(velocity_buffer);
             builder.read_texture(scene_depth);
+            let params_buffer = builder.read_external_buffer(
+                "TAA_Params",
+                BufferDesc::new(
+                    16,
+                    wgpu::BufferUsages::UNIFORM | wgpu::BufferUsages::COPY_DST,
+                ),
+                params_buffer,
+            );
 
             let color_desc = TextureDesc::new_2d(
                 history_view.texture().width(),
@@ -468,83 +475,22 @@ struct TaaPassNode<'a> {
     history_depth_view: &'a Tracked<wgpu::TextureView>,
     pipeline: &'a wgpu::RenderPipeline,
     layout: &'a Tracked<wgpu::BindGroupLayout>,
-    params_buffer: &'a Tracked<wgpu::Buffer>,
+    params_buffer: BufferNodeId,
     transient_bg: Option<&'a wgpu::BindGroup>,
 }
 
 impl<'a> PassNode<'a> for TaaPassNode<'a> {
     fn prepare(&mut self, ctx: &mut PrepareContext<'a>) {
-        let PrepareContext {
-            views,
-            global_bind_group_cache: cache,
-            device,
-            sampler_registry,
-            ..
-        } = ctx;
-        let device = *device;
-
-        let current_view = views.get_texture_view(self.current_color);
-        let velocity_view = views.get_texture_view(self.velocity);
-        let depth_view = views.get_texture_view(self.scene_depth);
-        let linear_sampler = sampler_registry.get_common(CommonSampler::LinearClamp);
-        let nearest_sampler = sampler_registry.get_common(CommonSampler::NearestClamp);
-
-        let key = BindGroupKey::new(self.layout.id())
-            .with_resource(current_view.id())
-            .with_resource(self.history_view.id())
-            .with_resource(velocity_view.id())
-            .with_resource(depth_view.id())
-            .with_resource(self.history_depth_view.id())
-            // .with_resource(CommonSampler::LinearClamp as u64)
-            // .with_resource(CommonSampler::NearestClamp as u64)
-            .with_resource(self.params_buffer.id());
-
-        let layout = self.layout;
-        let history_view = self.history_view;
-        let history_depth_view = self.history_depth_view;
-        let params_buf = self.params_buffer;
-
-        let bg = cache.get_or_create_bg(key, || {
-            device.create_bind_group(&wgpu::BindGroupDescriptor {
-                label: Some("TAA BindGroup"),
-                layout,
-                entries: &[
-                    wgpu::BindGroupEntry {
-                        binding: 0,
-                        resource: wgpu::BindingResource::TextureView(current_view),
-                    },
-                    wgpu::BindGroupEntry {
-                        binding: 1,
-                        resource: wgpu::BindingResource::TextureView(history_view),
-                    },
-                    wgpu::BindGroupEntry {
-                        binding: 2,
-                        resource: wgpu::BindingResource::TextureView(velocity_view),
-                    },
-                    wgpu::BindGroupEntry {
-                        binding: 3,
-                        resource: wgpu::BindingResource::TextureView(depth_view),
-                    },
-                    wgpu::BindGroupEntry {
-                        binding: 4,
-                        resource: wgpu::BindingResource::TextureView(history_depth_view),
-                    },
-                    wgpu::BindGroupEntry {
-                        binding: 5,
-                        resource: wgpu::BindingResource::Sampler(linear_sampler),
-                    },
-                    wgpu::BindGroupEntry {
-                        binding: 6,
-                        resource: wgpu::BindingResource::Sampler(nearest_sampler),
-                    },
-                    wgpu::BindGroupEntry {
-                        binding: 7,
-                        resource: params_buf.as_entire_binding(),
-                    },
-                ],
-            })
-        });
-        self.transient_bg = Some(bg);
+        self.transient_bg = Some(crate::myth_bind_group!(ctx, self.layout, Some("TAA BindGroup"), [
+            0 => self.current_color,
+            1 => self.history_view,
+            2 => self.velocity,
+            3 => self.scene_depth,
+            4 => self.history_depth_view,
+            5 => CommonSampler::LinearClamp,
+            6 => CommonSampler::NearestClamp,
+            7 => self.params_buffer,
+        ]));
     }
 
     fn execute(&self, ctx: &ExecuteContext, encoder: &mut wgpu::CommandEncoder) {

@@ -1,8 +1,9 @@
+use std::marker::PhantomData;
+
 use crate::core::ResourceManager;
 use crate::core::WgpuContext;
 use crate::core::binding::{BindGroupKey, GlobalBindGroupCache};
-use crate::core::gpu::MipmapGenerator;
-use crate::core::gpu::{SamplerRegistry, SystemTextures, Tracked};
+use crate::core::gpu::{CommonSampler, MipmapGenerator, SamplerRegistry, SystemTextures, Tracked};
 use crate::graph::frame::{BakedRenderLists, RenderLists};
 use crate::graph::{ExtractedScene, RenderState};
 use crate::pipeline::{PipelineCache, ShaderManager};
@@ -54,14 +55,13 @@ pub struct ExtractContext<'a> {
 ///
 /// After the render graph has been compiled and transient resources allocated,
 /// each pass's [`PassNode::prepare`] receives this context to assemble
-/// `wgpu::BindGroup`s that reference RDG-managed transient textures.
+/// `wgpu::BindGroup`s that reference RDG-managed textures and buffers.
 ///
 /// This context is deliberately kept **pure**: it provides only the GPU
 /// device, transient view resolver, sampler registry, and the global bind
-/// group cache.  All persistent GPU resources (pipelines, material buffers,
-/// geometry buffers) must be resolved during the earlier
-/// `Feature::extract_and_prepare()` phase and carried into the PassNode
-/// as lightweight cloned handles.
+/// group cache.  Passes then build bind groups through
+/// [`PrepareContext::build_bind_group`], which centralizes cache-key
+/// construction and safe logical-size truncation for RDG buffers.
 pub struct PrepareContext<'a> {
     /// Transient resource view resolver.
     pub views: ViewResolver<'a>,
@@ -80,6 +80,422 @@ pub struct PrepareContext<'a> {
 pub struct ViewResolver<'a> {
     pub resources: &'a [ResourceRecord],
     pub pool: &'a mut TransientPool,
+}
+
+#[inline]
+fn common_sampler_resource_id(sampler: CommonSampler) -> u64 {
+    0x434f_4d4d_4f4e_0000 | sampler as u64
+}
+
+/// Explicit binding wrapper for raw buffers that are not RDG-managed.
+///
+/// Callers must provide a stable `resource_id` for cache-key construction.
+/// Use this path sparingly: `BufferNodeId` remains the preferred API because
+/// it applies logical-size truncation automatically for pooled transient
+/// buffers.
+#[derive(Clone, Copy)]
+pub struct RawBufferBinding<'a> {
+    buffer: &'a wgpu::Buffer,
+    resource_id: u64,
+    size: Option<wgpu::BufferSize>,
+}
+
+impl<'a> RawBufferBinding<'a> {
+    #[must_use]
+    pub fn new(
+        buffer: &'a wgpu::Buffer,
+        resource_id: u64,
+        size: Option<wgpu::BufferSize>,
+    ) -> Self {
+        Self {
+            buffer,
+            resource_id,
+            size,
+        }
+    }
+
+    #[must_use]
+    pub fn whole(buffer: &'a wgpu::Buffer, resource_id: u64) -> Self {
+        Self::new(buffer, resource_id, None)
+    }
+}
+
+/// Explicit binding wrapper for raw texture views that are not stored as
+/// `Tracked<wgpu::TextureView>`.
+#[derive(Clone, Copy)]
+pub struct RawTextureViewBinding<'a> {
+    view: &'a wgpu::TextureView,
+    resource_id: u64,
+}
+
+impl<'a> RawTextureViewBinding<'a> {
+    #[must_use]
+    pub const fn new(view: &'a wgpu::TextureView, resource_id: u64) -> Self {
+        Self { view, resource_id }
+    }
+}
+
+/// Explicit binding wrapper for raw samplers that do not come from the
+/// shared sampler registry.
+#[derive(Clone, Copy)]
+pub struct RawSamplerBinding<'a> {
+    sampler: &'a wgpu::Sampler,
+    resource_id: u64,
+}
+
+impl<'a> RawSamplerBinding<'a> {
+    #[must_use]
+    pub const fn new(sampler: &'a wgpu::Sampler, resource_id: u64) -> Self {
+        Self {
+            sampler,
+            resource_id,
+        }
+    }
+}
+
+/// Unified binding descriptor used by [`BindGroupBuilder`] to hide the
+/// differences between RDG-managed and raw WGPU resources.
+#[derive(Clone, Copy)]
+pub enum GraphBinding<'a> {
+    Buffer(BufferNodeId),
+    Texture(TextureNodeId),
+    TrackedBuffer(&'a Tracked<wgpu::Buffer>),
+    TrackedTextureView(&'a Tracked<wgpu::TextureView>),
+    RawBuffer(RawBufferBinding<'a>),
+    RawTextureView(RawTextureViewBinding<'a>),
+    Sampler(RawSamplerBinding<'a>),
+    CommonSampler(CommonSampler),
+}
+
+/// Fluent bind-group builder for RDG prepare-time code.
+///
+/// The critical safety property lives in [`Self::bind_buffer`]: binding a
+/// `BufferNodeId` always resolves through [`ViewResolver::get_buffer_binding`],
+/// which truncates the physical pooled allocation to the resource's logical
+/// size. This prevents shaders from reading stale bytes past the logical end
+/// of a transient power-of-two buffer allocation.
+pub struct BindGroupBuilder<'ctx, 'frame> {
+    views: &'ctx ViewResolver<'frame>,
+    cache: &'ctx mut GlobalBindGroupCache,
+    device: &'ctx wgpu::Device,
+    sampler_registry: &'ctx SamplerRegistry,
+    layout: &'ctx wgpu::BindGroupLayout,
+    label: Option<&'static str>,
+    key: BindGroupKey,
+    entries: Vec<wgpu::BindGroupEntry<'ctx>>,
+    _marker: PhantomData<&'frame wgpu::BindGroup>,
+}
+
+impl<'ctx, 'frame> BindGroupBuilder<'ctx, 'frame> {
+    fn new(
+        views: &'ctx ViewResolver<'frame>,
+        cache: &'ctx mut GlobalBindGroupCache,
+        device: &'ctx wgpu::Device,
+        sampler_registry: &'ctx SamplerRegistry,
+        layout: &'ctx Tracked<wgpu::BindGroupLayout>,
+        label: Option<&'static str>,
+    ) -> Self {
+        Self {
+            views,
+            cache,
+            device,
+            sampler_registry,
+            layout,
+            label,
+            key: BindGroupKey::new(layout.id()),
+            entries: Vec::with_capacity(8),
+            _marker: PhantomData,
+        }
+    }
+
+    fn push_entry(
+        mut self,
+        binding: u32,
+        resource_id: u64,
+        resource: wgpu::BindingResource<'ctx>,
+    ) -> Self {
+        self.key = self.key.with_resource(resource_id);
+        self.entries.push(wgpu::BindGroupEntry { binding, resource });
+        self
+    }
+
+    #[must_use]
+    pub fn bind_graph_binding(self, binding: u32, resource: GraphBinding<'ctx>) -> Self {
+        match resource {
+            GraphBinding::Buffer(id) => self.bind_buffer(binding, id),
+            GraphBinding::Texture(id) => self.bind_texture(binding, id),
+            GraphBinding::TrackedBuffer(buffer) => self.bind_tracked_buffer(binding, buffer),
+            GraphBinding::TrackedTextureView(view) => self.bind_tracked_texture_view(binding, view),
+            GraphBinding::RawBuffer(buffer) => self.bind_raw_buffer(binding, buffer),
+            GraphBinding::RawTextureView(view) => self.bind_raw_texture_view(binding, view),
+            GraphBinding::Sampler(sampler) => self.bind_raw_sampler(binding, sampler),
+            GraphBinding::CommonSampler(sampler) => self.bind_common_sampler(binding, sampler),
+        }
+    }
+
+    #[must_use]
+    pub fn bind_resource<R>(self, binding: u32, resource: R) -> Self
+    where
+        R: BindableResource<'ctx, 'frame>,
+    {
+        resource.add_to_builder(binding, self)
+    }
+
+    /// Binds an RDG buffer with automatic logical-size truncation.
+    #[must_use]
+    pub fn bind_buffer(self, binding: u32, id: BufferNodeId) -> Self {
+        let resource_id = self.views.get_physical_buffer_uid(id);
+        let resource = wgpu::BindingResource::Buffer(self.views.get_buffer_binding(id));
+        self.push_entry(binding, resource_id, resource)
+    }
+
+    #[must_use]
+    pub fn bind_texture(self, binding: u32, id: TextureNodeId) -> Self {
+        let view = self.views.get_texture_view(id);
+        self.push_entry(
+            binding,
+            view.id(),
+            wgpu::BindingResource::TextureView(view),
+        )
+    }
+
+    #[must_use]
+    pub fn bind_tracked_buffer(self, binding: u32, buffer: &'ctx Tracked<wgpu::Buffer>) -> Self {
+        self.push_entry(binding, buffer.id(), buffer.as_entire_binding())
+    }
+
+    #[must_use]
+    pub fn bind_tracked_texture_view(
+        self,
+        binding: u32,
+        view: &'ctx Tracked<wgpu::TextureView>,
+    ) -> Self {
+        self.push_entry(binding, view.id(), wgpu::BindingResource::TextureView(view))
+    }
+
+    #[must_use]
+    pub fn bind_raw_buffer(self, binding: u32, raw: RawBufferBinding<'ctx>) -> Self {
+        self.push_entry(
+            binding,
+            raw.resource_id,
+            wgpu::BindingResource::Buffer(wgpu::BufferBinding {
+                buffer: raw.buffer,
+                offset: 0,
+                size: raw.size,
+            }),
+        )
+    }
+
+    #[must_use]
+    pub fn bind_raw_texture_view(
+        self,
+        binding: u32,
+        raw: RawTextureViewBinding<'ctx>,
+    ) -> Self {
+        self.push_entry(
+            binding,
+            raw.resource_id,
+            wgpu::BindingResource::TextureView(raw.view),
+        )
+    }
+
+    #[must_use]
+    pub fn bind_texture_view_with_id(
+        self,
+        binding: u32,
+        view: &'ctx wgpu::TextureView,
+        resource_id: u64,
+    ) -> Self {
+        self.bind_raw_texture_view(binding, RawTextureViewBinding::new(view, resource_id))
+    }
+
+    #[must_use]
+    pub fn bind_raw_sampler(self, binding: u32, raw: RawSamplerBinding<'ctx>) -> Self {
+        self.push_entry(
+            binding,
+            raw.resource_id,
+            wgpu::BindingResource::Sampler(raw.sampler),
+        )
+    }
+
+    #[must_use]
+    pub fn bind_sampler_with_id(
+        self,
+        binding: u32,
+        sampler: &'ctx wgpu::Sampler,
+        resource_id: u64,
+    ) -> Self {
+        self.bind_raw_sampler(binding, RawSamplerBinding::new(sampler, resource_id))
+    }
+
+    #[must_use]
+    pub fn bind_sampler(self, binding: u32, sampler: &'ctx wgpu::Sampler) -> Self {
+        self.bind_sampler_with_id(
+            binding,
+            sampler,
+            (std::ptr::from_ref(sampler) as *const wgpu::Sampler as usize) as u64,
+        )
+    }
+
+    #[must_use]
+    pub fn bind_common_sampler(self, binding: u32, sampler: CommonSampler) -> Self {
+        let resource_id = common_sampler_resource_id(sampler);
+        let resource = wgpu::BindingResource::Sampler(self.sampler_registry.get_common(sampler));
+        self.push_entry(binding, resource_id, resource)
+    }
+
+    /// Builds or reuses a cached bind group and returns a frame-stable
+    /// reference suitable for storing on a `PassNode<'frame>`.
+    #[must_use]
+    pub fn build(self) -> &'frame wgpu::BindGroup {
+        let Self {
+            cache,
+            device,
+            layout,
+            label,
+            key,
+            entries,
+            ..
+        } = self;
+
+        cache.get_or_create_bg(key, || {
+            device.create_bind_group(&wgpu::BindGroupDescriptor {
+                label,
+                layout,
+                entries: &entries,
+            })
+        })
+    }
+}
+
+/// Trait implemented by resources that can append themselves to a
+/// [`BindGroupBuilder`].
+pub trait BindableResource<'ctx, 'frame>: Sized {
+    fn add_to_builder(
+        self,
+        binding: u32,
+        builder: BindGroupBuilder<'ctx, 'frame>,
+    ) -> BindGroupBuilder<'ctx, 'frame>;
+}
+
+impl<'ctx, 'frame> BindableResource<'ctx, 'frame> for GraphBinding<'ctx> {
+    fn add_to_builder(
+        self,
+        binding: u32,
+        builder: BindGroupBuilder<'ctx, 'frame>,
+    ) -> BindGroupBuilder<'ctx, 'frame> {
+        builder.bind_graph_binding(binding, self)
+    }
+}
+
+impl<'ctx, 'frame> BindableResource<'ctx, 'frame> for BufferNodeId {
+    fn add_to_builder(
+        self,
+        binding: u32,
+        builder: BindGroupBuilder<'ctx, 'frame>,
+    ) -> BindGroupBuilder<'ctx, 'frame> {
+        builder.bind_buffer(binding, self)
+    }
+}
+
+impl<'ctx, 'frame> BindableResource<'ctx, 'frame> for TextureNodeId {
+    fn add_to_builder(
+        self,
+        binding: u32,
+        builder: BindGroupBuilder<'ctx, 'frame>,
+    ) -> BindGroupBuilder<'ctx, 'frame> {
+        builder.bind_texture(binding, self)
+    }
+}
+
+impl<'ctx, 'frame> BindableResource<'ctx, 'frame> for &'ctx Tracked<wgpu::Buffer> {
+    fn add_to_builder(
+        self,
+        binding: u32,
+        builder: BindGroupBuilder<'ctx, 'frame>,
+    ) -> BindGroupBuilder<'ctx, 'frame> {
+        builder.bind_tracked_buffer(binding, self)
+    }
+}
+
+impl<'ctx, 'frame> BindableResource<'ctx, 'frame> for &'ctx Tracked<wgpu::TextureView> {
+    fn add_to_builder(
+        self,
+        binding: u32,
+        builder: BindGroupBuilder<'ctx, 'frame>,
+    ) -> BindGroupBuilder<'ctx, 'frame> {
+        builder.bind_tracked_texture_view(binding, self)
+    }
+}
+
+impl<'ctx, 'frame> BindableResource<'ctx, 'frame> for RawBufferBinding<'ctx> {
+    fn add_to_builder(
+        self,
+        binding: u32,
+        builder: BindGroupBuilder<'ctx, 'frame>,
+    ) -> BindGroupBuilder<'ctx, 'frame> {
+        builder.bind_raw_buffer(binding, self)
+    }
+}
+
+impl<'ctx, 'frame> BindableResource<'ctx, 'frame> for RawTextureViewBinding<'ctx> {
+    fn add_to_builder(
+        self,
+        binding: u32,
+        builder: BindGroupBuilder<'ctx, 'frame>,
+    ) -> BindGroupBuilder<'ctx, 'frame> {
+        builder.bind_raw_texture_view(binding, self)
+    }
+}
+
+impl<'ctx, 'frame> BindableResource<'ctx, 'frame> for RawSamplerBinding<'ctx> {
+    fn add_to_builder(
+        self,
+        binding: u32,
+        builder: BindGroupBuilder<'ctx, 'frame>,
+    ) -> BindGroupBuilder<'ctx, 'frame> {
+        builder.bind_raw_sampler(binding, self)
+    }
+}
+
+impl<'ctx, 'frame> BindableResource<'ctx, 'frame> for CommonSampler {
+    fn add_to_builder(
+        self,
+        binding: u32,
+        builder: BindGroupBuilder<'ctx, 'frame>,
+    ) -> BindGroupBuilder<'ctx, 'frame> {
+        builder.bind_common_sampler(binding, self)
+    }
+}
+
+#[macro_export]
+macro_rules! myth_bind_group {
+    ($ctx:expr, $layout:expr, $label:expr, [ $( $binding:expr => $res:expr ),* $(,)? ]) => {{
+        let builder = $ctx.build_bind_group($layout, $label);
+        $(
+            let builder = builder.bind_resource($binding, $res);
+        )*
+        builder.build()
+    }};
+}
+
+impl<'frame> PrepareContext<'frame> {
+    /// Starts a cached bind-group build using RDG-safe resource resolution.
+    #[must_use]
+    pub fn build_bind_group<'ctx>(
+        &'ctx mut self,
+        layout: &'ctx Tracked<wgpu::BindGroupLayout>,
+        label: Option<&'static str>,
+    ) -> BindGroupBuilder<'ctx, 'frame> {
+        BindGroupBuilder::new(
+            &self.views,
+            self.global_bind_group_cache,
+            self.device,
+            self.sampler_registry,
+            layout,
+            label,
+        )
+    }
 }
 
 #[must_use]

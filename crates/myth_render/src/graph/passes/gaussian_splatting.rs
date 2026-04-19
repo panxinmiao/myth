@@ -17,7 +17,6 @@ use std::sync::Arc;
 use glam::Vec3A;
 
 use crate::HDR_TEXTURE_FORMAT;
-use crate::core::binding::BindGroupKey;
 use crate::core::gpu::Tracked;
 use crate::graph::composer::GraphBuilderContext;
 use crate::graph::core::{
@@ -957,205 +956,57 @@ struct GaussianComputePassNode<'a> {
 
 impl<'a> PassNode<'a> for GaussianComputePassNode<'a> {
     fn prepare(&mut self, ctx: &mut PrepareContext<'a>) {
-        let PrepareContext {
-            views,
-            global_bind_group_cache: cache,
-            device,
-            queue,
-            ..
-        } = ctx;
-        let device = *device;
-
         for cloud in self.clouds.iter_mut() {
-            queue.write_buffer(
-                views.get_buffer(cloud.buffers.sort_infos_buf),
+            ctx.queue.write_buffer(
+                ctx.views.get_buffer(cloud.buffers.sort_infos_buf),
                 0,
                 bytemuck::bytes_of(&cloud.buffers.sort_infos_init),
             );
-            queue.write_buffer(
-                views.get_buffer(cloud.buffers.sort_dispatch_buf),
+            ctx.queue.write_buffer(
+                ctx.views.get_buffer(cloud.buffers.sort_dispatch_buf),
                 0,
                 bytemuck::bytes_of(&cloud.buffers.sort_dispatch_init),
             );
-            queue.write_buffer(
-                views.get_buffer(cloud.buffers.draw_indirect_buf),
+            ctx.queue.write_buffer(
+                ctx.views.get_buffer(cloud.buffers.draw_indirect_buf),
                 0,
                 bytemuck::bytes_of(&cloud.buffers.draw_indirect_init),
             );
 
-            let camera_uniform = views.get_tracked_buffer(cloud.buffers.camera_uniform_buf);
-            let gaussian = views.get_tracked_buffer(cloud.buffers.gaussian_buf);
-            let sh = views.get_tracked_buffer(cloud.buffers.sh_buf);
-            let splat_2d = views.get_tracked_buffer(cloud.buffers.splat_2d_buf);
-            let sort_infos = views.get_tracked_buffer(cloud.buffers.sort_infos_buf);
-            let sort_dispatch = views.get_tracked_buffer(cloud.buffers.sort_dispatch_buf);
-            let sort_internal = views.get_tracked_buffer(cloud.buffers.sort_internal_buf);
-            let sort_depths_a = views.get_tracked_buffer(cloud.buffers.sort_depths_a_buf);
-            let sort_depths_b = views.get_tracked_buffer(cloud.buffers.sort_depths_b_buf);
-            let sort_indices_a = views.get_tracked_buffer(cloud.buffers.sort_indices_a_buf);
-            let sort_indices_b = views.get_tracked_buffer(cloud.buffers.sort_indices_b_buf);
-            let render_settings = views.get_tracked_buffer(cloud.buffers.render_settings_buf);
+            let preprocess_bg0 = ctx
+                .build_bind_group(self.preprocess_layout_g0, Some("GS Preprocess BG0"))
+                .bind_buffer(0, cloud.buffers.camera_uniform_buf)
+                .build();
 
-            let preprocess_bg0 = cache.get_or_create_bg(
-                BindGroupKey::new(self.preprocess_layout_g0.id())
-                    .with_resource(camera_uniform.id()),
-                || {
-                    device.create_bind_group(&wgpu::BindGroupDescriptor {
-                        label: Some("GS Preprocess BG0"),
-                        layout: self.preprocess_layout_g0,
-                        entries: &[wgpu::BindGroupEntry {
-                            binding: 0,
-                            resource: wgpu::BindingResource::Buffer(
-                                views.get_buffer_binding(cloud.buffers.camera_uniform_buf),
-                            ),
-                        }],
-                    })
-                },
-            );
+            let preprocess_bg1 = ctx
+                .build_bind_group(self.preprocess_layout_g1, Some("GS Preprocess BG1"))
+                .bind_buffer(0, cloud.buffers.gaussian_buf)
+                .bind_buffer(1, cloud.buffers.sh_buf)
+                .bind_buffer(2, cloud.buffers.splat_2d_buf)
+                .build();
 
-            let preprocess_bg1 = cache.get_or_create_bg(
-                BindGroupKey::new(self.preprocess_layout_g1.id())
-                    .with_resource(gaussian.id())
-                    .with_resource(sh.id())
-                    .with_resource(splat_2d.id()),
-                || {
-                    device.create_bind_group(&wgpu::BindGroupDescriptor {
-                        label: Some("GS Preprocess BG1"),
-                        layout: self.preprocess_layout_g1,
-                        entries: &[
-                            wgpu::BindGroupEntry {
-                                binding: 0,
-                                resource: wgpu::BindingResource::Buffer(
-                                    views.get_buffer_binding(cloud.buffers.gaussian_buf),
-                                ),
-                            },
-                            wgpu::BindGroupEntry {
-                                binding: 1,
-                                resource: wgpu::BindingResource::Buffer(
-                                    views.get_buffer_binding(cloud.buffers.sh_buf),
-                                ),
-                            },
-                            wgpu::BindGroupEntry {
-                                binding: 2,
-                                resource: wgpu::BindingResource::Buffer(
-                                    views.get_buffer_binding(cloud.buffers.splat_2d_buf),
-                                ),
-                            },
-                        ],
-                    })
-                },
-            );
+            let preprocess_bg2 = ctx
+                .build_bind_group(self.preprocess_layout_g2, Some("GS Preprocess BG2"))
+                .bind_buffer(0, cloud.buffers.sort_infos_buf)
+                .bind_buffer(1, cloud.buffers.sort_depths_a_buf)
+                .bind_buffer(2, cloud.buffers.sort_indices_a_buf)
+                .bind_buffer(3, cloud.buffers.sort_dispatch_buf)
+                .build();
 
-            let preprocess_bg2 = cache.get_or_create_bg(
-                BindGroupKey::new(self.preprocess_layout_g2.id())
-                    .with_resource(sort_infos.id())
-                    .with_resource(sort_depths_a.id())
-                    .with_resource(sort_indices_a.id())
-                    .with_resource(sort_dispatch.id()),
-                || {
-                    device.create_bind_group(&wgpu::BindGroupDescriptor {
-                        label: Some("GS Preprocess BG2"),
-                        layout: self.preprocess_layout_g2,
-                        entries: &[
-                            wgpu::BindGroupEntry {
-                                binding: 0,
-                                resource: wgpu::BindingResource::Buffer(
-                                    views.get_buffer_binding(cloud.buffers.sort_infos_buf),
-                                ),
-                            },
-                            wgpu::BindGroupEntry {
-                                binding: 1,
-                                resource: wgpu::BindingResource::Buffer(
-                                    views.get_buffer_binding(cloud.buffers.sort_depths_a_buf),
-                                ),
-                            },
-                            wgpu::BindGroupEntry {
-                                binding: 2,
-                                resource: wgpu::BindingResource::Buffer(
-                                    views.get_buffer_binding(cloud.buffers.sort_indices_a_buf),
-                                ),
-                            },
-                            wgpu::BindGroupEntry {
-                                binding: 3,
-                                resource: wgpu::BindingResource::Buffer(
-                                    views.get_buffer_binding(cloud.buffers.sort_dispatch_buf),
-                                ),
-                            },
-                        ],
-                    })
-                },
-            );
+            let preprocess_bg3 = ctx
+                .build_bind_group(self.preprocess_layout_g3, Some("GS Preprocess BG3"))
+                .bind_buffer(0, cloud.buffers.render_settings_buf)
+                .build();
 
-            let preprocess_bg3 = cache.get_or_create_bg(
-                BindGroupKey::new(self.preprocess_layout_g3.id())
-                    .with_resource(render_settings.id()),
-                || {
-                    device.create_bind_group(&wgpu::BindGroupDescriptor {
-                        label: Some("GS Preprocess BG3"),
-                        layout: self.preprocess_layout_g3,
-                        entries: &[wgpu::BindGroupEntry {
-                            binding: 0,
-                            resource: wgpu::BindingResource::Buffer(
-                                views.get_buffer_binding(cloud.buffers.render_settings_buf),
-                            ),
-                        }],
-                    })
-                },
-            );
-
-            let sort_bg = cache.get_or_create_bg(
-                BindGroupKey::new(self.sort_layout.id())
-                    .with_resource(sort_infos.id())
-                    .with_resource(sort_internal.id())
-                    .with_resource(sort_depths_a.id())
-                    .with_resource(sort_depths_b.id())
-                    .with_resource(sort_indices_a.id())
-                    .with_resource(sort_indices_b.id()),
-                || {
-                    device.create_bind_group(&wgpu::BindGroupDescriptor {
-                        label: Some("GS Sort BG"),
-                        layout: self.sort_layout,
-                        entries: &[
-                            wgpu::BindGroupEntry {
-                                binding: 0,
-                                resource: wgpu::BindingResource::Buffer(
-                                    views.get_buffer_binding(cloud.buffers.sort_infos_buf),
-                                ),
-                            },
-                            wgpu::BindGroupEntry {
-                                binding: 1,
-                                resource: wgpu::BindingResource::Buffer(
-                                    views.get_buffer_binding(cloud.buffers.sort_internal_buf),
-                                ),
-                            },
-                            wgpu::BindGroupEntry {
-                                binding: 2,
-                                resource: wgpu::BindingResource::Buffer(
-                                    views.get_buffer_binding(cloud.buffers.sort_depths_a_buf),
-                                ),
-                            },
-                            wgpu::BindGroupEntry {
-                                binding: 3,
-                                resource: wgpu::BindingResource::Buffer(
-                                    views.get_buffer_binding(cloud.buffers.sort_depths_b_buf),
-                                ),
-                            },
-                            wgpu::BindGroupEntry {
-                                binding: 4,
-                                resource: wgpu::BindingResource::Buffer(
-                                    views.get_buffer_binding(cloud.buffers.sort_indices_a_buf),
-                                ),
-                            },
-                            wgpu::BindGroupEntry {
-                                binding: 5,
-                                resource: wgpu::BindingResource::Buffer(
-                                    views.get_buffer_binding(cloud.buffers.sort_indices_b_buf),
-                                ),
-                            },
-                        ],
-                    })
-                },
-            );
+            let sort_bg = ctx
+                .build_bind_group(self.sort_layout, Some("GS Sort BG"))
+                .bind_buffer(0, cloud.buffers.sort_infos_buf)
+                .bind_buffer(1, cloud.buffers.sort_internal_buf)
+                .bind_buffer(2, cloud.buffers.sort_depths_a_buf)
+                .bind_buffer(3, cloud.buffers.sort_depths_b_buf)
+                .bind_buffer(4, cloud.buffers.sort_indices_a_buf)
+                .bind_buffer(5, cloud.buffers.sort_indices_b_buf)
+                .build();
 
             cloud.preprocess_bg0 = Some(preprocess_bg0);
             cloud.preprocess_bg1 = Some(preprocess_bg1);
@@ -1280,45 +1131,13 @@ struct GaussianRenderPassNode<'a> {
 
 impl<'a> PassNode<'a> for GaussianRenderPassNode<'a> {
     fn prepare(&mut self, ctx: &mut PrepareContext<'a>) {
-        let PrepareContext {
-            views,
-            global_bind_group_cache: cache,
-            device,
-            ..
-        } = ctx;
-        let device = *device;
-
         for cloud in self.clouds.iter_mut() {
-            let splat_2d = views.get_tracked_buffer(cloud.buffers.splat_2d_buf);
-            let sort_indices = views.get_tracked_buffer(cloud.buffers.sort_indices_a_buf);
-
-            let render_bg = cache.get_or_create_bg(
-                BindGroupKey::new(self.render_layout.id())
-                    .with_resource(splat_2d.id())
-                    .with_resource(sort_indices.id()),
-                || {
-                    device.create_bind_group(&wgpu::BindGroupDescriptor {
-                        label: Some("GS Render BG"),
-                        layout: self.render_layout,
-                        entries: &[
-                            wgpu::BindGroupEntry {
-                                binding: 0,
-                                resource: wgpu::BindingResource::Buffer(
-                                    views.get_buffer_binding(cloud.buffers.splat_2d_buf),
-                                ),
-                            },
-                            wgpu::BindGroupEntry {
-                                binding: 1,
-                                resource: wgpu::BindingResource::Buffer(
-                                    views.get_buffer_binding(cloud.buffers.sort_indices_a_buf),
-                                ),
-                            },
-                        ],
-                    })
-                },
+            cloud.render_bg = Some(
+                ctx.build_bind_group(self.render_layout, Some("GS Render BG"))
+                    .bind_buffer(0, cloud.buffers.splat_2d_buf)
+                    .bind_buffer(1, cloud.buffers.sort_indices_a_buf)
+                    .build(),
             );
-
-            cloud.render_bg = Some(render_bg);
         }
     }
 

@@ -5,7 +5,6 @@
 //! - **`FxaaPassNode`** (ephemeral per-frame): carries lightweight IDs and
 //!   a transient bind-group slot.  Created by `FxaaFeature::add_to_graph()`.
 
-use crate::core::binding::BindGroupKey;
 use crate::core::gpu::{CommonSampler, Tracked};
 use crate::graph::composer::GraphBuilderContext;
 use crate::graph::core::{
@@ -177,38 +176,10 @@ struct FxaaPassNode<'a> {
 
 impl<'a> PassNode<'a> for FxaaPassNode<'a> {
     fn prepare(&mut self, ctx: &mut PrepareContext<'a>) {
-        let PrepareContext {
-            views,
-            global_bind_group_cache: cache,
-            device,
-            sampler_registry,
-            ..
-        } = ctx;
-        let device = *device;
-        let input_view = views.get_texture_view(self.input_tex);
-        let sampler = sampler_registry.get_common(CommonSampler::LinearClamp);
-
-        let key = BindGroupKey::new(self.layout.id()).with_resource(input_view.id());
-        // .with_resource(CommonSampler::LinearClamp as u64);
-
-        let layout = self.layout;
-        let bg = cache.get_or_create_bg(key, || {
-            device.create_bind_group(&wgpu::BindGroupDescriptor {
-                label: Some("FXAA BindGroup"),
-                layout,
-                entries: &[
-                    wgpu::BindGroupEntry {
-                        binding: 0,
-                        resource: wgpu::BindingResource::TextureView(input_view),
-                    },
-                    wgpu::BindGroupEntry {
-                        binding: 1,
-                        resource: wgpu::BindingResource::Sampler(sampler),
-                    },
-                ],
-            })
-        });
-        self.transient_bg = Some(bg);
+        self.transient_bg = Some(crate::myth_bind_group!(ctx, self.layout, Some("FXAA BindGroup"), [
+            0 => self.input_tex,
+            1 => CommonSampler::LinearClamp,
+        ]));
     }
 
     fn execute(&self, ctx: &ExecuteContext, encoder: &mut CommandEncoder) {

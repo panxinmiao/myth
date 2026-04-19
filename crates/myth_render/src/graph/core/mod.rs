@@ -12,7 +12,9 @@ pub use arena::FrameArena;
 pub use blackboard::{CustomPassHook, GraphBlackboard, HookStage};
 pub use builder::PassBuilder;
 pub use context::{
-    ExecuteContext, ExtractContext, PrepareContext, ViewResolver, build_screen_bind_group,
+    BindGroupBuilder, BindableResource, ExecuteContext, ExtractContext, GraphBinding,
+    PrepareContext, RawBufferBinding, RawSamplerBinding, RawTextureViewBinding, ViewResolver,
+    build_screen_bind_group,
 };
 pub use graph::{GraphStorage, RenderGraph};
 pub use node::PassNode;
