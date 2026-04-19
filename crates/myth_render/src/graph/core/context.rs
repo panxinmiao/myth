@@ -11,7 +11,10 @@ use myth_scene::RenderCamera;
 use wgpu::{Device, Queue, TextureView};
 
 use super::allocator::{SubViewKey, TransientPool};
-use super::types::{RenderTargetOps, ResourceRecord, TextureNodeId};
+use super::types::{
+    BufferNodeId, GraphResourceType, RenderTargetOps, ResourceKind, ResourceNodeId, ResourceRecord,
+    TextureNodeId,
+};
 
 // ─── Extract Context (Feature Pre-RDG Phase) ────────────────────────────────
 
@@ -80,11 +83,36 @@ pub struct ViewResolver<'a> {
 }
 
 #[must_use]
-pub fn resolve_root_id(resources: &[ResourceRecord], mut id: TextureNodeId) -> TextureNodeId {
-    while let Some(parent) = resources[id.0 as usize].alias_of {
-        id = parent;
+pub fn resolve_root_id<T: GraphResourceType>(
+    resources: &[ResourceRecord],
+    mut id: ResourceNodeId<T>,
+) -> ResourceNodeId<T> {
+    while let Some(parent) = resources[id.index() as usize].alias_of {
+        id = ResourceNodeId::from_erased(parent);
     }
     id
+}
+
+#[inline]
+fn resolve_texture_resource(
+    resources: &[ResourceRecord],
+    id: TextureNodeId,
+) -> (TextureNodeId, &ResourceRecord) {
+    let root_id = resolve_root_id(resources, id);
+    let res = &resources[root_id.index() as usize];
+    debug_assert!(matches!(res.kind, ResourceKind::Texture { .. }));
+    (root_id, res)
+}
+
+#[inline]
+fn resolve_buffer_resource(
+    resources: &[ResourceRecord],
+    id: BufferNodeId,
+) -> (BufferNodeId, &ResourceRecord) {
+    let root_id = resolve_root_id(resources, id);
+    let res = &resources[root_id.index() as usize];
+    debug_assert!(matches!(res.kind, ResourceKind::Buffer { .. }));
+    (root_id, res)
 }
 
 impl ViewResolver<'_> {
@@ -94,13 +122,12 @@ impl ViewResolver<'_> {
     /// For transient resources, the **default** view is obtained from the pool.
     #[must_use]
     pub fn get_texture_view(&self, id: TextureNodeId) -> &Tracked<wgpu::TextureView> {
-        let root_id = resolve_root_id(self.resources, id);
-        let res = &self.resources[root_id.0 as usize];
+        let (_, res) = resolve_texture_resource(self.resources, id);
 
         if res.is_external {
             let ptr = res
-                .external_view_ptr
-                .expect("External resource missing view pointer!");
+                .external_texture_ptr()
+                .expect("External texture missing view pointer!");
             unsafe { &*ptr }
         } else {
             let physical_index = res.physical_index.expect("No physical memory!");
@@ -114,7 +141,7 @@ impl ViewResolver<'_> {
     /// the physical texture is the same and derived state can be reused.
     #[must_use]
     pub fn get_physical_texture_uid(&self, id: TextureNodeId) -> u64 {
-        let res = &self.resources[id.0 as usize];
+        let (_, res) = resolve_texture_resource(self.resources, id);
         let physical_index = res.physical_index.expect("No physical memory!");
         self.pool.get_uid(physical_index)
     }
@@ -124,7 +151,7 @@ impl ViewResolver<'_> {
     /// Useful for passes that need to create custom views (e.g. Bloom mip chain).
     #[must_use]
     pub fn get_texture(&self, id: TextureNodeId) -> &wgpu::Texture {
-        let res = &self.resources[id.0 as usize];
+        let (_, res) = resolve_texture_resource(self.resources, id);
         let physical_index = res.physical_index.expect("No physical memory!");
         self.pool.get_texture(physical_index)
     }
@@ -138,7 +165,7 @@ impl ViewResolver<'_> {
         id: TextureNodeId,
         key: &SubViewKey,
     ) -> &Tracked<wgpu::TextureView> {
-        let res = &self.resources[id.0 as usize];
+        let (_, res) = resolve_texture_resource(self.resources, id);
         let physical_index = res.physical_index.expect("No physical memory!");
         self.pool.get_or_create_sub_view(physical_index, key)
     }
@@ -149,9 +176,71 @@ impl ViewResolver<'_> {
         id: TextureNodeId,
         key: &SubViewKey,
     ) -> Option<&Tracked<wgpu::TextureView>> {
-        let res = &self.resources[id.0 as usize];
+        let (_, res) = resolve_texture_resource(self.resources, id);
         let physical_index = res.physical_index.expect("No physical memory!");
         self.pool.get_sub_view(physical_index, key)
+    }
+
+    /// Resolve a virtual [`BufferNodeId`] to its tracked physical buffer.
+    #[must_use]
+    pub fn get_tracked_buffer(&self, id: BufferNodeId) -> &Tracked<wgpu::Buffer> {
+        let (_, res) = resolve_buffer_resource(self.resources, id);
+
+        if res.is_external {
+            let ptr = res
+                .external_buffer_ptr()
+                .expect("External buffer missing pointer!");
+            unsafe { &*ptr }
+        } else {
+            let physical_index = res.physical_index.expect("No physical memory!");
+            self.pool.get_tracked_buffer(physical_index)
+        }
+    }
+
+    /// Returns the raw `wgpu::Buffer` handle for the given node.
+    #[must_use]
+    pub fn get_buffer(&self, id: BufferNodeId) -> &wgpu::Buffer {
+        let tracked = self.get_tracked_buffer(id);
+        tracked
+    }
+
+    /// Returns the physical-buffer allocation UID for the given node.
+    #[must_use]
+    pub fn get_physical_buffer_uid(&self, id: BufferNodeId) -> u64 {
+        let (_, res) = resolve_buffer_resource(self.resources, id);
+
+        if res.is_external {
+            self.get_tracked_buffer(id).id()
+        } else {
+            let physical_index = res.physical_index.expect("No physical memory!");
+            self.pool.get_buffer_uid(physical_index)
+        }
+    }
+
+    /// Returns a buffer binding truncated to the resource's logical size.
+    #[must_use]
+    pub fn get_buffer_binding(&self, id: BufferNodeId) -> wgpu::BufferBinding<'_> {
+        let (_, res) = resolve_buffer_resource(self.resources, id);
+        let desc = res.buffer_desc();
+        let size = desc.logical_binding_size().unwrap_or_else(|| {
+            panic!(
+                "Buffer '{}' has zero logical size and cannot be bound",
+                res.name
+            )
+        });
+
+        wgpu::BufferBinding {
+            buffer: self.get_buffer(id),
+            offset: 0,
+            size: Some(size),
+        }
+    }
+
+    /// Returns a buffer slice truncated to the resource's logical size.
+    #[must_use]
+    pub fn get_buffer_slice(&self, id: BufferNodeId) -> wgpu::BufferSlice<'_> {
+        let (_, res) = resolve_buffer_resource(self.resources, id);
+        self.get_buffer(id).slice(0..res.buffer_desc().logical_size)
     }
 
     /// Returns `true` if the resource has a physical GPU allocation.
@@ -163,8 +252,8 @@ impl ViewResolver<'_> {
     /// select leaner pipeline variants in [`PassNode::prepare`].
     #[inline]
     #[must_use]
-    pub fn is_resource_allocated(&self, id: TextureNodeId) -> bool {
-        let res = &self.resources[id.0 as usize];
+    pub fn is_resource_allocated<T: GraphResourceType>(&self, id: ResourceNodeId<T>) -> bool {
+        let res = &self.resources[id.index() as usize];
         res.is_external || res.physical_index.is_some()
     }
 }
@@ -273,13 +362,12 @@ impl ExecuteContext<'_> {
     /// For transient resources, the view is obtained from the physical pool.
     #[must_use]
     pub fn get_texture_view(&self, id: TextureNodeId) -> &TextureView {
-        let root_id = resolve_root_id(self.resources, id);
-        let res = &self.resources[root_id.0 as usize];
+        let (_, res) = resolve_texture_resource(self.resources, id);
 
         if res.is_external {
             let ptr = res
-                .external_view_ptr
-                .expect("External resource missing view pointer!");
+                .external_texture_ptr()
+                .expect("External texture missing view pointer!");
             unsafe { &*ptr }
         } else {
             let physical_index = res
@@ -292,13 +380,12 @@ impl ExecuteContext<'_> {
     /// Returns the [`Tracked<TextureView>`] for cache-key use during execute.
     #[must_use]
     pub fn get_tracked_texture_view(&self, id: TextureNodeId) -> &Tracked<wgpu::TextureView> {
-        let root_id = resolve_root_id(self.resources, id);
-        let res = &self.resources[root_id.0 as usize];
+        let (_, res) = resolve_texture_resource(self.resources, id);
 
         if res.is_external {
             let ptr = res
-                .external_view_ptr
-                .expect("External resource missing view pointer!");
+                .external_texture_ptr()
+                .expect("External texture missing view pointer!");
 
             (unsafe { &*ptr }) as _
         } else {
@@ -315,13 +402,12 @@ impl ExecuteContext<'_> {
     /// (e.g. per-layer shadow map views from a 2D-array texture).
     #[must_use]
     pub fn get_texture(&self, id: TextureNodeId) -> &wgpu::Texture {
-        let root_id = resolve_root_id(self.resources, id);
-        let res = &self.resources[root_id.0 as usize];
+        let (_, res) = resolve_texture_resource(self.resources, id);
 
         if res.is_external {
             let ptr = res
-                .external_view_ptr
-                .expect("External resource missing view pointer!");
+                .external_texture_ptr()
+                .expect("External texture missing view pointer!");
             let tracked_view = unsafe { &*ptr };
             tracked_view.texture()
         } else {
@@ -340,11 +426,10 @@ impl ExecuteContext<'_> {
     /// optimized out.
     #[must_use]
     pub fn try_get_texture_view(&self, id: TextureNodeId) -> Option<&TextureView> {
-        let root_id = resolve_root_id(self.resources, id);
-        let res = &self.resources[root_id.0 as usize];
+        let (_, res) = resolve_texture_resource(self.resources, id);
 
         if res.is_external {
-            let ptr = res.external_view_ptr?;
+            let ptr = res.external_texture_ptr()?;
             let tracked = unsafe { &*ptr };
             Some(&**tracked) // Deref Tracked 获得 wgpu::TextureView
         } else {
@@ -354,16 +439,81 @@ impl ExecuteContext<'_> {
 
     #[must_use]
     pub fn try_get_base_mip_view(&self, id: TextureNodeId) -> Option<&TextureView> {
-        let root_id = resolve_root_id(self.resources, id);
-        let res = &self.resources[root_id.0 as usize];
+        let (_, res) = resolve_texture_resource(self.resources, id);
 
         if res.is_external {
-            let ptr = res.external_view_ptr?;
+            let ptr = res.external_texture_ptr()?;
             let tracked = unsafe { &*ptr };
             Some(&**tracked) // Deref Tracked 获得 wgpu::TextureView
         } else {
             res.physical_index
                 .map(|idx| self.pool.get_base_mip_view(idx))
+        }
+    }
+
+    /// Returns the tracked buffer handle for the given node.
+    #[must_use]
+    pub fn get_tracked_buffer(&self, id: BufferNodeId) -> &Tracked<wgpu::Buffer> {
+        let (_, res) = resolve_buffer_resource(self.resources, id);
+
+        if res.is_external {
+            let ptr = res
+                .external_buffer_ptr()
+                .expect("External buffer missing pointer!");
+            unsafe { &*ptr }
+        } else {
+            let physical_index = res
+                .physical_index
+                .expect("Transient resource has no physical memory assigned!");
+            self.pool.get_tracked_buffer(physical_index)
+        }
+    }
+
+    /// Returns the raw [`wgpu::Buffer`] handle for the given node.
+    #[must_use]
+    pub fn get_buffer(&self, id: BufferNodeId) -> &wgpu::Buffer {
+        let tracked = self.get_tracked_buffer(id);
+        tracked
+    }
+
+    /// Returns a buffer binding truncated to the resource's logical size.
+    #[must_use]
+    pub fn get_buffer_binding(&self, id: BufferNodeId) -> wgpu::BufferBinding<'_> {
+        let (_, res) = resolve_buffer_resource(self.resources, id);
+        let desc = res.buffer_desc();
+        let size = desc.logical_binding_size().unwrap_or_else(|| {
+            panic!(
+                "Buffer '{}' has zero logical size and cannot be bound",
+                res.name
+            )
+        });
+
+        wgpu::BufferBinding {
+            buffer: self.get_buffer(id),
+            offset: 0,
+            size: Some(size),
+        }
+    }
+
+    /// Returns a buffer slice truncated to the resource's logical size.
+    #[must_use]
+    pub fn get_buffer_slice(&self, id: BufferNodeId) -> wgpu::BufferSlice<'_> {
+        let (_, res) = resolve_buffer_resource(self.resources, id);
+        self.get_buffer(id).slice(0..res.buffer_desc().logical_size)
+    }
+
+    /// Returns the physical-buffer allocation UID for the given node.
+    #[must_use]
+    pub fn get_physical_buffer_uid(&self, id: BufferNodeId) -> u64 {
+        let (_, res) = resolve_buffer_resource(self.resources, id);
+
+        if res.is_external {
+            self.get_tracked_buffer(id).id()
+        } else {
+            let physical_index = res
+                .physical_index
+                .expect("Transient resource has no physical memory assigned!");
+            self.pool.get_buffer_uid(physical_index)
         }
     }
 
@@ -373,8 +523,8 @@ impl ExecuteContext<'_> {
     /// available during the execute phase.
     #[inline]
     #[must_use]
-    pub fn is_resource_allocated(&self, id: TextureNodeId) -> bool {
-        let res = &self.resources[id.0 as usize];
+    pub fn is_resource_allocated<T: GraphResourceType>(&self, id: ResourceNodeId<T>) -> bool {
+        let res = &self.resources[id.index() as usize];
         res.is_external || res.physical_index.is_some()
     }
 
@@ -418,7 +568,7 @@ impl ExecuteContext<'_> {
     ) -> Option<wgpu::RenderPassColorAttachment<'_>> {
         let view = self.try_get_base_mip_view(id)?;
 
-        let res = &self.resources[id.0 as usize];
+        let res = &self.resources[id.index() as usize];
         let ti = self.current_timeline_index;
 
         let is_first_write = res.first_use == ti && !res.is_external && res.alias_of.is_none();
@@ -478,7 +628,7 @@ impl ExecuteContext<'_> {
         clear_depth: f32,
     ) -> Option<wgpu::RenderPassDepthStencilAttachment<'_>> {
         let view = self.try_get_texture_view(id)?;
-        let res = &self.resources[id.0 as usize];
+        let res = &self.resources[id.index() as usize];
         let ti = self.current_timeline_index;
 
         let load = if res.first_use == ti && res.alias_of.is_none() {

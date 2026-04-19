@@ -729,7 +729,7 @@ impl<'a> FrameComposer<'a> {
                         // Route through an intermediate LDR texture for FXAA input
                         let ldr =
                             ctx.graph
-                                .register_resource("LDR_Intermediate", surface_desc, false);
+                                .register_texture("LDR_Intermediate", surface_desc, false);
                         self.ctx.tone_map_pass.add_to_graph(ctx, active_color, ldr)
                     } else {
                         self.ctx

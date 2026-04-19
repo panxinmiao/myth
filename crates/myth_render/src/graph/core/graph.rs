@@ -4,11 +4,13 @@ use std::collections::BinaryHeap;
 use crate::core::gpu::Tracked;
 use crate::graph::core::allocator::TransientPool;
 use crate::graph::core::arena::FrameArena;
-use crate::graph::core::types::TextureDesc;
 
 use super::builder::PassBuilder;
 use super::node::{NodeSlot, PassNode, PassRecord};
-use super::types::{ResourceRecord, TextureNodeId};
+use super::types::{
+    BufferDesc, BufferNodeId, ErasedResourceNodeId, GraphResourceType, ResourceKind,
+    ResourceNodeId, ResourceRecord, TextureDesc, TextureNodeId,
+};
 use smallvec::SmallVec;
 use wgpu::Device;
 
@@ -327,14 +329,19 @@ impl GraphStorage {
         for (pass_idx, pass) in self.passes.iter().enumerate() {
             // External resources (read)
             for &read_id in &pass.reads {
-                let res = &self.resources[read_id.0 as usize];
+                let res = &self.resources[read_id.index() as usize];
                 if res.is_external && res.producer.is_none() {
-                    writeln!(&mut out, "    IN_{id} -.-> P{pass_idx};", id = read_id.0,).unwrap();
+                    writeln!(
+                        &mut out,
+                        "    IN_{id} -.-> P{pass_idx};",
+                        id = read_id.index(),
+                    )
+                    .unwrap();
                 }
             }
 
             for &write_id in &pass.writes {
-                let res = &self.resources[write_id.0 as usize];
+                let res = &self.resources[write_id.index() as usize];
 
                 for &consumer_idx in &res.consumers {
                     let edge_style = if res.alias_of.is_some() { "==>" } else { "-->" };
@@ -347,7 +354,7 @@ impl GraphStorage {
                 }
 
                 if res.consumers.is_empty() && res.is_external {
-                    writeln!(&mut out, "    P{pass_idx} --> OUT_{};", write_id.0).unwrap();
+                    writeln!(&mut out, "    P{pass_idx} --> OUT_{};", write_id.index()).unwrap();
                 }
             }
         }
@@ -420,6 +427,12 @@ impl<'a> RenderGraph<'a> {
         self.arena.alloc_slice_copy(src)
     }
 
+    /// Allocates a mutable copy of `src` on the per-frame arena.
+    #[inline]
+    pub(crate) fn alloc_slice_mut<T: Copy>(&self, src: &[T]) -> &'a mut [T] {
+        self.arena.alloc_slice_copy(src)
+    }
+
     // ─── Logical Grouping (Inspector) ────────────────────────────────
 
     #[cfg(feature = "rdg_inspector")]
@@ -434,27 +447,69 @@ impl<'a> RenderGraph<'a> {
         self.storage.current_group_stack.pop();
     }
 
-    /// Registers a named texture resource.
-    pub fn register_resource(
+    fn register_resource(
         &mut self,
         name: &'static str,
-        desc: TextureDesc,
+        kind: ResourceKind,
         is_external: bool,
-    ) -> TextureNodeId {
-        let id = TextureNodeId(self.storage.resources.len() as u32);
+        version: u32,
+    ) -> ErasedResourceNodeId {
+        let id = ErasedResourceNodeId::new(self.storage.resources.len() as u32, version);
         self.storage.resources.push(ResourceRecord {
             name,
-            desc,
             is_external,
             producer: None,
             consumers: smallvec::SmallVec::new(),
             first_use: usize::MAX,
             last_use: 0,
             physical_index: None,
-            external_view_ptr: None,
+            kind,
             alias_of: None,
         });
         id
+    }
+
+    /// Registers a named texture resource.
+    pub fn register_texture(
+        &mut self,
+        name: &'static str,
+        desc: TextureDesc,
+        is_external: bool,
+    ) -> TextureNodeId {
+        ResourceNodeId::from_erased(self.register_resource(
+            name,
+            ResourceKind::texture(desc),
+            is_external,
+            0,
+        ))
+    }
+
+    pub fn register_buffer(
+        &mut self,
+        name: &'static str,
+        desc: BufferDesc,
+        is_external: bool,
+    ) -> BufferNodeId {
+        ResourceNodeId::from_erased(self.register_resource(
+            name,
+            ResourceKind::buffer(desc),
+            is_external,
+            0,
+        ))
+    }
+
+    pub fn import_external_texture(
+        &mut self,
+        name: &'static str,
+        desc: TextureDesc,
+        view: &Tracked<wgpu::TextureView>,
+    ) -> TextureNodeId {
+        ResourceNodeId::from_erased(self.register_resource(
+            name,
+            ResourceKind::external_texture(desc, std::ptr::from_ref(view)),
+            true,
+            0,
+        ))
     }
 
     pub fn import_external_resource(
@@ -463,31 +518,56 @@ impl<'a> RenderGraph<'a> {
         desc: TextureDesc,
         view: &Tracked<wgpu::TextureView>,
     ) -> TextureNodeId {
-        let id = self.register_resource(name, desc, true);
-        self.storage.resources[id.0 as usize].external_view_ptr = Some(std::ptr::from_ref(view));
-        id
+        self.import_external_texture(name, desc, view)
+    }
+
+    pub fn import_external_buffer(
+        &mut self,
+        name: &'static str,
+        desc: BufferDesc,
+        buffer: &Tracked<wgpu::Buffer>,
+    ) -> BufferNodeId {
+        ResourceNodeId::from_erased(self.register_resource(
+            name,
+            ResourceKind::external_buffer(desc, std::ptr::from_ref(buffer)),
+            true,
+            0,
+        ))
     }
 
     /// Creates a versioned alias of `input_id` that shares the same physical
     /// GPU memory.
-    pub fn create_alias(&mut self, input_id: TextureNodeId, name: &'static str) -> TextureNodeId {
-        let root_idx = self.resolve_alias_root(input_id.0 as usize);
-        let root_id = TextureNodeId(root_idx as u32);
+    pub fn create_alias_typed<T: GraphResourceType>(
+        &mut self,
+        input_id: ResourceNodeId<T>,
+        name: &'static str,
+    ) -> ResourceNodeId<T> {
+        let root_idx = self.resolve_alias_root(input_id.index() as usize);
+        let root_id = ErasedResourceNodeId::new(root_idx as u32, 0);
 
         let root_res = &self.storage.resources[root_idx];
-        let desc = root_res.desc;
+        let kind = root_res.kind.without_external_binding();
         let is_external = root_res.is_external;
 
-        let new_id = self.register_resource(name, desc, is_external);
-        self.storage.resources[new_id.0 as usize].alias_of = Some(root_id);
-        new_id
+        let new_id = self.register_resource(
+            name,
+            kind,
+            is_external,
+            input_id.version().saturating_add(1),
+        );
+        self.storage.resources[new_id.index() as usize].alias_of = Some(root_id);
+        ResourceNodeId::from_erased(new_id)
+    }
+
+    pub fn create_alias(&mut self, input_id: TextureNodeId, name: &'static str) -> TextureNodeId {
+        self.create_alias_typed(input_id, name)
     }
 
     /// Chases the `alias_of` chain to find the root (non-alias) resource.
     #[inline]
     fn resolve_alias_root(&self, idx: usize) -> usize {
         if let Some(root_id) = self.storage.resources[idx].alias_of {
-            root_id.0 as usize
+            root_id.index() as usize
         } else {
             idx
         }
@@ -572,7 +652,7 @@ impl<'a> RenderGraph<'a> {
             for read_i in 0..num_reads {
                 let res_id = self.storage.passes[pass_idx].reads[read_i];
 
-                if let Some(producer_idx) = self.storage.resources[res_id.0 as usize].producer
+                if let Some(producer_idx) = self.storage.resources[res_id.index() as usize].producer
                     && producer_idx < pass_idx
                     && !self.storage.passes[pass_idx]
                         .physical_dependencies
@@ -597,7 +677,7 @@ impl<'a> RenderGraph<'a> {
                 continue;
             }
             for write_id in &pass.writes {
-                if self.storage.resources[write_id.0 as usize].is_external {
+                if self.storage.resources[write_id.index() as usize].is_external {
                     self.storage.compile_stack.push(i);
                     pass.reference_count += 1;
                     break;
@@ -691,8 +771,8 @@ impl<'a> RenderGraph<'a> {
         for (timeline_index, &pass_idx) in self.storage.execution_queue.iter().enumerate() {
             let pass = &self.storage.passes[pass_idx];
 
-            let mut touch_resource = |id: TextureNodeId| {
-                let res = &mut self.storage.resources[id.0 as usize];
+            let mut touch_resource = |id: ErasedResourceNodeId| {
+                let res = &mut self.storage.resources[id.index() as usize];
                 res.first_use = res.first_use.min(timeline_index);
                 res.last_use = res.last_use.max(timeline_index);
             };
@@ -751,7 +831,14 @@ impl<'a> RenderGraph<'a> {
             if res.is_external || res.first_use == usize::MAX || res.alias_of.is_some() {
                 continue;
             }
-            res.physical_index = Some(pool.acquire(device, &res.desc, res.first_use, res.last_use));
+            res.physical_index = Some(match res.kind {
+                ResourceKind::Texture { desc, .. } => {
+                    pool.acquire(device, &desc, res.first_use, res.last_use)
+                }
+                ResourceKind::Buffer { desc, .. } => {
+                    pool.acquire_buffer(device, &desc, res.first_use, res.last_use)
+                }
+            });
         }
 
         for i in 0..self.storage.resources.len() {
@@ -802,6 +889,7 @@ impl<'a> RenderGraph<'a> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::graph::core::types::ResourceClass;
     use crate::graph::{composer::GraphBuilderContext, core::context::ExecuteContext};
 
     fn dummy_config() -> FrameConfig {
@@ -854,7 +942,7 @@ mod tests {
             arena.reset();
             let mut graph = begin_test_frame(&mut storage, &arena);
 
-            let backbuffer = graph.register_resource("Backbuffer", dummy_desc(), true);
+            let backbuffer = graph.register_texture("Backbuffer", dummy_desc(), true);
 
             let scene_color = graph.add_pass("Opaque", |builder| {
                 let out = builder.create_texture("SceneColor", dummy_desc());
@@ -909,7 +997,7 @@ mod tests {
         let arena = FrameArena::new();
         let mut graph = begin_test_frame(&mut storage, &arena);
 
-        let backbuffer = graph.register_resource("Backbuffer", dummy_desc(), true);
+        let backbuffer = graph.register_texture("Backbuffer", dummy_desc(), true);
 
         let (color, motion) = graph.add_pass("GBuffer", |builder| {
             let color = builder.create_texture("Color", dummy_desc());
@@ -927,17 +1015,17 @@ mod tests {
 
         assert_eq!(graph.storage.execution_queue.len(), 2);
         assert!(
-            !graph.storage.resources[color.0 as usize]
+            !graph.storage.resources[color.index() as usize]
                 .consumers
                 .is_empty()
         );
         assert!(
-            graph.storage.resources[motion.0 as usize]
+            graph.storage.resources[motion.index() as usize]
                 .consumers
                 .is_empty()
         );
         assert_ne!(
-            graph.storage.resources[motion.0 as usize].first_use,
+            graph.storage.resources[motion.index() as usize].first_use,
             usize::MAX
         );
     }
@@ -948,7 +1036,7 @@ mod tests {
         let arena = FrameArena::new();
         let mut graph = begin_test_frame(&mut storage, &arena);
 
-        let backbuffer = graph.register_resource("Backbuffer", dummy_desc(), true);
+        let backbuffer = graph.register_texture("Backbuffer", dummy_desc(), true);
 
         let internal = graph.add_pass("MacroNode", |builder| {
             let internal = builder.create_texture("Internal", dummy_desc());
@@ -959,7 +1047,7 @@ mod tests {
 
         graph.compile_topology();
         assert!(
-            !graph.storage.resources[internal.0 as usize]
+            !graph.storage.resources[internal.index() as usize]
                 .consumers
                 .is_empty()
         );
@@ -971,7 +1059,7 @@ mod tests {
         let arena = FrameArena::new();
         let mut graph = begin_test_frame(&mut storage, &arena);
 
-        let backbuffer = graph.register_resource("Backbuffer", dummy_desc(), true);
+        let backbuffer = graph.register_texture("Backbuffer", dummy_desc(), true);
 
         let color = graph.add_pass("Opaque", |builder| {
             let out = builder.create_texture("Color", dummy_desc());
@@ -993,7 +1081,7 @@ mod tests {
 
         graph.compile_topology();
 
-        let color_res = &graph.storage.resources[color.0 as usize];
+        let color_res = &graph.storage.resources[color.index() as usize];
         assert_eq!(
             color_res.first_use, 0,
             "Color first written by Opaque at timeline 0"
@@ -1003,7 +1091,7 @@ mod tests {
             "Color last read by ToneMapping at timeline 2"
         );
 
-        let bloom_res = &graph.storage.resources[bloom.0 as usize];
+        let bloom_res = &graph.storage.resources[bloom.index() as usize];
         assert_eq!(
             bloom_res.first_use, 1,
             "Bloom first written by BloomPass at timeline 1"
@@ -1020,7 +1108,7 @@ mod tests {
         let arena = FrameArena::new();
         let mut graph = begin_test_frame(&mut storage, &arena);
 
-        let backbuffer = graph.register_resource("Backbuffer", dummy_desc(), true);
+        let backbuffer = graph.register_texture("Backbuffer", dummy_desc(), true);
 
         let color_v0 = graph.add_pass("Opaque", |builder| {
             let out = builder.create_texture("SceneColor_v0", dummy_desc());
@@ -1028,7 +1116,7 @@ mod tests {
         });
 
         assert!(
-            graph.storage.resources[color_v0.0 as usize]
+            graph.storage.resources[color_v0.index() as usize]
                 .alias_of
                 .is_none(),
             "v0 is a root resource"
@@ -1040,8 +1128,8 @@ mod tests {
         });
 
         assert_eq!(
-            graph.storage.resources[color_v1.0 as usize].alias_of,
-            Some(color_v0),
+            graph.storage.resources[color_v1.index() as usize].alias_of,
+            Some(color_v0.erase()),
             "v1 aliases v0"
         );
 
@@ -1051,8 +1139,8 @@ mod tests {
         });
 
         assert_eq!(
-            graph.storage.resources[color_v2.0 as usize].alias_of,
-            Some(color_v0),
+            graph.storage.resources[color_v2.index() as usize].alias_of,
+            Some(color_v0.erase()),
             "v2 aliases v0 (root)"
         );
 
@@ -1074,16 +1162,16 @@ mod tests {
         assert_eq!(names, vec!["Opaque", "Skybox", "Transparent", "ToneMap"]);
 
         assert_eq!(
-            graph.resolve_alias_root(color_v2.0 as usize),
-            color_v0.0 as usize
+            graph.resolve_alias_root(color_v2.index() as usize),
+            color_v0.index() as usize
         );
         assert_eq!(
-            graph.resolve_alias_root(color_v1.0 as usize),
-            color_v0.0 as usize
+            graph.resolve_alias_root(color_v1.index() as usize),
+            color_v0.index() as usize
         );
         assert_eq!(
-            graph.resolve_alias_root(color_v0.0 as usize),
-            color_v0.0 as usize
+            graph.resolve_alias_root(color_v0.index() as usize),
+            color_v0.index() as usize
         );
     }
 
@@ -1093,7 +1181,7 @@ mod tests {
         let arena = FrameArena::new();
         let mut graph = begin_test_frame(&mut storage, &arena);
 
-        let backbuffer = graph.register_resource("Backbuffer", dummy_desc(), true);
+        let backbuffer = graph.register_texture("Backbuffer", dummy_desc(), true);
 
         let color = graph.add_pass("Writer", |builder| {
             let out = builder.create_texture("Color", dummy_desc());
@@ -1106,7 +1194,7 @@ mod tests {
         });
 
         assert!(
-            graph.storage.resources[mutated_id.0 as usize]
+            graph.storage.resources[mutated_id.index() as usize]
                 .alias_of
                 .is_some()
         );
@@ -1130,12 +1218,58 @@ mod tests {
     }
 
     #[test]
+    fn test_buffer_resource_lifetime_deduction() {
+        let mut storage = GraphStorage::new();
+        let arena = FrameArena::new();
+        let mut graph = begin_test_frame(&mut storage, &arena);
+
+        let backbuffer = graph.register_texture("Backbuffer", dummy_desc(), true);
+
+        let visible_instances = graph.add_pass("Cull", |builder| {
+            let out = builder.create_buffer(
+                "VisibleInstances",
+                BufferDesc::new(4097, wgpu::BufferUsages::STORAGE),
+            );
+            (MockExec, out)
+        });
+
+        let draw_indirect = graph.add_pass("BuildIndirect", |builder| {
+            builder.read_buffer(visible_instances);
+            let out = builder.create_buffer(
+                "DrawIndirect",
+                BufferDesc::new(16, wgpu::BufferUsages::STORAGE),
+            );
+            (MockExec, out)
+        });
+
+        graph.add_pass("Draw", |builder| {
+            builder.read_buffer(visible_instances);
+            builder.read_buffer(draw_indirect);
+            builder.write_texture(backbuffer);
+            (MockExec, ())
+        });
+
+        graph.compile_topology();
+
+        let visible_res = &graph.storage.resources[visible_instances.index() as usize];
+        assert_eq!(visible_res.class(), ResourceClass::Buffer);
+        assert_eq!(visible_res.buffer_desc().logical_size, 4097);
+        assert_eq!(visible_res.first_use, 0);
+        assert_eq!(visible_res.last_use, 2);
+
+        let indirect_res = &graph.storage.resources[draw_indirect.index() as usize];
+        assert_eq!(indirect_res.class(), ResourceClass::Buffer);
+        assert_eq!(indirect_res.first_use, 1);
+        assert_eq!(indirect_res.last_use, 2);
+    }
+
+    #[test]
     fn test_with_group_preserves_topology() {
         let mut storage = GraphStorage::new();
         let arena = FrameArena::new();
         let mut graph = begin_test_frame(&mut storage, &arena);
 
-        let backbuffer = graph.register_resource("Backbuffer", dummy_desc(), true);
+        let backbuffer = graph.register_texture("Backbuffer", dummy_desc(), true);
 
         let mut ctx = GraphBuilderContext {
             graph: &mut graph,
@@ -1183,7 +1317,7 @@ mod tests {
         let arena = FrameArena::new();
         let mut graph = begin_test_frame(&mut storage, &arena);
 
-        let backbuffer = graph.register_resource("Backbuffer", dummy_desc(), true);
+        let backbuffer = graph.register_texture("Backbuffer", dummy_desc(), true);
 
         let mut ctx = GraphBuilderContext {
             graph: &mut graph,

@@ -16,4 +16,7 @@ pub use context::{
 };
 pub use graph::{GraphStorage, RenderGraph};
 pub use node::PassNode;
-pub use types::{RenderTargetOps, ResourceRecord, TextureDesc, TextureNodeId};
+pub use types::{
+    Buffer, BufferDesc, BufferNodeId, GraphResourceType, RenderTargetOps, ResourceKind,
+    ResourceNodeId, ResourceRecord, Texture, TextureDesc, TextureNodeId,
+};

@@ -384,8 +384,8 @@ impl SkyboxFeature {
     #[must_use]
     pub fn new() -> Self {
         Self {
-            scene_color: TextureNodeId(0),
-            scene_depth: TextureNodeId(0),
+            scene_color: TextureNodeId::from_index(0),
+            scene_depth: TextureNodeId::from_index(0),
             layout_gradient: None,
             layout_cube: None,
             layout_2d: None,

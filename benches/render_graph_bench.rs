@@ -17,8 +17,8 @@ use std::hint::black_box;
 use criterion::{BenchmarkId, Criterion, criterion_group, criterion_main};
 use myth::renderer::graph::core::{
     ExecuteContext, FrameArena, GraphStorage, PassBuilder, PassNode, RenderGraph, TextureDesc,
-    TextureNodeId,
 };
+use myth_render::graph::core::ResourceNodeId;
 
 // ═══════════════════════════════════════════════════════════════════════════
 // Mock Infrastructure
@@ -86,7 +86,7 @@ fn bench_linear_chain_build_and_compile(c: &mut Criterion) {
                     let mut graph = RenderGraph::new(&mut storage, &arena);
 
                     // External backbuffer — prevents culling of the final pass
-                    let backbuffer = graph.register_resource("Backbuffer", bench_desc(), true);
+                    let backbuffer = graph.register_texture("Backbuffer", bench_desc(), true);
 
                     // First pass: create the initial texture
                     let mut current_tex = graph.add_pass("Pass_0", |builder: &mut PassBuilder| {
@@ -148,7 +148,7 @@ fn bench_fan_in_topology(c: &mut Criterion) {
                     arena.reset();
                     let mut graph = RenderGraph::new(&mut storage, &arena);
 
-                    let backbuffer = graph.register_resource("Backbuffer", bench_desc(), true);
+                    let backbuffer = graph.register_texture("Backbuffer", bench_desc(), true);
 
                     // N independent producers
                     let mut textures = Vec::with_capacity(count);
@@ -207,9 +207,9 @@ fn bench_diamond_dag(c: &mut Criterion) {
                     arena.reset();
                     let mut graph = RenderGraph::new(&mut storage, &arena);
 
-                    let backbuffer = graph.register_resource("Backbuffer", bench_desc(), true);
+                    let backbuffer = graph.register_texture("Backbuffer", bench_desc(), true);
 
-                    let mut final_color = TextureNodeId(0); // placeholder
+                    let mut final_color = ResourceNodeId::from_index(0); // Placeholder for the final color texture node ID
 
                     for r in 0..reps {
                         // Depth prepass
@@ -292,7 +292,7 @@ fn bench_alias_relay_chain(c: &mut Criterion) {
                     arena.reset();
                     let mut graph = RenderGraph::new(&mut storage, &arena);
 
-                    let backbuffer = graph.register_resource("Backbuffer", bench_desc(), true);
+                    let backbuffer = graph.register_texture("Backbuffer", bench_desc(), true);
 
                     // Initial producer
                     let mut current = graph.add_pass("Opaque", |builder: &mut PassBuilder| {
@@ -352,7 +352,7 @@ fn bench_dead_pass_culling(c: &mut Criterion) {
                     arena.reset();
                     let mut graph = RenderGraph::new(&mut storage, &arena);
 
-                    let backbuffer = graph.register_resource("Backbuffer", bench_desc(), true);
+                    let backbuffer = graph.register_texture("Backbuffer", bench_desc(), true);
 
                     // Dead passes: produce textures nobody reads
                     for i in 0..(count - alive_count) {
@@ -479,7 +479,7 @@ fn bench_multi_frame_capacity_reuse(c: &mut Criterion) {
     {
         arena.reset();
         let mut graph = RenderGraph::new(&mut storage, &arena);
-        let bb = graph.register_resource("Backbuffer", bench_desc(), true);
+        let bb = graph.register_texture("Backbuffer", bench_desc(), true);
 
         let mut cur = graph.add_pass("P0", |builder: &mut PassBuilder| {
             let out = builder.create_texture("T0", bench_desc());
@@ -506,7 +506,7 @@ fn bench_multi_frame_capacity_reuse(c: &mut Criterion) {
         b.iter(|| {
             arena.reset();
             let mut graph = RenderGraph::new(&mut storage, &arena);
-            let bb = graph.register_resource("Backbuffer", bench_desc(), true);
+            let bb = graph.register_texture("Backbuffer", bench_desc(), true);
 
             let mut cur = graph.add_pass("P0", |builder: &mut PassBuilder| {
                 let out = builder.create_texture("T0", bench_desc());
@@ -553,7 +553,7 @@ fn bench_side_effect_passes(c: &mut Criterion) {
                 arena.reset();
                 let mut graph = RenderGraph::new(&mut storage, &arena);
 
-                let backbuffer = graph.register_resource("Backbuffer", bench_desc(), true);
+                let backbuffer = graph.register_texture("Backbuffer", bench_desc(), true);
 
                 // Half are side-effect passes (like shadow maps)
                 for i in 0..n / 2 {
@@ -619,7 +619,7 @@ fn bench_high_fidelity_pipeline(c: &mut Criterion) {
             arena.reset();
             let mut graph = RenderGraph::new(&mut storage, &arena);
 
-            let backbuffer = graph.register_resource("Backbuffer", bench_desc(), true);
+            let backbuffer = graph.register_texture("Backbuffer", bench_desc(), true);
 
             // 1. Shadow (side-effect, external)
             graph.add_pass("Shadow", |builder: &mut PassBuilder| {
@@ -755,7 +755,7 @@ fn bench_build_only(c: &mut Criterion) {
                 b.iter(|| {
                     arena.reset();
                     let mut graph = RenderGraph::new(&mut storage, &arena);
-                    let backbuffer = graph.register_resource("Backbuffer", bench_desc(), true);
+                    let backbuffer = graph.register_texture("Backbuffer", bench_desc(), true);
 
                     let mut cur = graph.add_pass("P0", |builder: &mut PassBuilder| {
                         let out = builder.create_texture("T0", bench_desc());
@@ -805,7 +805,7 @@ fn bench_compile_only(c: &mut Criterion) {
                 b.iter(|| {
                     arena.reset();
                     let mut graph = RenderGraph::new(&mut storage, &arena);
-                    let backbuffer = graph.register_resource("Backbuffer", bench_desc(), true);
+                    let backbuffer = graph.register_texture("Backbuffer", bench_desc(), true);
 
                     let mut cur = graph.add_pass("P0", |builder: &mut PassBuilder| {
                         let out = builder.create_texture("T0", bench_desc());

@@ -360,9 +360,7 @@ impl PrepassFeature {
                 | wgpu::TextureUsages::TEXTURE_BINDING
                 | wgpu::TextureUsages::COPY_SRC,
         );
-        let scene_depth = ctx
-            .graph
-            .register_resource("Scene_Depth", depth_desc, false);
+        let scene_depth = ctx.graph.register_texture("Scene_Depth", depth_desc, false);
 
         let scene_normals = if needs_normal {
             let desc = TextureDesc::new_2d(
@@ -371,7 +369,7 @@ impl PrepassFeature {
                 NORMAL_FORMAT,
                 wgpu::TextureUsages::RENDER_ATTACHMENT | wgpu::TextureUsages::TEXTURE_BINDING,
             );
-            Some(ctx.graph.register_resource("Scene_Normals", desc, false))
+            Some(ctx.graph.register_texture("Scene_Normals", desc, false))
         } else {
             None
         };
@@ -383,7 +381,7 @@ impl PrepassFeature {
                 FEATURE_ID_FORMAT,
                 wgpu::TextureUsages::RENDER_ATTACHMENT | wgpu::TextureUsages::TEXTURE_BINDING,
             );
-            Some(ctx.graph.register_resource("Feature_ID", desc, false))
+            Some(ctx.graph.register_texture("Feature_ID", desc, false))
         } else {
             None
         };
@@ -395,16 +393,16 @@ impl PrepassFeature {
                 VELOCITY_FORMAT,
                 wgpu::TextureUsages::RENDER_ATTACHMENT | wgpu::TextureUsages::TEXTURE_BINDING,
             );
-            Some(ctx.graph.register_resource("Velocity_Buffer", desc, false))
+            Some(ctx.graph.register_texture("Velocity_Buffer", desc, false))
         } else {
             None
         };
 
         let node = PrepassPassNode {
             scene_depth,
-            scene_normals: scene_normals.unwrap_or(TextureNodeId(0)),
-            feature_id: feature_id.unwrap_or(TextureNodeId(0)),
-            velocity_buffer: velocity_buffer.unwrap_or(TextureNodeId(0)),
+            scene_normals: scene_normals.unwrap_or(TextureNodeId::from_index(0)),
+            feature_id: feature_id.unwrap_or(TextureNodeId::from_index(0)),
+            velocity_buffer: velocity_buffer.unwrap_or(TextureNodeId::from_index(0)),
             needs_normal,
             needs_feature_id,
             needs_velocity,

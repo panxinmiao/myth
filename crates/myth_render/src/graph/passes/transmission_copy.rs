@@ -57,7 +57,7 @@ impl TransmissionCopyFeature {
                 | wgpu::TextureUsages::TEXTURE_BINDING
                 | wgpu::TextureUsages::COPY_DST,
         );
-        let transmission_tex = ctx.graph.register_resource("Transmission_Tex", desc, false);
+        let transmission_tex = ctx.graph.register_texture("Transmission_Tex", desc, false);
 
         let is_msaa = fc.msaa_samples > 1;
 

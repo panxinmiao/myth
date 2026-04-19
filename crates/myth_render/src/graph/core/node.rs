@@ -1,6 +1,6 @@
 use crate::graph::core::context::{ExecuteContext, PrepareContext};
 
-use super::types::TextureNodeId;
+use super::types::ErasedResourceNodeId;
 use smallvec::SmallVec;
 use wgpu::CommandEncoder;
 
@@ -111,9 +111,9 @@ pub struct PassRecord {
     /// Type-erased handle to the arena-allocated pass node.
     pub(crate) node: Option<NodeSlot>,
 
-    pub reads: SmallVec<[TextureNodeId; 8]>,
-    pub writes: SmallVec<[TextureNodeId; 4]>,
-    pub creates: SmallVec<[TextureNodeId; 4]>,
+    pub reads: SmallVec<[ErasedResourceNodeId; 8]>,
+    pub writes: SmallVec<[ErasedResourceNodeId; 4]>,
+    pub creates: SmallVec<[ErasedResourceNodeId; 4]>,
 
     // Compile-time state
     pub physical_dependencies: SmallVec<[usize; 8]>,
