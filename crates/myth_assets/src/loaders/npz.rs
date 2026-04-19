@@ -90,7 +90,10 @@ fn parse_dtype_from_header(header: &str) -> Result<NpyDtype> {
     // Look for 'descr': '<f2', '<f4', '|i1', '<i4', '<u4', '|b1', etc.
     let descr = extract_field(header, "descr")
         .ok_or_else(|| Error::Asset(AssetError::Format("missing descr in npy header".into())))?;
-    match descr.trim_matches('\'').trim_matches(|c| c == '<' || c == '>' || c == '|' || c == '=') {
+    match descr
+        .trim_matches('\'')
+        .trim_matches(|c| c == '<' || c == '>' || c == '|' || c == '=')
+    {
         "f2" | "e" => Ok(NpyDtype::F16),
         "f4" | "f" => Ok(NpyDtype::F32),
         "f8" | "d" => Ok(NpyDtype::F64),
@@ -108,8 +111,7 @@ fn parse_shape_from_header(header: &str) -> Result<Vec<usize>> {
     let shape_str = extract_field(header, "shape")
         .ok_or_else(|| Error::Asset(AssetError::Format("missing shape in npy header".into())))?;
     // shape_str looks like "(1234,)" or "(1234, 3)" or "()"
-    let inner = shape_str
-        .trim_matches(|c: char| c == '(' || c == ')' || c.is_whitespace());
+    let inner = shape_str.trim_matches(|c: char| c == '(' || c == ')' || c.is_whitespace());
     if inner.is_empty() {
         return Ok(vec![]);
     }
@@ -117,9 +119,9 @@ fn parse_shape_from_header(header: &str) -> Result<Vec<usize>> {
         .split(',')
         .filter(|s| !s.trim().is_empty())
         .map(|s| {
-            s.trim().parse::<usize>().map_err(|_| {
-                Error::Asset(AssetError::Format(format!("bad shape element: {s}")))
-            })
+            s.trim()
+                .parse::<usize>()
+                .map_err(|_| Error::Asset(AssetError::Format(format!("bad shape element: {s}"))))
         })
         .collect()
 }
@@ -165,7 +167,7 @@ fn read_npy_array(
         Err(e) => {
             return Err(Error::Asset(AssetError::Format(format!(
                 "zip error reading '{file_name}': {e}"
-            ))))
+            ))));
         }
     };
     let mut buf = Vec::new();
@@ -231,9 +233,9 @@ impl NpyScalar for f32 {
             NpyDtype::F32 if data.len() >= 4 => {
                 Ok(Some(f32::from_le_bytes(data[..4].try_into().unwrap())))
             }
-            NpyDtype::F64 if data.len() >= 8 => {
-                Ok(Some(f64::from_le_bytes(data[..8].try_into().unwrap()) as f32))
-            }
+            NpyDtype::F64 if data.len() >= 8 => Ok(Some(f64::from_le_bytes(
+                data[..8].try_into().unwrap(),
+            ) as f32)),
             _ => Ok(None),
         }
     }
@@ -275,7 +277,9 @@ impl NpyScalar for bool {
 /// missing, or shapes are inconsistent.
 pub fn load_gaussian_npz<R: Read + Seek>(reader: R) -> Result<GaussianCloud> {
     let mut archive = zip::ZipArchive::new(reader).map_err(|e| {
-        Error::Asset(AssetError::Format(format!("failed to open NPZ archive: {e}")))
+        Error::Asset(AssetError::Format(format!(
+            "failed to open NPZ archive: {e}"
+        )))
     })?;
 
     // ─── Read dequantization parameters ────────────────────────────
@@ -296,7 +300,8 @@ pub fn load_gaussian_npz<R: Read + Seek>(reader: R) -> Result<GaussianCloud> {
     let features_rest_zero_point: i32 =
         read_scalar(&mut archive, "features_rest_zero_point")?.unwrap_or(0);
 
-    let scaling_factor_scale: f32 = read_scalar(&mut archive, "scaling_factor_scale")?.unwrap_or(1.0);
+    let scaling_factor_scale: f32 =
+        read_scalar(&mut archive, "scaling_factor_scale")?.unwrap_or(1.0);
     let scaling_factor_zero_point: i32 =
         read_scalar(&mut archive, "scaling_factor_zero_point")?.unwrap_or(0);
 
@@ -304,26 +309,21 @@ pub fn load_gaussian_npz<R: Read + Seek>(reader: R) -> Result<GaussianCloud> {
     let kernel_size_val: f32 = read_scalar(&mut archive, "kernel_size")?.unwrap_or(0.3);
 
     // ─── Read data arrays ──────────────────────────────────────────
-    let xyz_f16 = read_f16_array(&mut archive, "xyz")?.ok_or_else(|| {
-        Error::Asset(AssetError::Format("missing 'xyz' array in NPZ".into()))
-    })?;
+    let xyz_f16 = read_f16_array(&mut archive, "xyz")?
+        .ok_or_else(|| Error::Asset(AssetError::Format("missing 'xyz' array in NPZ".into())))?;
     let num_points = xyz_f16.len() / 3;
 
-    let opacity_raw = read_i8_array(&mut archive, "opacity")?.ok_or_else(|| {
-        Error::Asset(AssetError::Format("missing 'opacity' array".into()))
-    })?;
+    let opacity_raw = read_i8_array(&mut archive, "opacity")?
+        .ok_or_else(|| Error::Asset(AssetError::Format("missing 'opacity' array".into())))?;
 
-    let scaling_raw = read_i8_array(&mut archive, "scaling")?.ok_or_else(|| {
-        Error::Asset(AssetError::Format("missing 'scaling' array".into()))
-    })?;
+    let scaling_raw = read_i8_array(&mut archive, "scaling")?
+        .ok_or_else(|| Error::Asset(AssetError::Format("missing 'scaling' array".into())))?;
 
-    let rotation_raw = read_i8_array(&mut archive, "rotation")?.ok_or_else(|| {
-        Error::Asset(AssetError::Format("missing 'rotation' array".into()))
-    })?;
+    let rotation_raw = read_i8_array(&mut archive, "rotation")?
+        .ok_or_else(|| Error::Asset(AssetError::Format("missing 'rotation' array".into())))?;
 
-    let features_dc_raw = read_i8_array(&mut archive, "features_dc")?.ok_or_else(|| {
-        Error::Asset(AssetError::Format("missing 'features_dc' array".into()))
-    })?;
+    let features_dc_raw = read_i8_array(&mut archive, "features_dc")?
+        .ok_or_else(|| Error::Asset(AssetError::Format("missing 'features_dc' array".into())))?;
 
     let features_rest_raw = read_i8_array(&mut archive, "features_rest")?;
 
@@ -398,16 +398,20 @@ pub fn load_gaussian_npz<R: Read + Seek>(reader: R) -> Result<GaussianCloud> {
 
         // ── Scale ──────────────────────────────────────────────────
         let s0_raw = (scaling_raw[geom_idx * 3] as f32 - scaling_zero_point as f32) * scaling_scale;
-        let s1_raw = (scaling_raw[geom_idx * 3 + 1] as f32 - scaling_zero_point as f32) * scaling_scale;
-        let s2_raw = (scaling_raw[geom_idx * 3 + 2] as f32 - scaling_zero_point as f32) * scaling_scale;
+        let s1_raw =
+            (scaling_raw[geom_idx * 3 + 1] as f32 - scaling_zero_point as f32) * scaling_scale;
+        let s2_raw =
+            (scaling_raw[geom_idx * 3 + 2] as f32 - scaling_zero_point as f32) * scaling_scale;
 
         let (s0, s1, s2) = if has_scaling_factor {
             // Normalised scaling direction + per-Gaussian scaling factor
-            let len = (s0_raw * s0_raw + s1_raw * s1_raw + s2_raw * s2_raw).sqrt().max(1e-12);
+            let len = (s0_raw * s0_raw + s1_raw * s1_raw + s2_raw * s2_raw)
+                .sqrt()
+                .max(1e-12);
             let dir = [s0_raw / len, s1_raw / len, s2_raw / len];
             let sf = scaling_factor_raw.as_ref().unwrap();
-            let factor = ((sf[i] as f32 - scaling_factor_zero_point as f32) * scaling_factor_scale)
-                .exp();
+            let factor =
+                ((sf[i] as f32 - scaling_factor_zero_point as f32) * scaling_factor_scale).exp();
             (dir[0] * factor, dir[1] * factor, dir[2] * factor)
         } else {
             (s0_raw.exp(), s1_raw.exp(), s2_raw.exp())
@@ -415,9 +419,12 @@ pub fn load_gaussian_npz<R: Read + Seek>(reader: R) -> Result<GaussianCloud> {
 
         // ── Rotation ───────────────────────────────────────────────
         let r0 = (rotation_raw[geom_idx * 4] as f32 - rotation_zero_point as f32) * rotation_scale;
-        let r1 = (rotation_raw[geom_idx * 4 + 1] as f32 - rotation_zero_point as f32) * rotation_scale;
-        let r2 = (rotation_raw[geom_idx * 4 + 2] as f32 - rotation_zero_point as f32) * rotation_scale;
-        let r3 = (rotation_raw[geom_idx * 4 + 3] as f32 - rotation_zero_point as f32) * rotation_scale;
+        let r1 =
+            (rotation_raw[geom_idx * 4 + 1] as f32 - rotation_zero_point as f32) * rotation_scale;
+        let r2 =
+            (rotation_raw[geom_idx * 4 + 2] as f32 - rotation_zero_point as f32) * rotation_scale;
+        let r3 =
+            (rotation_raw[geom_idx * 4 + 3] as f32 - rotation_zero_point as f32) * rotation_scale;
         let len = (r0 * r0 + r1 * r1 + r2 * r2 + r3 * r3).sqrt();
         let inv_len = if len > 1e-12 { 1.0 / len } else { 0.0 };
         let q = [r0 * inv_len, r1 * inv_len, r2 * inv_len, r3 * inv_len];
@@ -466,9 +473,9 @@ pub fn load_gaussian_npz<R: Read + Seek>(reader: R) -> Result<GaussianCloud> {
                 let off = base + c_idx * 3;
                 for ch in 0..3 {
                     if off + ch < rest.len() {
-                        sh_flat[c_idx + 1][ch] =
-                            (rest[off + ch] as f32 - features_rest_zero_point as f32)
-                                * features_rest_scale;
+                        sh_flat[c_idx + 1][ch] = (rest[off + ch] as f32
+                            - features_rest_zero_point as f32)
+                            * features_rest_scale;
                     }
                 }
             }

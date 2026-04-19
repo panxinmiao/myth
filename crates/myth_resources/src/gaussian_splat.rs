@@ -58,6 +58,8 @@ pub struct Splat2D {
     pub v1: u32,
     /// Screen-space centre (2 × f16 packed).
     pub pos: u32,
+    /// Reverse-Z NDC depth at the splat centre.
+    pub depth: f32,
     /// RGBA colour channels 0–1 (2 × f16 packed).
     pub color_rg: u32,
     /// RGBA colour channels 2–3 (2 × f16 packed).

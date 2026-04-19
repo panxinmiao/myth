@@ -22,8 +22,7 @@ impl AppHandler for GaussianSplattingDemo {
         let npz_path = "examples/assets/3dgs/point_cloud.npz";
         let file = File::open(npz_path).expect("Failed to open NPZ file");
         let reader = BufReader::new(file);
-        let cloud =
-            myth::load_gaussian_npz(reader).expect("Failed to parse NPZ Gaussian cloud");
+        let cloud = myth::load_gaussian_npz(reader).expect("Failed to parse NPZ Gaussian cloud");
 
         // Register in the asset server and add to scene
         let cloud_handle = engine.assets.gaussian_clouds.add(cloud);

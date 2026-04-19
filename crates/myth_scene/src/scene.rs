@@ -3,8 +3,8 @@ use std::sync::atomic::{AtomicU32, Ordering};
 
 use myth_animation::{AnimationMixer, AnimationTarget};
 use myth_core::{NodeHandle, SkeletonKey, Transform};
-use myth_resources::Input;
 use myth_resources::GaussianCloudHandle;
+use myth_resources::Input;
 use myth_resources::bloom::BloomSettings;
 use myth_resources::buffer::CpuBuffer;
 use myth_resources::mesh::Mesh;

@@ -1,10 +1,8 @@
-// Gaussian Splatting Preprocessing Compute Shader
+// Gaussian Splatting Preprocess Shader
 //
-// Transforms 3D Gaussians to 2D screen-space splats, performs frustum
-// culling, evaluates spherical harmonics for view-dependent colour,
-// and populates the sort key/index buffers for GPU radix sort.
+// Projects 3D Gaussians into 2D screen-space splats, evaluates view-dependent
+// SH colour, and emits reverse-Z sort keys for front-to-back compositing.
 
-const KERNEL_SIZE: f32 = 0.3;
 const SH_C0: f32 = 0.28209479177387814;
 const SH_C1: f32 = 0.4886025119029199;
 const SH_C2 = array<f32, 5>(
@@ -45,15 +43,9 @@ struct Splat {
     v_0: u32,
     v_1: u32,
     pos: u32,
+    depth: f32,
     color_0: u32,
     color_1: u32,
-};
-
-struct DrawIndirect {
-    vertex_count: u32,
-    instance_count: atomic<u32>,
-    base_vertex: u32,
-    base_instance: u32,
 };
 
 struct DispatchIndirect {
@@ -156,6 +148,14 @@ fn cov_coefs(v_idx: u32) -> array<f32, 6> {
     return array<f32, 6>(a.x, a.y, b.x, b.y, c.x, c.y);
 }
 
+fn safe_normalize(v: vec2<f32>) -> vec2<f32> {
+    let len_sq = dot(v, v);
+    if len_sq > 1e-12 {
+        return v * inverseSqrt(len_sq);
+    }
+    return vec2<f32>(1.0, 0.0);
+}
+
 @compute @workgroup_size(256, 1, 1)
 fn main(@builtin(global_invocation_id) gid: vec3<u32>) {
     let idx = gid.x;
@@ -170,10 +170,10 @@ fn main(@builtin(global_invocation_id) gid: vec3<u32>) {
     let xyz = vec3<f32>(vertex.x, vertex.y, vertex.z);
     var opacity = a.x;
 
-    var camspace = camera.view * vec4<f32>(xyz, 1.0);
+    let camspace = camera.view * vec4<f32>(xyz, 1.0);
     let pos2d = camera.proj * camspace;
     let bounds = 1.2 * pos2d.w;
-    let z = pos2d.z / pos2d.w;
+    let center_depth = pos2d.z / pos2d.w;
 
     // Dispatch padding for radix sort
     if idx == 0u {
@@ -181,7 +181,7 @@ fn main(@builtin(global_invocation_id) gid: vec3<u32>) {
     }
 
     // Frustum culling
-    if z <= 0.0 || z >= 1.0
+    if center_depth <= 0.0 || center_depth > 1.0
         || pos2d.x < -bounds || pos2d.x > bounds
         || pos2d.y < -bounds || pos2d.y > bounds {
         return;
@@ -211,7 +211,7 @@ fn main(@builtin(global_invocation_id) gid: vec3<u32>) {
     let cov = transpose(T) * Vrk * T;
 
     let kernel_size = render_settings.kernel_size;
-    if bool(render_settings.mip_splatting) {
+    if render_settings.mip_splatting != 0u {
         let det_0 = max(1e-6, cov[0][0] * cov[1][1] - cov[0][1] * cov[0][1]);
         let det_1 = max(1e-6, (cov[0][0] + kernel_size) * (cov[1][1] + kernel_size) - cov[0][1] * cov[0][1]);
         var coef = sqrt(det_0 / (det_1 + 1e-6) + 1e-6);
@@ -230,11 +230,11 @@ fn main(@builtin(global_invocation_id) gid: vec3<u32>) {
     let lambda1 = mid + radius;
     let lambda2 = max(mid - radius, 0.1);
 
-    let diagonalVector = normalize(vec2<f32>(offDiagonal, lambda1 - diagonal1));
+    let diagonalVector = safe_normalize(vec2<f32>(offDiagonal, lambda1 - diagonal1));
     let v1 = sqrt(2.0 * lambda1) * diagonalVector;
     let v2 = sqrt(2.0 * lambda2) * vec2<f32>(diagonalVector.y, -diagonalVector.x);
 
-    let v_center = pos2d.xyzw / pos2d.w;
+    let center_ndc = pos2d.xy / pos2d.w;
 
     let camera_pos = camera.view_inv[3].xyz;
     let dir = normalize(xyz - camera_pos);
@@ -248,12 +248,13 @@ fn main(@builtin(global_invocation_id) gid: vec3<u32>) {
     points_2d[store_idx] = Splat(
         pack2x16float(v.xy),
         pack2x16float(v.zw),
-        pack2x16float(v_center.xy),
+        pack2x16float(center_ndc),
+        center_depth,
         pack2x16float(color.rg),
         pack2x16float(color.ba),
     );
 
-    sort_depths[store_idx] = bitcast<u32>(pos2d.z);
+    sort_depths[store_idx] = bitcast<u32>(center_depth) ^ 0xFFFFFFFFu;
     sort_indices[store_idx] = store_idx;
 
     let keys_per_wg = 256u * 15u;

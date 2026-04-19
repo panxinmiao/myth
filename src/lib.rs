@@ -200,6 +200,7 @@ pub use myth_scene::{
 };
 
 // Resources
+pub use myth_resources::gaussian_splat::GaussianCloud;
 pub use myth_resources::primitives::{
     PlaneOptions, SphereOptions, create_box, create_plane, create_sphere,
 };
@@ -209,14 +210,15 @@ pub use myth_resources::{
     RenderableMaterialTrait, ShaderDefines, Side, TaaSettings, Texture, TextureSlot,
     TextureTransform, ToneMappingMode, ToneMappingSettings, UnlitMaterial, VertexFormat,
 };
-pub use myth_resources::gaussian_splat::GaussianCloud;
 
 // Assets
-pub use myth_assets::{AssetServer, GeometryHandle, ImageHandle, MaterialHandle, TextureHandle};
-pub use myth_assets::{ColorSpace, GaussianCloudHandle, GeometryQuery, ResolveGeometry, ResolveMaterial, SceneExt};
-pub use myth_assets::loaders::ply::load_gaussian_ply;
 #[cfg(feature = "gaussian-npz")]
 pub use myth_assets::loaders::npz::load_gaussian_npz;
+pub use myth_assets::loaders::ply::load_gaussian_ply;
+pub use myth_assets::{AssetServer, GeometryHandle, ImageHandle, MaterialHandle, TextureHandle};
+pub use myth_assets::{
+    ColorSpace, GaussianCloudHandle, GeometryQuery, ResolveGeometry, ResolveMaterial, SceneExt,
+};
 
 // Animation
 pub use myth_animation::{

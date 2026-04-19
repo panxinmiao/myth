@@ -1,28 +1,21 @@
 //! RDG Gaussian Splatting Pass — 3D Gaussian Splatting Rendering
 //!
-//! Implements real-time 3DGS rendering within the RDG framework:
+//! Implements Myth's 3DGS path in three explicit stages:
 //!
-//! 1. **Preprocess** — compute pass: frustum-cull 3D Gaussians, evaluate SH
-//!    colour, project to 2D screen-space splats, emit sort keys.
-//! 2. **Radix Sort** — 3 compute passes (histogram → prefix → scatter)
-//!    repeated for 4 byte-passes to depth-sort visible splats.
-//! 3. **Render** — render pass: vertex-pulled quad drawing with Gaussian
-//!    kernel evaluation, front-to-back alpha blending.
+//! 1. Preprocess — project 3D Gaussians to 2D screen-space splats, evaluate
+//!    SH colour, cull invisible points, and emit reverse-Z depth keys.
+//! 2. GPU radix sort — ported from web-splat and adapted to Myth's RDG pass
+//!    execution model. Sorting is front-to-back to match the blend equation.
+//! 3. Render — draw storage-buffer-pulled triangle strips with front-to-back
+//!    compositing and reverse-Z depth testing against opaque geometry.
 //!
-//! # Multi-Cloud Architecture
-//!
-//! Supports multiple `GaussianCloud` objects in a scene. Each cloud has
-//! its own GPU buffers and per-cloud preprocess + sort passes. At render
-//! time, clouds are drawn in back-to-front order (object-level sorting
-//! by bounding-box center distance to camera) within a single render pass.
-//!
-//! The RDG topology is static (one compute node + one render node). The
-//! compute node loops over all active clouds; the render node draws them
-//! in sorted order. Complexity is O(N) inside the nodes.
+//! Multiple Gaussian clouds are supported simultaneously. Each cloud owns its
+//! own preprocess buffers, sort buffers, and indirect draw buffer.
 
 use std::sync::Arc;
 
 use glam::Vec3A;
+use wgpu::util::DeviceExt;
 
 use crate::HDR_TEXTURE_FORMAT;
 use crate::core::gpu::Tracked;
@@ -30,24 +23,27 @@ use crate::graph::composer::GraphBuilderContext;
 use crate::graph::core::{
     ExecuteContext, ExtractContext, PassNode, RenderTargetOps, TextureNodeId,
 };
-use crate::pipeline::{
-    ColorTargetKey, ComputePipelineId, ComputePipelineKey, DepthStencilKey, FullscreenPipelineKey, RenderPipelineId, ShaderCompilationOptions, ShaderSource
-};
+use crate::pipeline::{ShaderCompilationOptions, ShaderSource};
 use myth_resources::GaussianCloudHandle;
-use myth_resources::gaussian_splat::{GaussianCloud, Splat2D};
+use myth_resources::gaussian_splat::{
+    GaussianCloud, GaussianSHCoefficients, GaussianSplat, Splat2D,
+};
 use myth_scene::camera::RenderCamera;
 
-/// Workgroup size for the preprocess and sort compute shaders.
-const WG_SIZE: u32 = 256;
+const PREPROCESS_WG_SIZE: u32 = 256;
 
-/// Keys sorted per workgroup in the radix sort.
-const SORT_KEYS_PER_WG: u32 = WG_SIZE * 15;
+const SORT_HISTOGRAM_WG_SIZE: u32 = 256;
+const SORT_PREFIX_WG_SIZE: u32 = 128;
+const SORT_SCATTER_WG_SIZE: u32 = 256;
+const SORT_RADIX_LOG2: u32 = 8;
+const SORT_RADIX_SIZE: usize = 1 << SORT_RADIX_LOG2;
+const SORT_KEYVAL_PASSES: u32 = 4;
+const SORT_HISTOGRAM_BLOCK_ROWS: usize = 15;
+const SORT_SCATTER_BLOCK_ROWS: usize = SORT_HISTOGRAM_BLOCK_ROWS;
+const SORT_KEYS_PER_WG: usize = SORT_HISTOGRAM_WG_SIZE as usize * SORT_HISTOGRAM_BLOCK_ROWS;
 
-// =============================================================================
-// GPU Uniform: Camera data for shaders
-// =============================================================================
+const SPLAT_VERTEX_COUNT: u32 = 4;
 
-/// Camera uniform struct matching the WGSL `CameraUniforms`.
 #[repr(C)]
 #[derive(Clone, Copy, bytemuck::Pod, bytemuck::Zeroable)]
 struct GpuCameraUniforms {
@@ -59,7 +55,6 @@ struct GpuCameraUniforms {
     focal: [f32; 2],
 }
 
-/// Render settings uniform matching the WGSL `RenderSettings`.
 #[repr(C)]
 #[derive(Clone, Copy, bytemuck::Pod, bytemuck::Zeroable)]
 struct GpuRenderSettings {
@@ -73,8 +68,6 @@ struct GpuRenderSettings {
     _pad2: f32,
 }
 
-/// Sort info struct matching the WGSL `SortInfos` layout.
-/// Note: `keys_size` is written atomically by the preprocess shader.
 #[repr(C)]
 #[derive(Clone, Copy, bytemuck::Pod, bytemuck::Zeroable)]
 struct GpuSortInfos {
@@ -85,103 +78,156 @@ struct GpuSortInfos {
     odd_pass: u32,
 }
 
-// =============================================================================
-// Per-Cloud GPU resources
-// =============================================================================
+#[repr(C)]
+#[derive(Clone, Copy, bytemuck::Pod, bytemuck::Zeroable)]
+struct GpuDispatchIndirect {
+    dispatch_x: u32,
+    dispatch_y: u32,
+    dispatch_z: u32,
+}
 
-/// GPU-side storage for a single Gaussian point cloud.
+#[repr(C)]
+#[derive(Clone, Copy, bytemuck::Pod, bytemuck::Zeroable)]
+struct GpuDrawIndirect {
+    vertex_count: u32,
+    instance_count: u32,
+    base_vertex: u32,
+    base_instance: u32,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+struct GaussianRenderPipelineKey {
+    depth_format: wgpu::TextureFormat,
+    msaa_samples: u32,
+}
+
+#[derive(Clone, Copy, Debug)]
+struct SortBufferLayout {
+    padded_key_capacity: usize,
+    internal_buffer_words: usize,
+}
+
+fn padded_sort_key_capacity(key_count: usize) -> usize {
+    let key_count = key_count.max(1);
+    ((key_count + SORT_KEYS_PER_WG) / SORT_KEYS_PER_WG + 1) * SORT_KEYS_PER_WG
+}
+
+fn sort_scatter_blocks(key_count: usize) -> usize {
+    let scatter_block_kvs = SORT_HISTOGRAM_WG_SIZE as usize * SORT_SCATTER_BLOCK_ROWS;
+    (key_count.max(1) + scatter_block_kvs - 1) / scatter_block_kvs
+}
+
+fn sort_buffer_layout(key_count: usize) -> SortBufferLayout {
+    let scatter_blocks_ru = sort_scatter_blocks(key_count).max(1);
+    let padded_key_capacity = padded_sort_key_capacity(key_count);
+    let internal_buffer_words = (SORT_KEYVAL_PASSES as usize + scatter_blocks_ru) * SORT_RADIX_SIZE;
+
+    SortBufferLayout {
+        padded_key_capacity,
+        internal_buffer_words,
+    }
+}
+
+fn detect_sort_subgroup_size(device: &wgpu::Device) -> u32 {
+    let reported = device.adapter_info().subgroup_min_size;
+    match reported {
+        32.. => 32,
+        16..=31 => 16,
+        8..=15 => 8,
+        _ => 32,
+    }
+}
+
+fn build_sort_shader_options(subgroup_size: u32) -> ShaderCompilationOptions {
+    let subgroup_size = match subgroup_size {
+        32.. => 32,
+        16..=31 => 16,
+        8..=15 => 8,
+        _ => 32,
+    };
+
+    let subgroup_size_usize = subgroup_size as usize;
+    let rs_sweep_0_size = SORT_RADIX_SIZE / subgroup_size_usize;
+    let rs_sweep_1_size = rs_sweep_0_size / subgroup_size_usize;
+    let rs_mem_dwords = SORT_RADIX_SIZE + SORT_SCATTER_BLOCK_ROWS * SORT_SCATTER_WG_SIZE as usize;
+
+    let mut options = ShaderCompilationOptions::default();
+    options.add_define("HISTOGRAM_SG_SIZE", &subgroup_size.to_string());
+    options.add_define("HISTOGRAM_WG_SIZE", &SORT_HISTOGRAM_WG_SIZE.to_string());
+    options.add_define("PREFIX_WG_SIZE", &SORT_PREFIX_WG_SIZE.to_string());
+    options.add_define("SCATTER_WG_SIZE", &SORT_SCATTER_WG_SIZE.to_string());
+    options.add_define("RS_RADIX_LOG2", &SORT_RADIX_LOG2.to_string());
+    options.add_define("RS_RADIX_SIZE", &SORT_RADIX_SIZE.to_string());
+    options.add_define("RS_KEYVAL_SIZE", &SORT_KEYVAL_PASSES.to_string());
+    options.add_define(
+        "RS_HISTOGRAM_BLOCK_ROWS",
+        &SORT_HISTOGRAM_BLOCK_ROWS.to_string(),
+    );
+    options.add_define(
+        "RS_SCATTER_BLOCK_ROWS",
+        &SORT_SCATTER_BLOCK_ROWS.to_string(),
+    );
+    options.add_define("RS_MEM_DWORDS", &rs_mem_dwords.to_string());
+    options.add_define("RS_MEM_SWEEP_0_OFFSET", "0");
+    options.add_define("RS_MEM_SWEEP_1_OFFSET", &rs_sweep_0_size.to_string());
+    options.add_define(
+        "RS_MEM_SWEEP_2_OFFSET",
+        &(rs_sweep_0_size + rs_sweep_1_size).to_string(),
+    );
+    options
+}
+
+struct GaussianSortPipelines {
+    zero_histograms: wgpu::ComputePipeline,
+    calculate_histogram: wgpu::ComputePipeline,
+    prefix_histogram: wgpu::ComputePipeline,
+    scatter_even: wgpu::ComputePipeline,
+    scatter_odd: wgpu::ComputePipeline,
+}
+
 #[allow(dead_code)]
 struct CloudGpuData {
-    /// Number of Gaussians in this cloud.
     num_points: u32,
 
-    // ─── Storage Buffers ───────────────────────────────────────────
-    /// Gaussian 3D data (position + opacity + packed covariance).
     gaussian_buf: wgpu::Buffer,
-    /// SH coefficients storage.
     sh_buf: wgpu::Buffer,
-    /// 2D projected splats (written by preprocess, read by render).
     splat_2d_buf: wgpu::Buffer,
 
-    // ─── Sort Buffers ──────────────────────────────────────────────
-    sort_depths_buf: wgpu::Buffer,
-    sort_indices_buf: wgpu::Buffer,
-    sort_dispatch_buf: wgpu::Buffer,
     sort_infos_buf: wgpu::Buffer,
-    /// Assist buffers for double-buffered radix sort.
-    sort_assist_a_buf: wgpu::Buffer,
-    sort_assist_b_buf: wgpu::Buffer,
-    /// Histogram buffer (256 bins × num_workgroups × 4 passes).
-    sort_histograms_buf: wgpu::Buffer,
+    sort_dispatch_buf: wgpu::Buffer,
+    sort_internal_buf: wgpu::Buffer,
+    sort_depths_a_buf: wgpu::Buffer,
+    sort_depths_b_buf: wgpu::Buffer,
+    sort_indices_a_buf: wgpu::Buffer,
+    sort_indices_b_buf: wgpu::Buffer,
 
-    // ─── Uniform Buffers ───────────────────────────────────────────
+    draw_indirect_buf: wgpu::Buffer,
     camera_uniform_buf: wgpu::Buffer,
     render_settings_buf: wgpu::Buffer,
 
-    // ─── Bind Groups ──────────────────────────────────────────────
-    /// Group 0 for preprocess: camera uniforms.
     preprocess_bg0: wgpu::BindGroup,
-    /// Group 1 for preprocess: gaussians + SH + splats_2d.
     preprocess_bg1: wgpu::BindGroup,
-    /// Group 2 for preprocess: sort_infos + depths + indices + dispatch.
     preprocess_bg2: wgpu::BindGroup,
-    /// Group 3 for preprocess: render settings.
     preprocess_bg3: wgpu::BindGroup,
-
-    /// Group 0 for sort: sort_infos + depths + indices + dispatch.
-    sort_bg0: wgpu::BindGroup,
-    /// Group 1 for sort: assist_a + assist_b + histograms.
-    sort_bg1: wgpu::BindGroup,
-
-    /// Group 0 for render: camera uniforms (same buffer).
-    render_bg0: wgpu::BindGroup,
-    /// Group 1 for render: splats_2d + sort_indices.
-    render_bg1: wgpu::BindGroup,
+    sort_bg: wgpu::BindGroup,
+    render_bg: wgpu::BindGroup,
 }
 
-// =============================================================================
-// GaussianSplattingFeature — persistent GPU state
-// =============================================================================
-
-/// Persistent feature owning GPU pipelines, layouts, and per-cloud buffers
-/// for 3D Gaussian Splatting rendering.
-///
-/// Manages multiple clouds simultaneously. Each cloud gets independent GPU
-/// buffers, bind groups, and preprocess/sort dispatches. Clouds are drawn
-/// in back-to-front order determined by bounding-box center distance to the
-/// camera.
 pub struct GaussianSplattingFeature {
-    // ─── Compute Pipelines ─────────────────────────────────────────
-    preprocess_pipeline: Option<ComputePipelineId>,
-    sort_histogram_pipeline: Option<ComputePipelineId>,
-    sort_prefix_pipeline: Option<ComputePipelineId>,
-    sort_scatter_pipeline: Option<ComputePipelineId>,
+    preprocess_pipeline: Option<wgpu::ComputePipeline>,
+    sort_pipelines: Option<GaussianSortPipelines>,
+    render_pipeline: Option<wgpu::RenderPipeline>,
+    render_pipeline_key: Option<GaussianRenderPipelineKey>,
 
-    // ─── Render Pipeline ───────────────────────────────────────────
-    render_pipeline: Option<RenderPipelineId>,
-
-    // ─── Bind Group Layouts ────────────────────────────────────────
-    // Preprocess
     preprocess_layout_g0: Option<Tracked<wgpu::BindGroupLayout>>,
     preprocess_layout_g1: Option<Tracked<wgpu::BindGroupLayout>>,
     preprocess_layout_g2: Option<Tracked<wgpu::BindGroupLayout>>,
     preprocess_layout_g3: Option<Tracked<wgpu::BindGroupLayout>>,
-    // Sort
-    sort_layout_g0: Option<Tracked<wgpu::BindGroupLayout>>,
-    sort_layout_g1: Option<Tracked<wgpu::BindGroupLayout>>,
-    // Render
-    render_layout_g0: Option<Tracked<wgpu::BindGroupLayout>>,
-    render_layout_g1: Option<Tracked<wgpu::BindGroupLayout>>,
+    sort_layout: Option<Tracked<wgpu::BindGroupLayout>>,
+    render_layout: Option<Tracked<wgpu::BindGroupLayout>>,
 
-    // ─── Per-Cloud GPU Data ────────────────────────────────────────
-    /// All currently active clouds with their GPU resources.
-    /// Keyed by `GaussianCloudHandle` for O(1) lookup.
     clouds: Vec<(GaussianCloudHandle, u64, CloudGpuData)>,
-
-    /// Back-to-front sorted indices into `clouds` for the current frame.
     sorted_order: Vec<usize>,
-
-    /// Whether we have any active clouds to render this frame.
     active: bool,
 }
 
@@ -196,37 +242,21 @@ impl GaussianSplattingFeature {
     pub fn new() -> Self {
         Self {
             preprocess_pipeline: None,
-            sort_histogram_pipeline: None,
-            sort_prefix_pipeline: None,
-            sort_scatter_pipeline: None,
+            sort_pipelines: None,
             render_pipeline: None,
-
+            render_pipeline_key: None,
             preprocess_layout_g0: None,
             preprocess_layout_g1: None,
             preprocess_layout_g2: None,
             preprocess_layout_g3: None,
-            sort_layout_g0: None,
-            sort_layout_g1: None,
-            render_layout_g0: None,
-            render_layout_g1: None,
-
+            sort_layout: None,
+            render_layout: None,
             clouds: Vec::new(),
             sorted_order: Vec::new(),
             active: false,
         }
     }
 
-    // =========================================================================
-    // Extract & Prepare
-    // =========================================================================
-
-    /// Prepare GPU resources for rendering multiple Gaussian clouds.
-    ///
-    /// `cloud_entries` contains `(handle, cloud_data, world_position)` tuples
-    /// for every cloud visible this frame. The world position is the cloud
-    /// node's world-space translation (used for object-level sorting).
-    ///
-    /// Clouds are sorted back-to-front by distance from `camera_position`.
     pub fn extract_and_prepare(
         &mut self,
         ctx: &mut ExtractContext,
@@ -235,6 +265,7 @@ impl GaussianSplattingFeature {
         viewport_size: (u32, u32),
     ) {
         if cloud_entries.is_empty() {
+            self.sorted_order.clear();
             self.active = false;
             return;
         }
@@ -242,91 +273,90 @@ impl GaussianSplattingFeature {
         self.ensure_layouts(ctx.device);
         self.ensure_pipelines(ctx);
 
-        // ── Remove stale clouds no longer in the scene ─────────────
         let active_handles: Vec<GaussianCloudHandle> =
-            cloud_entries.iter().map(|(h, _, _)| *h).collect();
-        self.clouds.retain(|(h, _, _)| active_handles.contains(h));
+            cloud_entries.iter().map(|(handle, _, _)| *handle).collect();
+        self.clouds
+            .retain(|(handle, _, _)| active_handles.contains(handle));
 
-        // ── Ensure GPU data for each cloud ─────────────────────────
-        for (handle, cloud, _world_pos) in cloud_entries {
+        for (handle, cloud, _) in cloud_entries {
             let handle = *handle;
             let fingerprint = {
                 let ptr = Arc::as_ptr(cloud) as u64;
-                let mut h = ptr;
-                h ^= cloud.num_points as u64;
-                h
+                ptr ^ cloud.num_points as u64
             };
 
-            // Check if already uploaded with same fingerprint
-            let existing = self.clouds.iter().position(|(h, _, _)| *h == handle);
-            match existing {
-                Some(idx) if self.clouds[idx].1 == fingerprint => {
-                    // Already up-to-date, just update uniforms
-                }
-                Some(idx) => {
-                    // Cloud changed, re-upload
-                    let gpu_data =
-                        self.create_cloud_gpu_data(ctx.device, ctx.queue, cloud);
-                    self.clouds[idx] = (handle, fingerprint, gpu_data);
+            match self
+                .clouds
+                .iter()
+                .position(|(existing_handle, _, _)| *existing_handle == handle)
+            {
+                Some(index) if self.clouds[index].1 == fingerprint => {}
+                Some(index) => {
+                    let gpu_data = self.create_cloud_gpu_data(ctx.device, ctx.queue, cloud);
+                    self.clouds[index] = (handle, fingerprint, gpu_data);
                 }
                 None => {
-                    // New cloud
-                    let gpu_data =
-                        self.create_cloud_gpu_data(ctx.device, ctx.queue, cloud);
+                    let gpu_data = self.create_cloud_gpu_data(ctx.device, ctx.queue, cloud);
                     self.clouds.push((handle, fingerprint, gpu_data));
                 }
             }
         }
 
-        // ── Update uniforms for every cloud ────────────────────────
         for (handle, cloud, _) in cloud_entries {
-            if let Some((_, _, gpu_data)) = self.clouds.iter().find(|(h, _, _)| *h == *handle) {
+            if let Some((_, _, gpu_data)) = self
+                .clouds
+                .iter()
+                .find(|(existing_handle, _, _)| *existing_handle == *handle)
+            {
                 Self::update_cloud_uniforms(ctx.queue, gpu_data, camera, cloud, viewport_size);
             }
         }
 
-        // ── Object-level back-to-front sort ────────────────────────
-        let cam_pos = camera.position;
-        // Build (index_into_self.clouds, distance²) pairs
+        let camera_position = camera.position;
         let mut cloud_order: Vec<(usize, f32)> = cloud_entries
             .iter()
-            .filter_map(|&(ref handle, _, world_pos)| {
-                let idx = self.clouds.iter().position(|(h, _, _)| *h == *handle)?;
-                let dist_sq = cam_pos.distance_squared(world_pos);
-                Some((idx, dist_sq))
+            .filter_map(|(handle, cloud, world_pos)| {
+                let cloud_index = self
+                    .clouds
+                    .iter()
+                    .position(|(existing_handle, _, _)| existing_handle == handle)?;
+                let local_center = Vec3A::new(cloud.center.x, cloud.center.y, cloud.center.z);
+                let world_center = *world_pos + local_center;
+                let distance_sq = camera_position.distance_squared(world_center);
+                Some((cloud_index, distance_sq))
             })
             .collect();
-        // Sort back-to-front (farthest first)
-        cloud_order.sort_by(|a, b| b.1.partial_cmp(&a.1).unwrap_or(std::cmp::Ordering::Equal));
-        self.sorted_order = cloud_order.into_iter().map(|(idx, _)| idx).collect();
 
-        self.active = true;
+        cloud_order.sort_by(|left, right| {
+            left.1
+                .partial_cmp(&right.1)
+                .unwrap_or(std::cmp::Ordering::Equal)
+        });
+        self.sorted_order = cloud_order.into_iter().map(|(index, _)| index).collect();
+        self.active = !self.sorted_order.is_empty();
     }
-
-    // =========================================================================
-    // Lazy Initialization
-    // =========================================================================
 
     fn ensure_layouts(&mut self, device: &wgpu::Device) {
         if self.preprocess_layout_g0.is_some() {
             return;
         }
 
-        let uniform_entry = |binding: u32, vis: wgpu::ShaderStages| wgpu::BindGroupLayoutEntry {
-            binding,
-            visibility: vis,
-            ty: wgpu::BindingType::Buffer {
-                ty: wgpu::BufferBindingType::Uniform,
-                has_dynamic_offset: false,
-                min_binding_size: None,
-            },
-            count: None,
-        };
+        let uniform_entry =
+            |binding: u32, visibility: wgpu::ShaderStages| wgpu::BindGroupLayoutEntry {
+                binding,
+                visibility,
+                ty: wgpu::BindingType::Buffer {
+                    ty: wgpu::BufferBindingType::Uniform,
+                    has_dynamic_offset: false,
+                    min_binding_size: None,
+                },
+                count: None,
+            };
 
         let storage_ro_entry =
-            |binding: u32, vis: wgpu::ShaderStages| wgpu::BindGroupLayoutEntry {
+            |binding: u32, visibility: wgpu::ShaderStages| wgpu::BindGroupLayoutEntry {
                 binding,
-                visibility: vis,
+                visibility,
                 ty: wgpu::BindingType::Buffer {
                     ty: wgpu::BufferBindingType::Storage { read_only: true },
                     has_dynamic_offset: false,
@@ -336,9 +366,9 @@ impl GaussianSplattingFeature {
             };
 
         let storage_rw_entry =
-            |binding: u32, vis: wgpu::ShaderStages| wgpu::BindGroupLayoutEntry {
+            |binding: u32, visibility: wgpu::ShaderStages| wgpu::BindGroupLayoutEntry {
                 binding,
-                visibility: vis,
+                visibility,
                 ty: wgpu::BindingType::Buffer {
                     ty: wgpu::BufferBindingType::Storage { read_only: false },
                     has_dynamic_offset: false,
@@ -349,47 +379,28 @@ impl GaussianSplattingFeature {
 
         let cs = wgpu::ShaderStages::COMPUTE;
         let vs = wgpu::ShaderStages::VERTEX;
-        let vs_fs = wgpu::ShaderStages::VERTEX_FRAGMENT;
 
-        // ─── Preprocess Layouts ────────────────────────────────────
         self.preprocess_layout_g0 = Some(Tracked::new(device.create_bind_group_layout(
             &wgpu::BindGroupLayoutDescriptor {
                 label: Some("GS Preprocess G0 (Camera)"),
                 entries: &[uniform_entry(0, cs)],
             },
         )));
+
         self.preprocess_layout_g1 = Some(Tracked::new(device.create_bind_group_layout(
             &wgpu::BindGroupLayoutDescriptor {
-                label: Some("GS Preprocess G1 (Gaussians+SH+Splats)"),
+                label: Some("GS Preprocess G1 (Gaussians + SH + Splats)"),
                 entries: &[
-                    storage_ro_entry(0, cs),  // gaussians
-                    storage_ro_entry(1, cs),  // sh_coefs
-                    storage_rw_entry(2, cs),  // points_2d
+                    storage_ro_entry(0, cs),
+                    storage_ro_entry(1, cs),
+                    storage_rw_entry(2, cs),
                 ],
-            },
-        )));
-        self.preprocess_layout_g2 = Some(Tracked::new(device.create_bind_group_layout(
-            &wgpu::BindGroupLayoutDescriptor {
-                label: Some("GS Preprocess G2 (Sort)"),
-                entries: &[
-                    storage_rw_entry(0, cs),  // sort_infos
-                    storage_rw_entry(1, cs),  // sort_depths
-                    storage_rw_entry(2, cs),  // sort_indices
-                    storage_rw_entry(3, cs),  // sort_dispatch
-                ],
-            },
-        )));
-        self.preprocess_layout_g3 = Some(Tracked::new(device.create_bind_group_layout(
-            &wgpu::BindGroupLayoutDescriptor {
-                label: Some("GS Preprocess G3 (Settings)"),
-                entries: &[uniform_entry(0, cs)],
             },
         )));
 
-        // ─── Sort Layouts ──────────────────────────────────────────
-        self.sort_layout_g0 = Some(Tracked::new(device.create_bind_group_layout(
+        self.preprocess_layout_g2 = Some(Tracked::new(device.create_bind_group_layout(
             &wgpu::BindGroupLayoutDescriptor {
-                label: Some("GS Sort G0 (Infos+Depths+Indices+Dispatch)"),
+                label: Some("GS Preprocess G2 (Sort Front Buffers)"),
                 entries: &[
                     storage_rw_entry(0, cs),
                     storage_rw_entry(1, cs),
@@ -398,50 +409,45 @@ impl GaussianSplattingFeature {
                 ],
             },
         )));
-        self.sort_layout_g1 = Some(Tracked::new(device.create_bind_group_layout(
+
+        self.preprocess_layout_g3 = Some(Tracked::new(device.create_bind_group_layout(
             &wgpu::BindGroupLayoutDescriptor {
-                label: Some("GS Sort G1 (Assist+Histograms)"),
+                label: Some("GS Preprocess G3 (Render Settings)"),
+                entries: &[uniform_entry(0, cs)],
+            },
+        )));
+
+        self.sort_layout = Some(Tracked::new(device.create_bind_group_layout(
+            &wgpu::BindGroupLayoutDescriptor {
+                label: Some("GS Sort"),
                 entries: &[
                     storage_rw_entry(0, cs),
                     storage_rw_entry(1, cs),
                     storage_rw_entry(2, cs),
+                    storage_rw_entry(3, cs),
+                    storage_rw_entry(4, cs),
+                    storage_rw_entry(5, cs),
                 ],
             },
         )));
 
-        // ─── Render Layouts ────────────────────────────────────────
-        self.render_layout_g0 = Some(Tracked::new(device.create_bind_group_layout(
+        self.render_layout = Some(Tracked::new(device.create_bind_group_layout(
             &wgpu::BindGroupLayoutDescriptor {
-                label: Some("GS Render G0 (Camera)"),
-                entries: &[uniform_entry(0, vs_fs)],
-            },
-        )));
-        self.render_layout_g1 = Some(Tracked::new(device.create_bind_group_layout(
-            &wgpu::BindGroupLayoutDescriptor {
-                label: Some("GS Render G1 (Splats+SortIndices)"),
-                entries: &[
-                    storage_ro_entry(0, vs),  // splats
-                    storage_ro_entry(1, vs),  // sort_indices
-                ],
+                label: Some("GS Render"),
+                entries: &[storage_ro_entry(0, vs), storage_ro_entry(1, vs)],
             },
         )));
     }
 
     fn ensure_pipelines(&mut self, ctx: &mut ExtractContext) {
-        if self.preprocess_pipeline.is_some() {
-            return;
-        }
-
         let device = ctx.device;
-        let comp_opts = wgpu::PipelineCompilationOptions::default();
-        let shader_opts = ShaderCompilationOptions::default();
 
-        // ─── Preprocess Compute Pipeline ───────────────────────────
-        {
-            let (module, hash) = ctx.shader_manager.get_or_compile(
+        if self.preprocess_pipeline.is_none() {
+            let shader_options = ShaderCompilationOptions::default();
+            let (module, _) = ctx.shader_manager.get_or_compile(
                 device,
                 ShaderSource::File("entry/utility/gaussian_preprocess"),
-                &shader_opts,
+                &shader_options,
             );
 
             let layout = device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
@@ -455,162 +461,135 @@ impl GaussianSplattingFeature {
                 immediate_size: 0,
             });
 
-            self.preprocess_pipeline = Some(ctx.pipeline_cache.get_or_create_compute(
-                device,
-                module,
-                &layout,
-                &ComputePipelineKey::new(hash).with_compilation_options(&comp_opts),
-                &comp_opts,
-                "GS Preprocess Pipeline",
+            self.preprocess_pipeline = Some(device.create_compute_pipeline(
+                &wgpu::ComputePipelineDescriptor {
+                    label: Some("GS Preprocess Pipeline"),
+                    layout: Some(&layout),
+                    module,
+                    entry_point: Some("main"),
+                    compilation_options: wgpu::PipelineCompilationOptions::default(),
+                    cache: None,
+                },
             ));
         }
 
-        // ─── Sort Histogram Pipeline ───────────────────────────────
-        {
-            let (module, hash) = ctx.shader_manager.get_or_compile(
+        if self.sort_pipelines.is_none() {
+            let subgroup_size = detect_sort_subgroup_size(device);
+            let shader_options = build_sort_shader_options(subgroup_size);
+            let (module, _) = ctx.shader_manager.get_or_compile(
                 device,
-                ShaderSource::File("entry/utility/gs_sort_histogram"),
-                &shader_opts,
+                ShaderSource::File("entry/utility/gs_radix_sort"),
+                &shader_options,
             );
 
             let layout = device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
-                label: Some("GS Sort Histogram Pipeline Layout"),
-                bind_group_layouts: &[
-                    Some(self.sort_layout_g0.as_ref().unwrap()),
-                    Some(self.sort_layout_g1.as_ref().unwrap()),
-                ],
+                label: Some("GS Sort Pipeline Layout"),
+                bind_group_layouts: &[Some(self.sort_layout.as_ref().unwrap())],
                 immediate_size: 0,
             });
 
-            self.sort_histogram_pipeline = Some(ctx.pipeline_cache.get_or_create_compute(
-                device,
-                module,
-                &layout,
-                &ComputePipelineKey::new(hash).with_compilation_options(&comp_opts),
-                &comp_opts,
-                "GS Sort Histogram Pipeline",
-            ));
-        }
+            let make_pipeline = |entry_point: &str, label: &str| {
+                device.create_compute_pipeline(&wgpu::ComputePipelineDescriptor {
+                    label: Some(label),
+                    layout: Some(&layout),
+                    module,
+                    entry_point: Some(entry_point),
+                    compilation_options: wgpu::PipelineCompilationOptions::default(),
+                    cache: None,
+                })
+            };
 
-        // ─── Sort Prefix Pipeline ──────────────────────────────────
-        {
-            let (module, hash) = ctx.shader_manager.get_or_compile(
-                device,
-                ShaderSource::File("entry/utility/gs_sort_prefix"),
-                &shader_opts,
-            );
-
-            let layout = device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
-                label: Some("GS Sort Prefix Pipeline Layout"),
-                bind_group_layouts: &[
-                    Some(self.sort_layout_g0.as_ref().unwrap()),
-                    Some(self.sort_layout_g1.as_ref().unwrap()),
-                ],
-                immediate_size: 0,
+            self.sort_pipelines = Some(GaussianSortPipelines {
+                zero_histograms: make_pipeline("zero_histograms", "GS Sort Zero Histograms"),
+                calculate_histogram: make_pipeline(
+                    "calculate_histogram",
+                    "GS Sort Calculate Histogram",
+                ),
+                prefix_histogram: make_pipeline("prefix_histogram", "GS Sort Prefix Histogram"),
+                scatter_even: make_pipeline("scatter_even", "GS Sort Scatter Even"),
+                scatter_odd: make_pipeline("scatter_odd", "GS Sort Scatter Odd"),
             });
-
-            self.sort_prefix_pipeline = Some(ctx.pipeline_cache.get_or_create_compute(
-                device,
-                module,
-                &layout,
-                &ComputePipelineKey::new(hash).with_compilation_options(&comp_opts),
-                &comp_opts,
-                "GS Sort Prefix Pipeline",
-            ));
         }
 
-        // ─── Sort Scatter Pipeline ─────────────────────────────────
-        {
-            let (module, hash) = ctx.shader_manager.get_or_compile(
-                device,
-                ShaderSource::File("entry/utility/gs_sort_scatter"),
-                &shader_opts,
-            );
+        let render_key = GaussianRenderPipelineKey {
+            depth_format: ctx.wgpu_ctx.depth_format,
+            msaa_samples: ctx.wgpu_ctx.msaa_samples,
+        };
 
-            let layout = device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
-                label: Some("GS Sort Scatter Pipeline Layout"),
-                bind_group_layouts: &[
-                    Some(self.sort_layout_g0.as_ref().unwrap()),
-                    Some(self.sort_layout_g1.as_ref().unwrap()),
-                ],
-                immediate_size: 0,
-            });
-
-            self.sort_scatter_pipeline = Some(ctx.pipeline_cache.get_or_create_compute(
-                device,
-                module,
-                &layout,
-                &ComputePipelineKey::new(hash).with_compilation_options(&comp_opts),
-                &comp_opts,
-                "GS Sort Scatter Pipeline",
-            ));
-        }
-
-        // ─── Render Pipeline ───────────────────────────────────────
-        {
-            let (module, hash) = ctx.shader_manager.get_or_compile(
+        if self.render_pipeline.is_none() || self.render_pipeline_key != Some(render_key) {
+            let shader_options = ShaderCompilationOptions::default();
+            let (module, _) = ctx.shader_manager.get_or_compile(
                 device,
                 ShaderSource::File("entry/utility/gaussian_render"),
-                &shader_opts,
+                &shader_options,
             );
 
             let layout = device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
                 label: Some("GS Render Pipeline Layout"),
-                bind_group_layouts: &[
-                    Some(self.render_layout_g0.as_ref().unwrap()),
-                    Some(self.render_layout_g1.as_ref().unwrap()),
-                ],
+                bind_group_layouts: &[Some(self.render_layout.as_ref().unwrap())],
                 immediate_size: 0,
             });
 
-            // Front-to-back alpha blending:
-            //   dst_color = src_alpha * src_color + (1 - src_alpha) * dst_color
-            //   dst_alpha = src_alpha + (1 - src_alpha) * dst_alpha
-            let color_target = ColorTargetKey::from(wgpu::ColorTargetState {
-                format: HDR_TEXTURE_FORMAT,
-                blend: Some(wgpu::BlendState {
-                    color: wgpu::BlendComponent {
-                        src_factor: wgpu::BlendFactor::One,
-                        dst_factor: wgpu::BlendFactor::OneMinusSrcAlpha,
-                        operation: wgpu::BlendOperation::Add,
+            self.render_pipeline = Some(device.create_render_pipeline(
+                &wgpu::RenderPipelineDescriptor {
+                    label: Some("GS Render Pipeline"),
+                    layout: Some(&layout),
+                    vertex: wgpu::VertexState {
+                        module,
+                        entry_point: Some("vs_main"),
+                        buffers: &[],
+                        compilation_options: wgpu::PipelineCompilationOptions::default(),
                     },
-                    alpha: wgpu::BlendComponent {
-                        src_factor: wgpu::BlendFactor::One,
-                        dst_factor: wgpu::BlendFactor::OneMinusSrcAlpha,
-                        operation: wgpu::BlendOperation::Add,
+                    fragment: Some(wgpu::FragmentState {
+                        module,
+                        entry_point: Some("fs_main"),
+                        targets: &[Some(wgpu::ColorTargetState {
+                            format: HDR_TEXTURE_FORMAT,
+                            blend: Some(wgpu::BlendState {
+                                color: wgpu::BlendComponent {
+                                    src_factor: wgpu::BlendFactor::OneMinusDstAlpha,
+                                    dst_factor: wgpu::BlendFactor::One,
+                                    operation: wgpu::BlendOperation::Add,
+                                },
+                                alpha: wgpu::BlendComponent {
+                                    src_factor: wgpu::BlendFactor::OneMinusDstAlpha,
+                                    dst_factor: wgpu::BlendFactor::One,
+                                    operation: wgpu::BlendOperation::Add,
+                                },
+                            }),
+                            write_mask: wgpu::ColorWrites::ALL,
+                        })],
+                        compilation_options: wgpu::PipelineCompilationOptions::default(),
+                    }),
+                    primitive: wgpu::PrimitiveState {
+                        topology: wgpu::PrimitiveTopology::TriangleStrip,
+                        strip_index_format: None,
+                        front_face: wgpu::FrontFace::Ccw,
+                        cull_mode: None,
+                        polygon_mode: wgpu::PolygonMode::Fill,
+                        unclipped_depth: false,
+                        conservative: false,
                     },
-                }),
-                write_mask: wgpu::ColorWrites::ALL,
-            });
-
-            let depth_stencil = DepthStencilKey::from(wgpu::DepthStencilState{
-                format: ctx.wgpu_ctx.depth_format,
-                depth_write_enabled: Some(false),
-                depth_compare: Some(wgpu::CompareFunction::LessEqual),
-                stencil: wgpu::StencilState::default(),
-                bias: wgpu::DepthBiasState::default(),
-            });
-
-            let key = FullscreenPipelineKey::fullscreen(
-                hash,
-                smallvec::smallvec![color_target],
-                // None, // No depth test for Gaussian splatting (pre-sorted)
-                Some(depth_stencil)
-            );
-
-            self.render_pipeline = Some(ctx.pipeline_cache.get_or_create_fullscreen(
-                device,
-                module,
-                &layout,
-                &key,
-                "GS Render Pipeline",
+                    depth_stencil: Some(wgpu::DepthStencilState {
+                        format: render_key.depth_format,
+                        depth_write_enabled: Some(false),
+                        depth_compare: Some(wgpu::CompareFunction::GreaterEqual),
+                        stencil: wgpu::StencilState::default(),
+                        bias: wgpu::DepthBiasState::default(),
+                    }),
+                    multisample: wgpu::MultisampleState {
+                        count: render_key.msaa_samples,
+                        mask: !0,
+                        alpha_to_coverage_enabled: false,
+                    },
+                    multiview_mask: None,
+                    cache: None,
+                },
             ));
+
+            self.render_pipeline_key = Some(render_key);
         }
     }
-
-    // =========================================================================
-    // Per-Cloud GPU Buffer Management
-    // =========================================================================
 
     fn create_cloud_gpu_data(
         &self,
@@ -618,20 +597,14 @@ impl GaussianSplattingFeature {
         queue: &wgpu::Queue,
         cloud: &GaussianCloud,
     ) -> CloudGpuData {
+        let num_points =
+            u32::try_from(cloud.num_points).expect("Gaussian cloud exceeds u32 capacity");
+        let sort_layout = sort_buffer_layout(cloud.num_points);
+        let upload_count = cloud.num_points.max(1);
 
-        let n = cloud.num_points as u64;
-        let gaussian_size = std::mem::size_of::<myth_resources::gaussian_splat::GaussianSplat>() as u64;
-        let sh_size = std::mem::size_of::<myth_resources::gaussian_splat::GaussianSHCoefficients>() as u64;
-        let splat_2d_size = std::mem::size_of::<Splat2D>() as u64;
-
-        // Compute sort buffer sizes
-        let num_sort_wgs = (n + SORT_KEYS_PER_WG as u64 - 1) / SORT_KEYS_PER_WG as u64;
-        let histogram_size = 256 * num_sort_wgs * 4 * 4; // 256 bins × wgs × 4 passes × u32
-
-        // ─── Create Buffers ────────────────────────────────────────
         let gaussian_buf = device.create_buffer(&wgpu::BufferDescriptor {
             label: Some("GS Gaussian Data"),
-            size: n * gaussian_size,
+            size: (upload_count * std::mem::size_of::<GaussianSplat>()) as u64,
             usage: wgpu::BufferUsages::STORAGE | wgpu::BufferUsages::COPY_DST,
             mapped_at_creation: false,
         });
@@ -639,7 +612,7 @@ impl GaussianSplattingFeature {
 
         let sh_buf = device.create_buffer(&wgpu::BufferDescriptor {
             label: Some("GS SH Coefficients"),
-            size: n * sh_size,
+            size: (upload_count * std::mem::size_of::<GaussianSHCoefficients>()) as u64,
             usage: wgpu::BufferUsages::STORAGE | wgpu::BufferUsages::COPY_DST,
             mapped_at_creation: false,
         });
@@ -647,58 +620,85 @@ impl GaussianSplattingFeature {
 
         let splat_2d_buf = device.create_buffer(&wgpu::BufferDescriptor {
             label: Some("GS Splat 2D"),
-            size: n * splat_2d_size,
+            size: (upload_count * std::mem::size_of::<Splat2D>()) as u64,
             usage: wgpu::BufferUsages::STORAGE,
             mapped_at_creation: false,
         });
 
-        let sort_depths_buf = device.create_buffer(&wgpu::BufferDescriptor {
-            label: Some("GS Sort Depths"),
-            size: n * 4,
-            usage: wgpu::BufferUsages::STORAGE,
-            mapped_at_creation: false,
-        });
-
-        let sort_indices_buf = device.create_buffer(&wgpu::BufferDescriptor {
-            label: Some("GS Sort Indices"),
-            size: n * 4,
-            usage: wgpu::BufferUsages::STORAGE,
-            mapped_at_creation: false,
-        });
-
-        let sort_dispatch_buf = device.create_buffer(&wgpu::BufferDescriptor {
-            label: Some("GS Sort Dispatch"),
-            size: 12, // 3 × u32
-            usage: wgpu::BufferUsages::STORAGE | wgpu::BufferUsages::COPY_DST,
-            mapped_at_creation: false,
-        });
-
-        let sort_infos_buf = device.create_buffer(&wgpu::BufferDescriptor {
+        let sort_infos = GpuSortInfos {
+            keys_size: 0,
+            padded_size: sort_layout.padded_key_capacity as u32,
+            passes: SORT_KEYVAL_PASSES,
+            even_pass: 0,
+            odd_pass: 0,
+        };
+        let sort_infos_buf = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
             label: Some("GS Sort Infos"),
-            size: std::mem::size_of::<GpuSortInfos>() as u64,
-            usage: wgpu::BufferUsages::STORAGE | wgpu::BufferUsages::COPY_DST,
-            mapped_at_creation: false,
+            contents: bytemuck::bytes_of(&sort_infos),
+            usage: wgpu::BufferUsages::STORAGE
+                | wgpu::BufferUsages::COPY_DST
+                | wgpu::BufferUsages::COPY_SRC,
         });
 
-        let sort_assist_a_buf = device.create_buffer(&wgpu::BufferDescriptor {
-            label: Some("GS Sort Assist A"),
-            size: n * 4,
+        let sort_dispatch = GpuDispatchIndirect {
+            dispatch_x: 0,
+            dispatch_y: 1,
+            dispatch_z: 1,
+        };
+        let sort_dispatch_buf = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
+            label: Some("GS Sort Dispatch"),
+            contents: bytemuck::bytes_of(&sort_dispatch),
+            usage: wgpu::BufferUsages::STORAGE
+                | wgpu::BufferUsages::COPY_DST
+                | wgpu::BufferUsages::INDIRECT,
+        });
+
+        let sort_internal_buf = device.create_buffer(&wgpu::BufferDescriptor {
+            label: Some("GS Sort Internal"),
+            size: (sort_layout.internal_buffer_words * std::mem::size_of::<u32>()) as u64,
             usage: wgpu::BufferUsages::STORAGE,
             mapped_at_creation: false,
         });
 
-        let sort_assist_b_buf = device.create_buffer(&wgpu::BufferDescriptor {
-            label: Some("GS Sort Assist B"),
-            size: n * 4,
+        let sort_key_buffer_size =
+            (sort_layout.padded_key_capacity * std::mem::size_of::<u32>()) as u64;
+        let sort_depths_a_buf = device.create_buffer(&wgpu::BufferDescriptor {
+            label: Some("GS Sort Depths A"),
+            size: sort_key_buffer_size,
+            usage: wgpu::BufferUsages::STORAGE,
+            mapped_at_creation: false,
+        });
+        let sort_depths_b_buf = device.create_buffer(&wgpu::BufferDescriptor {
+            label: Some("GS Sort Depths B"),
+            size: sort_key_buffer_size,
+            usage: wgpu::BufferUsages::STORAGE,
+            mapped_at_creation: false,
+        });
+        let sort_indices_a_buf = device.create_buffer(&wgpu::BufferDescriptor {
+            label: Some("GS Sort Indices A"),
+            size: sort_key_buffer_size,
+            usage: wgpu::BufferUsages::STORAGE,
+            mapped_at_creation: false,
+        });
+        let sort_indices_b_buf = device.create_buffer(&wgpu::BufferDescriptor {
+            label: Some("GS Sort Indices B"),
+            size: sort_key_buffer_size,
             usage: wgpu::BufferUsages::STORAGE,
             mapped_at_creation: false,
         });
 
-        let sort_histograms_buf = device.create_buffer(&wgpu::BufferDescriptor {
-            label: Some("GS Sort Histograms"),
-            size: histogram_size.max(4),
-            usage: wgpu::BufferUsages::STORAGE,
-            mapped_at_creation: false,
+        let draw_indirect = GpuDrawIndirect {
+            vertex_count: SPLAT_VERTEX_COUNT,
+            instance_count: 0,
+            base_vertex: 0,
+            base_instance: 0,
+        };
+        let draw_indirect_buf = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
+            label: Some("GS Draw Indirect"),
+            contents: bytemuck::bytes_of(&draw_indirect),
+            usage: wgpu::BufferUsages::INDIRECT
+                | wgpu::BufferUsages::COPY_DST
+                | wgpu::BufferUsages::COPY_SRC,
         });
 
         let camera_uniform_buf = device.create_buffer(&wgpu::BufferDescriptor {
@@ -715,7 +715,6 @@ impl GaussianSplattingFeature {
             mapped_at_creation: false,
         });
 
-        // ─── Build Bind Groups ─────────────────────────────────────
         let preprocess_bg0 = device.create_bind_group(&wgpu::BindGroupDescriptor {
             label: Some("GS Preprocess BG0"),
             layout: self.preprocess_layout_g0.as_ref().unwrap(),
@@ -754,11 +753,11 @@ impl GaussianSplattingFeature {
                 },
                 wgpu::BindGroupEntry {
                     binding: 1,
-                    resource: sort_depths_buf.as_entire_binding(),
+                    resource: sort_depths_a_buf.as_entire_binding(),
                 },
                 wgpu::BindGroupEntry {
                     binding: 2,
-                    resource: sort_indices_buf.as_entire_binding(),
+                    resource: sort_indices_a_buf.as_entire_binding(),
                 },
                 wgpu::BindGroupEntry {
                     binding: 3,
@@ -776,9 +775,9 @@ impl GaussianSplattingFeature {
             }],
         });
 
-        let sort_bg0 = device.create_bind_group(&wgpu::BindGroupDescriptor {
-            label: Some("GS Sort BG0"),
-            layout: self.sort_layout_g0.as_ref().unwrap(),
+        let sort_bg = device.create_bind_group(&wgpu::BindGroupDescriptor {
+            label: Some("GS Sort BG"),
+            layout: self.sort_layout.as_ref().unwrap(),
             entries: &[
                 wgpu::BindGroupEntry {
                     binding: 0,
@@ -786,50 +785,30 @@ impl GaussianSplattingFeature {
                 },
                 wgpu::BindGroupEntry {
                     binding: 1,
-                    resource: sort_depths_buf.as_entire_binding(),
+                    resource: sort_internal_buf.as_entire_binding(),
                 },
                 wgpu::BindGroupEntry {
                     binding: 2,
-                    resource: sort_indices_buf.as_entire_binding(),
+                    resource: sort_depths_a_buf.as_entire_binding(),
                 },
                 wgpu::BindGroupEntry {
                     binding: 3,
-                    resource: sort_dispatch_buf.as_entire_binding(),
+                    resource: sort_depths_b_buf.as_entire_binding(),
+                },
+                wgpu::BindGroupEntry {
+                    binding: 4,
+                    resource: sort_indices_a_buf.as_entire_binding(),
+                },
+                wgpu::BindGroupEntry {
+                    binding: 5,
+                    resource: sort_indices_b_buf.as_entire_binding(),
                 },
             ],
         });
 
-        let sort_bg1 = device.create_bind_group(&wgpu::BindGroupDescriptor {
-            label: Some("GS Sort BG1"),
-            layout: self.sort_layout_g1.as_ref().unwrap(),
-            entries: &[
-                wgpu::BindGroupEntry {
-                    binding: 0,
-                    resource: sort_assist_a_buf.as_entire_binding(),
-                },
-                wgpu::BindGroupEntry {
-                    binding: 1,
-                    resource: sort_assist_b_buf.as_entire_binding(),
-                },
-                wgpu::BindGroupEntry {
-                    binding: 2,
-                    resource: sort_histograms_buf.as_entire_binding(),
-                },
-            ],
-        });
-
-        let render_bg0 = device.create_bind_group(&wgpu::BindGroupDescriptor {
-            label: Some("GS Render BG0"),
-            layout: self.render_layout_g0.as_ref().unwrap(),
-            entries: &[wgpu::BindGroupEntry {
-                binding: 0,
-                resource: camera_uniform_buf.as_entire_binding(),
-            }],
-        });
-
-        let render_bg1 = device.create_bind_group(&wgpu::BindGroupDescriptor {
-            label: Some("GS Render BG1"),
-            layout: self.render_layout_g1.as_ref().unwrap(),
+        let render_bg = device.create_bind_group(&wgpu::BindGroupDescriptor {
+            label: Some("GS Render BG"),
+            layout: self.render_layout.as_ref().unwrap(),
             entries: &[
                 wgpu::BindGroupEntry {
                     binding: 0,
@@ -837,33 +816,32 @@ impl GaussianSplattingFeature {
                 },
                 wgpu::BindGroupEntry {
                     binding: 1,
-                    resource: sort_indices_buf.as_entire_binding(),
+                    resource: sort_indices_a_buf.as_entire_binding(),
                 },
             ],
         });
 
         CloudGpuData {
-            num_points: cloud.num_points as u32,
+            num_points,
             gaussian_buf,
             sh_buf,
             splat_2d_buf,
-            sort_depths_buf,
-            sort_indices_buf,
-            sort_dispatch_buf,
             sort_infos_buf,
-            sort_assist_a_buf,
-            sort_assist_b_buf,
-            sort_histograms_buf,
+            sort_dispatch_buf,
+            sort_internal_buf,
+            sort_depths_a_buf,
+            sort_depths_b_buf,
+            sort_indices_a_buf,
+            sort_indices_b_buf,
+            draw_indirect_buf,
             camera_uniform_buf,
             render_settings_buf,
             preprocess_bg0,
             preprocess_bg1,
             preprocess_bg2,
             preprocess_bg3,
-            sort_bg0,
-            sort_bg1,
-            render_bg0,
-            render_bg1,
+            sort_bg,
+            render_bg,
         }
     }
 
@@ -874,20 +852,13 @@ impl GaussianSplattingFeature {
         cloud: &GaussianCloud,
         viewport_size: (u32, u32),
     ) {
-
         let view = camera.view_matrix;
         let proj = camera.projection_matrix;
         let view_inv = view.inverse();
         let proj_inv = proj.inverse();
 
-        let fov_y = if camera.far.is_finite() {
-            2.0 * (1.0 / proj.y_axis.y).atan()
-        } else {
-            // Infinite projection
-            2.0 * (1.0 / proj.y_axis.y).atan()
-        };
-        let focal_y = viewport_size.1 as f32 / (2.0 * (fov_y / 2.0).tan());
-        let focal_x = focal_y * (viewport_size.0 as f32 / viewport_size.1 as f32);
+        let focal_x = (proj.x_axis.x * viewport_size.0 as f32 * 0.5).abs();
+        let focal_y = (proj.y_axis.y * viewport_size.1 as f32 * 0.5).abs();
 
         let camera_uniforms = GpuCameraUniforms {
             view: view.to_cols_array(),
@@ -897,60 +868,33 @@ impl GaussianSplattingFeature {
             viewport: [viewport_size.0 as f32, viewport_size.1 as f32],
             focal: [focal_x, focal_y],
         };
-
         queue.write_buffer(
             &data.camera_uniform_buf,
             0,
             bytemuck::bytes_of(&camera_uniforms),
         );
 
-        let scene_extent = cloud.scene_extent();
         let render_settings = GpuRenderSettings {
             gaussian_scaling: 1.0,
             max_sh_deg: cloud.sh_degree,
             mip_splatting: u32::from(cloud.mip_splatting),
             kernel_size: cloud.kernel_size,
-            scene_extent,
+            scene_extent: cloud.scene_extent().max(1e-5),
             _pad0: 0.0,
             _pad1: 0.0,
             _pad2: 0.0,
         };
-
         queue.write_buffer(
             &data.render_settings_buf,
             0,
             bytemuck::bytes_of(&render_settings),
         );
 
-        // Reset sort dispatch (will be incremented atomically by preprocess)
-        queue.write_buffer(&data.sort_dispatch_buf, 0, bytemuck::bytes_of(&[0u32; 3]));
-
-        // Reset sort infos (keys_size = 0, passes/even_pass set per-pass)
-        let sort_infos = GpuSortInfos {
-            keys_size: 0,
-            padded_size: 0,
-            passes: 0,
-            even_pass: 0,
-            odd_pass: 0,
-        };
-        queue.write_buffer(
-            &data.sort_infos_buf,
-            0,
-            bytemuck::bytes_of(&sort_infos),
-        );
+        queue.write_buffer(&data.sort_infos_buf, 0, bytemuck::bytes_of(&0u32));
+        queue.write_buffer(&data.sort_dispatch_buf, 0, bytemuck::bytes_of(&0u32));
+        queue.write_buffer(&data.draw_indirect_buf, 4, bytemuck::bytes_of(&0u32));
     }
 
-    // =========================================================================
-    // Add to Render Graph
-    // =========================================================================
-
-    /// Emit the Gaussian Splatting passes into the RDG.
-    ///
-    /// Inserts:
-    /// 1. One compute pass that preprocesses and sorts **all** active clouds.
-    /// 2. One render pass that draws all clouds in back-to-front order.
-    ///
-    /// The render pass writes to `active_color` with front-to-back blending.
     pub fn add_to_graph<'a>(
         &'a self,
         ctx: &mut GraphBuilderContext<'a, '_>,
@@ -961,70 +905,48 @@ impl GaussianSplattingFeature {
             return active_color;
         }
 
-        // ─── Resolve pipelines ─────────────────────────────────────
-        let preprocess_pipeline = self
-            .preprocess_pipeline
-            .map(|id| ctx.pipeline_cache.get_compute_pipeline(id));
-        let sort_histogram_pipeline = self
-            .sort_histogram_pipeline
-            .map(|id| ctx.pipeline_cache.get_compute_pipeline(id));
-        let sort_prefix_pipeline = self
-            .sort_prefix_pipeline
-            .map(|id| ctx.pipeline_cache.get_compute_pipeline(id));
-        let sort_scatter_pipeline = self
-            .sort_scatter_pipeline
-            .map(|id| ctx.pipeline_cache.get_compute_pipeline(id));
-        let render_pipeline = self
-            .render_pipeline
-            .map(|id| ctx.pipeline_cache.get_render_pipeline(id));
+        let preprocess_pipeline = self.preprocess_pipeline.as_ref();
+        let sort_pipelines = self.sort_pipelines.as_ref();
+        let render_pipeline = self.render_pipeline.as_ref();
 
-        // ─── Collect per-cloud references in sorted order ──────────
-        let mut compute_entries: Vec<CloudComputeEntry<'a>> =
-            Vec::with_capacity(self.sorted_order.len());
-        let mut render_entries: Vec<CloudRenderEntry<'a>> =
-            Vec::with_capacity(self.sorted_order.len());
+        let mut compute_entries = Vec::with_capacity(self.sorted_order.len());
+        let mut render_entries = Vec::with_capacity(self.sorted_order.len());
 
-        for &cloud_idx in &self.sorted_order {
-            let (_, _, ref gpu) = self.clouds[cloud_idx];
+        for &cloud_index in &self.sorted_order {
+            let (_, _, gpu) = &self.clouds[cloud_index];
             compute_entries.push(CloudComputeEntry {
                 preprocess_bg0: &gpu.preprocess_bg0,
                 preprocess_bg1: &gpu.preprocess_bg1,
                 preprocess_bg2: &gpu.preprocess_bg2,
                 preprocess_bg3: &gpu.preprocess_bg3,
-                sort_bg0: &gpu.sort_bg0,
-                sort_bg1: &gpu.sort_bg1,
+                sort_bg: &gpu.sort_bg,
                 sort_infos_buf: &gpu.sort_infos_buf,
+                sort_dispatch_buf: &gpu.sort_dispatch_buf,
+                draw_indirect_buf: &gpu.draw_indirect_buf,
                 num_points: gpu.num_points,
             });
             render_entries.push(CloudRenderEntry {
-                render_bg0: &gpu.render_bg0,
-                render_bg1: &gpu.render_bg1,
-                num_points: gpu.num_points,
+                render_bg: &gpu.render_bg,
+                draw_indirect_buf: &gpu.draw_indirect_buf,
             });
         }
 
-        // Allocate entry slices on the per-frame arena so PassNodes hold
-        // only `&'a [T]` (no Vec, no Drop) — required by AssertNoDrop.
         let compute_slice = ctx.graph.alloc_slice(&compute_entries);
         let render_slice = ctx.graph.alloc_slice(&render_entries);
 
-        // ─── Compute Pass: Preprocess + Sort (all clouds) ──────────
         ctx.graph.add_pass("GS_Compute", |builder| {
             builder.mark_side_effect();
             (
                 GaussianComputePassNode {
                     preprocess_pipeline,
-                    sort_histogram_pipeline,
-                    sort_prefix_pipeline,
-                    sort_scatter_pipeline,
+                    sort_pipelines,
                     clouds: compute_slice,
                 },
                 (),
             )
         });
 
-        // ─── Render Pass: Quad Drawing (all clouds, back-to-front) ─
-        let gs_color = ctx.graph.add_pass("GS_Render", |builder| {
+        ctx.graph.add_pass("GS_Render", |builder| {
             let color_out = builder.mutate_texture(active_color, "GS_Color");
             let _depth_in = builder.read_texture(active_depth);
             (
@@ -1036,15 +958,9 @@ impl GaussianSplattingFeature {
                 },
                 color_out,
             )
-        });
-
-        gs_color
+        })
     }
 }
-
-// =============================================================================
-// Per-Cloud Entry Types (references into Feature-owned data)
-// =============================================================================
 
 #[derive(Clone, Copy)]
 struct CloudComputeEntry<'a> {
@@ -1052,114 +968,103 @@ struct CloudComputeEntry<'a> {
     preprocess_bg1: &'a wgpu::BindGroup,
     preprocess_bg2: &'a wgpu::BindGroup,
     preprocess_bg3: &'a wgpu::BindGroup,
-    sort_bg0: &'a wgpu::BindGroup,
-    sort_bg1: &'a wgpu::BindGroup,
+    sort_bg: &'a wgpu::BindGroup,
     sort_infos_buf: &'a wgpu::Buffer,
+    sort_dispatch_buf: &'a wgpu::Buffer,
+    draw_indirect_buf: &'a wgpu::Buffer,
     num_points: u32,
 }
 
 #[derive(Clone, Copy)]
 struct CloudRenderEntry<'a> {
-    render_bg0: &'a wgpu::BindGroup,
-    render_bg1: &'a wgpu::BindGroup,
-    num_points: u32,
+    render_bg: &'a wgpu::BindGroup,
+    draw_indirect_buf: &'a wgpu::Buffer,
 }
-
-// =============================================================================
-// Compute PassNode (Preprocess + Sort) — iterates all clouds
-// =============================================================================
 
 struct GaussianComputePassNode<'a> {
     preprocess_pipeline: Option<&'a wgpu::ComputePipeline>,
-    sort_histogram_pipeline: Option<&'a wgpu::ComputePipeline>,
-    sort_prefix_pipeline: Option<&'a wgpu::ComputePipeline>,
-    sort_scatter_pipeline: Option<&'a wgpu::ComputePipeline>,
+    sort_pipelines: Option<&'a GaussianSortPipelines>,
     clouds: &'a [CloudComputeEntry<'a>],
 }
 
 impl PassNode<'_> for GaussianComputePassNode<'_> {
     fn execute(&self, _ctx: &ExecuteContext, encoder: &mut wgpu::CommandEncoder) {
-        let preprocess = self.preprocess_pipeline.expect("GS preprocess pipeline missing");
-        let sort_histogram = self.sort_histogram_pipeline.expect("GS sort histogram pipeline missing");
-        let sort_prefix = self.sort_prefix_pipeline.expect("GS sort prefix pipeline missing");
-        let sort_scatter = self.sort_scatter_pipeline.expect("GS sort scatter pipeline missing");
+        let preprocess_pipeline = self
+            .preprocess_pipeline
+            .expect("GS preprocess pipeline missing");
+        let sort_pipelines = self.sort_pipelines.expect("GS sort pipelines missing");
 
         for cloud in self.clouds {
-            let dispatch_wgs = (cloud.num_points + WG_SIZE - 1) / WG_SIZE;
+            let preprocess_workgroups =
+                (cloud.num_points + PREPROCESS_WG_SIZE - 1) / PREPROCESS_WG_SIZE;
 
-            // ─── Step 1: Preprocess ────────────────────────────
             {
                 let mut cpass = encoder.begin_compute_pass(&wgpu::ComputePassDescriptor {
                     label: Some("GS Preprocess"),
                     timestamp_writes: None,
                 });
-                cpass.set_pipeline(preprocess);
+                cpass.set_pipeline(preprocess_pipeline);
                 cpass.set_bind_group(0, cloud.preprocess_bg0, &[]);
                 cpass.set_bind_group(1, cloud.preprocess_bg1, &[]);
                 cpass.set_bind_group(2, cloud.preprocess_bg2, &[]);
                 cpass.set_bind_group(3, cloud.preprocess_bg3, &[]);
-                cpass.dispatch_workgroups(dispatch_wgs, 1, 1);
+                cpass.dispatch_workgroups(preprocess_workgroups, 1, 1);
             }
 
-            // ─── Step 2: Radix Sort (4 byte passes) ───────────
-            let num_sort_wgs = (cloud.num_points as u64 + SORT_KEYS_PER_WG as u64 - 1)
-                / SORT_KEYS_PER_WG as u64;
-            let prefix_wgs = ((256 * num_sort_wgs) + 255) / 256;
-
-            for pass_idx in 0u32..4 {
-                let even_pass = if pass_idx % 2 == 0 { 1u32 } else { 0u32 };
-                let odd_pass = if pass_idx % 2 == 1 { 1u32 } else { 0u32 };
-
-                let pass_data = [0u32, pass_idx, even_pass, odd_pass];
-                _ctx.queue.write_buffer(
-                    cloud.sort_infos_buf,
-                    4,
-                    bytemuck::cast_slice(&pass_data),
-                );
-
-                // Histogram
-                {
-                    let mut cpass = encoder.begin_compute_pass(&wgpu::ComputePassDescriptor {
-                        label: Some("GS Sort Histogram"),
-                        timestamp_writes: None,
-                    });
-                    cpass.set_pipeline(sort_histogram);
-                    cpass.set_bind_group(0, cloud.sort_bg0, &[]);
-                    cpass.set_bind_group(1, cloud.sort_bg1, &[]);
-                    cpass.dispatch_workgroups(num_sort_wgs as u32, 1, 1);
-                }
-
-                // Prefix Sum
-                {
-                    let mut cpass = encoder.begin_compute_pass(&wgpu::ComputePassDescriptor {
-                        label: Some("GS Sort Prefix"),
-                        timestamp_writes: None,
-                    });
-                    cpass.set_pipeline(sort_prefix);
-                    cpass.set_bind_group(0, cloud.sort_bg0, &[]);
-                    cpass.set_bind_group(1, cloud.sort_bg1, &[]);
-                    cpass.dispatch_workgroups(prefix_wgs as u32, 1, 1);
-                }
-
-                // Scatter
-                {
-                    let mut cpass = encoder.begin_compute_pass(&wgpu::ComputePassDescriptor {
-                        label: Some("GS Sort Scatter"),
-                        timestamp_writes: None,
-                    });
-                    cpass.set_pipeline(sort_scatter);
-                    cpass.set_bind_group(0, cloud.sort_bg0, &[]);
-                    cpass.set_bind_group(1, cloud.sort_bg1, &[]);
-                    cpass.dispatch_workgroups(num_sort_wgs as u32, 1, 1);
-                }
+            {
+                let mut cpass = encoder.begin_compute_pass(&wgpu::ComputePassDescriptor {
+                    label: Some("GS Sort Zero Histograms"),
+                    timestamp_writes: None,
+                });
+                cpass.set_pipeline(&sort_pipelines.zero_histograms);
+                cpass.set_bind_group(0, cloud.sort_bg, &[]);
+                cpass.dispatch_workgroups_indirect(cloud.sort_dispatch_buf, 0);
             }
+
+            {
+                let mut cpass = encoder.begin_compute_pass(&wgpu::ComputePassDescriptor {
+                    label: Some("GS Sort Histogram"),
+                    timestamp_writes: None,
+                });
+                cpass.set_pipeline(&sort_pipelines.calculate_histogram);
+                cpass.set_bind_group(0, cloud.sort_bg, &[]);
+                cpass.dispatch_workgroups_indirect(cloud.sort_dispatch_buf, 0);
+            }
+
+            {
+                let mut cpass = encoder.begin_compute_pass(&wgpu::ComputePassDescriptor {
+                    label: Some("GS Sort Prefix"),
+                    timestamp_writes: None,
+                });
+                cpass.set_pipeline(&sort_pipelines.prefix_histogram);
+                cpass.set_bind_group(0, cloud.sort_bg, &[]);
+                cpass.dispatch_workgroups(SORT_KEYVAL_PASSES, 1, 1);
+            }
+
+            {
+                let mut cpass = encoder.begin_compute_pass(&wgpu::ComputePassDescriptor {
+                    label: Some("GS Sort Scatter"),
+                    timestamp_writes: None,
+                });
+                cpass.set_bind_group(0, cloud.sort_bg, &[]);
+
+                cpass.set_pipeline(&sort_pipelines.scatter_even);
+                cpass.dispatch_workgroups_indirect(cloud.sort_dispatch_buf, 0);
+
+                cpass.set_pipeline(&sort_pipelines.scatter_odd);
+                cpass.dispatch_workgroups_indirect(cloud.sort_dispatch_buf, 0);
+
+                cpass.set_pipeline(&sort_pipelines.scatter_even);
+                cpass.dispatch_workgroups_indirect(cloud.sort_dispatch_buf, 0);
+
+                cpass.set_pipeline(&sort_pipelines.scatter_odd);
+                cpass.dispatch_workgroups_indirect(cloud.sort_dispatch_buf, 0);
+            }
+
+            encoder.copy_buffer_to_buffer(cloud.sort_infos_buf, 0, cloud.draw_indirect_buf, 4, 4);
         }
     }
 }
-
-// =============================================================================
-// Render PassNode — draws all clouds back-to-front
-// =============================================================================
 
 struct GaussianRenderPassNode<'a> {
     render_pipeline: Option<&'a wgpu::RenderPipeline>,
@@ -1170,14 +1075,12 @@ struct GaussianRenderPassNode<'a> {
 
 impl PassNode<'_> for GaussianRenderPassNode<'_> {
     fn execute(&self, ctx: &ExecuteContext, encoder: &mut wgpu::CommandEncoder) {
-        let pipeline = self.render_pipeline.expect("GS render pipeline missing");
+        let render_pipeline = self.render_pipeline.expect("GS render pipeline missing");
 
         let color_attachment = ctx
             .get_color_attachment(self.color_target, RenderTargetOps::Load, None)
             .expect("GS color target missing");
-
-        let depth_attachment = ctx
-            .get_depth_stencil_attachment(self.depth_target, 0.0);
+        let depth_attachment = ctx.get_depth_stencil_attachment(self.depth_target, 0.0);
 
         let mut rpass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
             label: Some("GS Render"),
@@ -1188,15 +1091,11 @@ impl PassNode<'_> for GaussianRenderPassNode<'_> {
             multiview_mask: None,
         });
 
-        rpass.set_pipeline(pipeline);
+        rpass.set_pipeline(render_pipeline);
 
-        // Draw all clouds in back-to-front order (sorted_order
-        // was already applied when building the entries).
         for cloud in self.clouds {
-            rpass.set_bind_group(0, cloud.render_bg0, &[]);
-            rpass.set_bind_group(1, cloud.render_bg1, &[]);
-            // 4 vertices per quad × num_points quads
-            rpass.draw(0..cloud.num_points * 4, 0..1);
+            rpass.set_bind_group(0, cloud.render_bg, &[]);
+            rpass.draw_indirect(cloud.draw_indirect_buf, 0);
         }
     }
 }

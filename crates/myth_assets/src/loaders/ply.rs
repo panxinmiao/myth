@@ -53,7 +53,9 @@ struct PropertyOffsets {
 
 fn parse_header<R: BufRead>(reader: &mut R) -> Result<PlyHeader> {
     let mut line = String::new();
-    reader.read_line(&mut line).map_err(|e| Error::Asset(AssetError::Io(e)))?;
+    reader
+        .read_line(&mut line)
+        .map_err(|e| Error::Asset(AssetError::Io(e)))?;
     if !line.trim().starts_with("ply") {
         return Err(Error::Asset(AssetError::Format("not a PLY file".into())));
     }
@@ -66,7 +68,9 @@ fn parse_header<R: BufRead>(reader: &mut R) -> Result<PlyHeader> {
 
     loop {
         line.clear();
-        reader.read_line(&mut line).map_err(|e| Error::Asset(AssetError::Io(e)))?;
+        reader
+            .read_line(&mut line)
+            .map_err(|e| Error::Asset(AssetError::Io(e)))?;
         let trimmed = line.trim();
 
         if trimmed == "end_header" {
@@ -133,9 +137,7 @@ fn parse_header<R: BufRead>(reader: &mut R) -> Result<PlyHeader> {
             .iter()
             .find(|(n, _)| n == name)
             .map(|(_, off)| *off)
-            .ok_or_else(|| {
-                Error::Asset(AssetError::Format(format!("missing property: {name}")))
-            })
+            .ok_or_else(|| Error::Asset(AssetError::Format(format!("missing property: {name}"))))
     };
 
     let x = find("x")?;
@@ -288,8 +290,11 @@ pub fn load_gaussian_ply<R: Read + Seek>(reader: R) -> Result<GaussianCloud> {
         aabb_max = aabb_max.max(pos);
 
         // Opacity (sigmoid activation)
-        let raw_opacity =
-            f32::from_le_bytes(vertex[offsets.opacity..offsets.opacity + 4].try_into().unwrap());
+        let raw_opacity = f32::from_le_bytes(
+            vertex[offsets.opacity..offsets.opacity + 4]
+                .try_into()
+                .unwrap(),
+        );
         let opacity = sigmoid(raw_opacity);
 
         // Scale (exponentiate from log-space)
@@ -313,8 +318,7 @@ pub fn load_gaussian_ply<R: Read + Seek>(reader: R) -> Result<GaussianCloud> {
         .exp();
 
         // Rotation quaternion (w, x, y, z) — normalise
-        let r0 =
-            f32::from_le_bytes(vertex[offsets.rot_0..offsets.rot_0 + 4].try_into().unwrap());
+        let r0 = f32::from_le_bytes(vertex[offsets.rot_0..offsets.rot_0 + 4].try_into().unwrap());
         let r1 = f32::from_le_bytes(
             vertex[offsets.rot_0 + 4..offsets.rot_0 + 8]
                 .try_into()
