@@ -5,8 +5,8 @@
 //! 1. Preprocess — project 3D Gaussians to 2D screen-space splats, evaluate
 //!    SH colour, cull invisible points, and emit reverse-Z depth keys.
 //! 2. GPU radix sort — ported from web-splat and adapted to Myth's RDG pass
-//!    execution model. Sorting is front-to-back to match the blend equation.
-//! 3. Render — draw storage-buffer-pulled triangle strips with front-to-back
+//!    execution model. Sorting is back-to-front to match the blend equation.
+//! 3. Render — draw storage-buffer-pulled triangle strips with back-to-front
 //!    compositing and reverse-Z depth testing against opaque geometry.
 //!
 //! Multiple Gaussian clouds are supported simultaneously. Each cloud owns its
@@ -328,8 +328,9 @@ impl GaussianSplattingFeature {
             .collect();
 
         cloud_order.sort_by(|left, right| {
-            left.1
-                .partial_cmp(&right.1)
+            right
+                .1
+                .partial_cmp(&left.1)
                 .unwrap_or(std::cmp::Ordering::Equal)
         });
         self.sorted_order = cloud_order.into_iter().map(|(index, _)| index).collect();
@@ -547,13 +548,13 @@ impl GaussianSplattingFeature {
                             format: HDR_TEXTURE_FORMAT,
                             blend: Some(wgpu::BlendState {
                                 color: wgpu::BlendComponent {
-                                    src_factor: wgpu::BlendFactor::OneMinusDstAlpha,
-                                    dst_factor: wgpu::BlendFactor::One,
+                                    src_factor: wgpu::BlendFactor::One,
+                                    dst_factor: wgpu::BlendFactor::OneMinusSrcAlpha,
                                     operation: wgpu::BlendOperation::Add,
                                 },
                                 alpha: wgpu::BlendComponent {
-                                    src_factor: wgpu::BlendFactor::OneMinusDstAlpha,
-                                    dst_factor: wgpu::BlendFactor::One,
+                                    src_factor: wgpu::BlendFactor::One,
+                                    dst_factor: wgpu::BlendFactor::OneMinusSrcAlpha,
                                     operation: wgpu::BlendOperation::Add,
                                 },
                             }),
@@ -1041,23 +1042,19 @@ impl PassNode<'_> for GaussianComputePassNode<'_> {
                 cpass.dispatch_workgroups(SORT_KEYVAL_PASSES, 1, 1);
             }
 
-            {
+            for pass_index in 0..SORT_KEYVAL_PASSES {
                 let mut cpass = encoder.begin_compute_pass(&wgpu::ComputePassDescriptor {
                     label: Some("GS Sort Scatter"),
                     timestamp_writes: None,
                 });
                 cpass.set_bind_group(0, cloud.sort_bg, &[]);
 
-                cpass.set_pipeline(&sort_pipelines.scatter_even);
-                cpass.dispatch_workgroups_indirect(cloud.sort_dispatch_buf, 0);
+                if (pass_index % 2) == 0 {
+                    cpass.set_pipeline(&sort_pipelines.scatter_even);
+                } else {
+                    cpass.set_pipeline(&sort_pipelines.scatter_odd);
+                }
 
-                cpass.set_pipeline(&sort_pipelines.scatter_odd);
-                cpass.dispatch_workgroups_indirect(cloud.sort_dispatch_buf, 0);
-
-                cpass.set_pipeline(&sort_pipelines.scatter_even);
-                cpass.dispatch_workgroups_indirect(cloud.sort_dispatch_buf, 0);
-
-                cpass.set_pipeline(&sort_pipelines.scatter_odd);
                 cpass.dispatch_workgroups_indirect(cloud.sort_dispatch_buf, 0);
             }
 
