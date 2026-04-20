@@ -351,6 +351,7 @@ pub fn load_gaussian_ply<R: Read + Seek>(reader: R) -> Result<GaussianCloud> {
             y,
             z,
             opacity: pack2x16float(opacity, 0.0),
+            sh_idx: i as u32,
             cov: packed_cov,
         });
 

@@ -31,35 +31,38 @@ struct CameraUniforms {
     focal: vec2<f32>,
 };
 
-struct Gaussian {
+struct GaussianCore {
     x: f32,
     y: f32,
     z: f32,
     opacity: u32,
+    sh_idx: u32,
+};
+
+struct GaussianCovariance {
     cov: array<u32, 3>,
 };
 
-struct Splat {
+struct SplatGeometry {
     pos: vec2<f32>,
     v_0: u32,
     v_1: u32,
+};
+
+struct SplatAppearance {
     depth: f32,
     color_0: u32,
     color_1: u32,
-};
-
-struct DispatchIndirect {
-    dispatch_x: atomic<u32>,
-    dispatch_y: u32,
-    dispatch_z: u32,
+    _pad: u32,
 };
 
 struct SortInfos {
     keys_size: atomic<u32>,
     padded_size: u32,
     passes: u32,
-    even_pass: u32,
-    odd_pass: u32,
+    dispatch_x: atomic<u32>,
+    dispatch_y: u32,
+    dispatch_z: u32,
 };
 
 struct RenderSettings {
@@ -77,11 +80,15 @@ struct RenderSettings {
 var<uniform> camera: CameraUniforms;
 
 @group(1) @binding(0)
-var<storage, read> gaussians: array<Gaussian>;
+var<storage, read> gaussians: array<GaussianCore>;
 @group(1) @binding(1)
-var<storage, read> sh_coefs: array<array<u32, 24>>;
+var<storage, read> gaussian_covariances: array<GaussianCovariance>;
 @group(1) @binding(2)
-var<storage, read_write> points_2d: array<Splat>;
+var<storage, read> sh_coefs: array<array<u32, 24>>;
+@group(1) @binding(3)
+var<storage, read_write> points_geom: array<SplatGeometry>;
+@group(1) @binding(4)
+var<storage, read_write> points_attr: array<SplatAppearance>;
 
 @group(2) @binding(0)
 var<storage, read_write> sort_infos: SortInfos;
@@ -89,29 +96,27 @@ var<storage, read_write> sort_infos: SortInfos;
 var<storage, read_write> sort_depths: array<u32>;
 @group(2) @binding(2)
 var<storage, read_write> sort_indices: array<u32>;
-@group(2) @binding(3)
-var<storage, read_write> sort_dispatch: DispatchIndirect;
 
 @group(3) @binding(0)
 var<uniform> render_settings: RenderSettings;
 
-fn sh_coef(splat_idx: u32, c_idx: u32) -> vec3<f32> {
-    let a = unpack2x16float(sh_coefs[splat_idx][(c_idx * 3u + 0u) / 2u])[(c_idx * 3u + 0u) % 2u];
-    let b = unpack2x16float(sh_coefs[splat_idx][(c_idx * 3u + 1u) / 2u])[(c_idx * 3u + 1u) % 2u];
-    let c = unpack2x16float(sh_coefs[splat_idx][(c_idx * 3u + 2u) / 2u])[(c_idx * 3u + 2u) % 2u];
+fn sh_coef(sh_idx: u32, c_idx: u32) -> vec3<f32> {
+    let a = unpack2x16float(sh_coefs[sh_idx][(c_idx * 3u + 0u) / 2u])[(c_idx * 3u + 0u) % 2u];
+    let b = unpack2x16float(sh_coefs[sh_idx][(c_idx * 3u + 1u) / 2u])[(c_idx * 3u + 1u) % 2u];
+    let c = unpack2x16float(sh_coefs[sh_idx][(c_idx * 3u + 2u) / 2u])[(c_idx * 3u + 2u) % 2u];
     return vec3<f32>(a, b, c);
 }
 
-fn evaluate_sh(dir: vec3<f32>, v_idx: u32, sh_deg: u32) -> vec3<f32> {
-    var result = SH_C0 * sh_coef(v_idx, 0u);
+fn evaluate_sh(dir: vec3<f32>, sh_idx: u32, sh_deg: u32) -> vec3<f32> {
+    var result = SH_C0 * sh_coef(sh_idx, 0u);
 
     if sh_deg > 0u {
         let x = dir.x;
         let y = dir.y;
         let z = dir.z;
-        result += -SH_C1 * y * sh_coef(v_idx, 1u)
-                + SH_C1 * z * sh_coef(v_idx, 2u)
-                - SH_C1 * x * sh_coef(v_idx, 3u);
+        result += -SH_C1 * y * sh_coef(sh_idx, 1u)
+                + SH_C1 * z * sh_coef(sh_idx, 2u)
+                - SH_C1 * x * sh_coef(sh_idx, 3u);
 
         if sh_deg > 1u {
             let xx = x * x;
@@ -120,20 +125,20 @@ fn evaluate_sh(dir: vec3<f32>, v_idx: u32, sh_deg: u32) -> vec3<f32> {
             let xy = x * y;
             let yz = y * z;
             let xz = x * z;
-            result += SH_C2[0] * xy * sh_coef(v_idx, 4u)
-                    + SH_C2[1] * yz * sh_coef(v_idx, 5u)
-                    + SH_C2[2] * (2.0 * zz - xx - yy) * sh_coef(v_idx, 6u)
-                    + SH_C2[3] * xz * sh_coef(v_idx, 7u)
-                    + SH_C2[4] * (xx - yy) * sh_coef(v_idx, 8u);
+            result += SH_C2[0] * xy * sh_coef(sh_idx, 4u)
+                    + SH_C2[1] * yz * sh_coef(sh_idx, 5u)
+                    + SH_C2[2] * (2.0 * zz - xx - yy) * sh_coef(sh_idx, 6u)
+                    + SH_C2[3] * xz * sh_coef(sh_idx, 7u)
+                    + SH_C2[4] * (xx - yy) * sh_coef(sh_idx, 8u);
 
             if sh_deg > 2u {
-                result += SH_C3[0] * y * (3.0 * xx - yy) * sh_coef(v_idx, 9u)
-                        + SH_C3[1] * xy * z * sh_coef(v_idx, 10u)
-                        + SH_C3[2] * y * (4.0 * zz - xx - yy) * sh_coef(v_idx, 11u)
-                        + SH_C3[3] * z * (2.0 * zz - 3.0 * xx - 3.0 * yy) * sh_coef(v_idx, 12u)
-                        + SH_C3[4] * x * (4.0 * zz - xx - yy) * sh_coef(v_idx, 13u)
-                        + SH_C3[5] * z * (xx - yy) * sh_coef(v_idx, 14u)
-                        + SH_C3[6] * x * (xx - 3.0 * yy) * sh_coef(v_idx, 15u);
+                result += SH_C3[0] * y * (3.0 * xx - yy) * sh_coef(sh_idx, 9u)
+                        + SH_C3[1] * xy * z * sh_coef(sh_idx, 10u)
+                        + SH_C3[2] * y * (4.0 * zz - xx - yy) * sh_coef(sh_idx, 11u)
+                        + SH_C3[3] * z * (2.0 * zz - 3.0 * xx - 3.0 * yy) * sh_coef(sh_idx, 12u)
+                        + SH_C3[4] * x * (4.0 * zz - xx - yy) * sh_coef(sh_idx, 13u)
+                        + SH_C3[5] * z * (xx - yy) * sh_coef(sh_idx, 14u)
+                        + SH_C3[6] * x * (xx - 3.0 * yy) * sh_coef(sh_idx, 15u);
             }
         }
     }
@@ -142,9 +147,9 @@ fn evaluate_sh(dir: vec3<f32>, v_idx: u32, sh_deg: u32) -> vec3<f32> {
 }
 
 fn cov_coefs(v_idx: u32) -> array<f32, 6> {
-    let a = unpack2x16float(gaussians[v_idx].cov[0]);
-    let b = unpack2x16float(gaussians[v_idx].cov[1]);
-    let c = unpack2x16float(gaussians[v_idx].cov[2]);
+    let a = unpack2x16float(gaussian_covariances[v_idx].cov[0]);
+    let b = unpack2x16float(gaussian_covariances[v_idx].cov[1]);
+    let c = unpack2x16float(gaussian_covariances[v_idx].cov[2]);
     return array<f32, 6>(a.x, a.y, b.x, b.y, c.x, c.y);
 }
 
@@ -167,7 +172,6 @@ fn main(@builtin(global_invocation_id) gid: vec3<u32>) {
     let viewport = camera.viewport;
     let vertex = gaussians[idx];
     let a = unpack2x16float(vertex.opacity);
-    // flip y and z to convert from right-handed to left-handed coordinate system
     let xyz = vec3<f32>(vertex.x, -vertex.y, -vertex.z);
     var opacity = a.x;
 
@@ -238,23 +242,27 @@ fn main(@builtin(global_invocation_id) gid: vec3<u32>) {
 
     let camera_pos = camera.view_inv[3].xyz;
     let dir = normalize(xyz - camera_pos);
+    let sh_idx = min(vertex.sh_idx, max(arrayLength(&sh_coefs), 1u) - 1u);
 
     let dir_colmap = vec3<f32>(dir.x, -dir.y, -dir.z);
 
     let color = vec4<f32>(
-        max(vec3<f32>(0.0), evaluate_sh(dir_colmap, idx, render_settings.max_sh_deg)),
+        max(vec3<f32>(0.0), evaluate_sh(dir_colmap, sh_idx, render_settings.max_sh_deg)),
         opacity
     );
 
     let store_idx = atomicAdd(&sort_infos.keys_size, 1u);
     let v = vec4<f32>(v1 / viewport, v2 / viewport);
-    points_2d[store_idx] = Splat(
+    points_geom[store_idx] = SplatGeometry(
         center_ndc,
         pack2x16float(v.xy),
         pack2x16float(v.zw),
+    );
+    points_attr[store_idx] = SplatAppearance(
         center_depth,
         pack2x16float(color.rg),
         pack2x16float(color.ba),
+        0u,
     );
 
     sort_depths[store_idx] = bitcast<u32>(center_depth);
@@ -262,6 +270,6 @@ fn main(@builtin(global_invocation_id) gid: vec3<u32>) {
 
     let keys_per_wg = 256u * 15u;
     if (store_idx % keys_per_wg) == 0u {
-        atomicAdd(&sort_dispatch.dispatch_x, 1u);
+        atomicAdd(&sort_infos.dispatch_x, 1u);
     }
 }

@@ -16,8 +16,9 @@ use glam::Vec3;
 /// (6 `f16` values packed into 3 `u32` slots) to match the format used
 /// in the preprocessing compute shader.
 ///
-/// The spherical-harmonic DC component and per-Gaussian metadata are
-/// stored in the separate [`GaussianSHCoefficients`] buffer.
+/// The spherical-harmonic data lives in a separate [`GaussianSHCoefficients`]
+/// table. Each splat stores an index into that table so NPZ assets can keep
+/// their shared SH features compressed instead of expanding them per point.
 #[repr(C)]
 #[derive(Clone, Copy, Debug, Pod, Zeroable)]
 pub struct GaussianSplat {
@@ -30,6 +31,8 @@ pub struct GaussianSplat {
     /// Pre-activated opacity stored as a packed `f16` pair
     /// (only the lower half-float is used; the upper half is padding).
     pub opacity: u32,
+    /// Index into the SH coefficient table.
+    pub sh_idx: u32,
     /// Upper triangle of the 3×3 covariance matrix, packed as
     /// `[pack2x16float(c00, c01), pack2x16float(c02, c11), pack2x16float(c12, c22)]`.
     pub cov: [u32; 3],
@@ -80,7 +83,7 @@ pub const MAX_SH_DEGREE: u32 = 3;
 pub struct GaussianCloud {
     /// Raw Gaussian primitive data.
     pub gaussians: Vec<GaussianSplat>,
-    /// Per-Gaussian SH coefficients (same length as `gaussians`).
+    /// SH coefficient table referenced by [`GaussianSplat::sh_idx`].
     pub sh_coefficients: Vec<GaussianSHCoefficients>,
     /// Spherical-harmonic degree (0–3).
     pub sh_degree: u32,

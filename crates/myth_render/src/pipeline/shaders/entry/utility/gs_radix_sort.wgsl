@@ -20,8 +20,9 @@ struct SortInfos {
     keys_size: u32,
     padded_size: u32,
     passes: u32,
-    even_pass: u32,
-    odd_pass: u32,
+    dispatch_x: u32,
+    dispatch_y: u32,
+    dispatch_z: u32,
 };
 
 @group(0) @binding(0)
@@ -39,10 +40,10 @@ var<storage, read_write> payload_b: array<u32>;
 
 @compute @workgroup_size({{ HISTOGRAM_WG_SIZE }})
 fn zero_histograms(@builtin(global_invocation_id) gid: vec3<u32>, @builtin(num_workgroups) nwg: vec3<u32>) {
-    if gid.x == 0u {
-        infos.even_pass = 0u;
-        infos.odd_pass = 1u;
-    }
+    // if gid.x == 0u {
+    //     infos.even_pass = 0u;
+    //     infos.odd_pass = 1u;
+    // }
 
     let scatter_block_kvs = histogram_wg_size * rs_scatter_block_rows;
     let scatter_blocks_ru = (infos.keys_size + scatter_block_kvs - 1u) / scatter_block_kvs;
@@ -355,21 +356,56 @@ fn scatter(
     }
 }
 
+// @compute @workgroup_size({{ SCATTER_WG_SIZE }})
+// fn scatter_even(
+//     @builtin(workgroup_id) wid: vec3<u32>,
+//     @builtin(local_invocation_id) lid: vec3<u32>,
+//     @builtin(global_invocation_id) gid: vec3<u32>,
+//     @builtin(num_workgroups) nwg: vec3<u32>,
+// ) {
+//     if gid.x == 0u {
+//         infos.odd_pass = (infos.odd_pass + 1u) % 2u;
+//     }
+//     let cur_pass = infos.even_pass * 2u;
+
+//     fill_even_kv(wid.x, lid.x);
+//     scatter(cur_pass, lid, gid, wid, nwg, 0u, 1u, 2u);
+
+//     for (var i = 0u; i < rs_scatter_block_rows; i++) {
+//         keys_b[kr[i]] = kv[i];
+//         payload_b[kr[i]] = pv[i];
+//     }
+// }
+
+// @compute @workgroup_size({{ SCATTER_WG_SIZE }})
+// fn scatter_odd(
+//     @builtin(workgroup_id) wid: vec3<u32>,
+//     @builtin(local_invocation_id) lid: vec3<u32>,
+//     @builtin(global_invocation_id) gid: vec3<u32>,
+//     @builtin(num_workgroups) nwg: vec3<u32>,
+// ) {
+//     if gid.x == 0u {
+//         infos.even_pass = (infos.even_pass + 1u) % 2u;
+//     }
+//     let cur_pass = infos.odd_pass * 2u + 1u;
+
+//     fill_odd_kv(wid.x, lid.x);
+//     scatter(cur_pass, lid, gid, wid, nwg, 2u, 3u, 0u);
+
+//     for (var i = 0u; i < rs_scatter_block_rows; i++) {
+//         keys_a[kr[i]] = kv[i];
+//         payload_a[kr[i]] = pv[i];
+//     }
+// }
+
+
 @compute @workgroup_size({{ SCATTER_WG_SIZE }})
-fn scatter_even(
-    @builtin(workgroup_id) wid: vec3<u32>,
-    @builtin(local_invocation_id) lid: vec3<u32>,
-    @builtin(global_invocation_id) gid: vec3<u32>,
-    @builtin(num_workgroups) nwg: vec3<u32>,
+fn scatter_pass_0(
+    @builtin(workgroup_id) wid: vec3<u32>, @builtin(local_invocation_id) lid: vec3<u32>,
+    @builtin(global_invocation_id) gid: vec3<u32>, @builtin(num_workgroups) nwg: vec3<u32>
 ) {
-    if gid.x == 0u {
-        infos.odd_pass = (infos.odd_pass + 1u) % 2u;
-    }
-    let cur_pass = infos.even_pass * 2u;
-
     fill_even_kv(wid.x, lid.x);
-    scatter(cur_pass, lid, gid, wid, nwg, 0u, 1u, 2u);
-
+    scatter(0u, lid, gid, wid, nwg, 0u, 1u, 2u); // 固化 pass_ = 0u
     for (var i = 0u; i < rs_scatter_block_rows; i++) {
         keys_b[kr[i]] = kv[i];
         payload_b[kr[i]] = pv[i];
@@ -377,20 +413,38 @@ fn scatter_even(
 }
 
 @compute @workgroup_size({{ SCATTER_WG_SIZE }})
-fn scatter_odd(
-    @builtin(workgroup_id) wid: vec3<u32>,
-    @builtin(local_invocation_id) lid: vec3<u32>,
-    @builtin(global_invocation_id) gid: vec3<u32>,
-    @builtin(num_workgroups) nwg: vec3<u32>,
+fn scatter_pass_1(
+    @builtin(workgroup_id) wid: vec3<u32>, @builtin(local_invocation_id) lid: vec3<u32>,
+    @builtin(global_invocation_id) gid: vec3<u32>, @builtin(num_workgroups) nwg: vec3<u32>
 ) {
-    if gid.x == 0u {
-        infos.even_pass = (infos.even_pass + 1u) % 2u;
-    }
-    let cur_pass = infos.odd_pass * 2u + 1u;
-
     fill_odd_kv(wid.x, lid.x);
-    scatter(cur_pass, lid, gid, wid, nwg, 2u, 3u, 0u);
+    scatter(1u, lid, gid, wid, nwg, 2u, 3u, 0u); // 固化 pass_ = 1u
+    for (var i = 0u; i < rs_scatter_block_rows; i++) {
+        keys_a[kr[i]] = kv[i];
+        payload_a[kr[i]] = pv[i];
+    }
+}
 
+@compute @workgroup_size({{ SCATTER_WG_SIZE }})
+fn scatter_pass_2(
+    @builtin(workgroup_id) wid: vec3<u32>, @builtin(local_invocation_id) lid: vec3<u32>,
+    @builtin(global_invocation_id) gid: vec3<u32>, @builtin(num_workgroups) nwg: vec3<u32>
+) {
+    fill_even_kv(wid.x, lid.x);
+    scatter(2u, lid, gid, wid, nwg, 0u, 1u, 2u); // 固化 pass_ = 2u
+    for (var i = 0u; i < rs_scatter_block_rows; i++) {
+        keys_b[kr[i]] = kv[i];
+        payload_b[kr[i]] = pv[i];
+    }
+}
+
+@compute @workgroup_size({{ SCATTER_WG_SIZE }})
+fn scatter_pass_3(
+    @builtin(workgroup_id) wid: vec3<u32>, @builtin(local_invocation_id) lid: vec3<u32>,
+    @builtin(global_invocation_id) gid: vec3<u32>, @builtin(num_workgroups) nwg: vec3<u32>
+) {
+    fill_odd_kv(wid.x, lid.x);
+    scatter(3u, lid, gid, wid, nwg, 2u, 3u, 0u); // 固化 pass_ = 3u
     for (var i = 0u; i < rs_scatter_block_rows; i++) {
         keys_a[kr[i]] = kv[i];
         payload_a[kr[i]] = pv[i];

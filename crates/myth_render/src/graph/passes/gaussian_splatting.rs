@@ -25,9 +25,7 @@ use crate::graph::core::{
 };
 use crate::pipeline::{ShaderCompilationOptions, ShaderSource};
 use myth_resources::GaussianCloudHandle;
-use myth_resources::gaussian_splat::{
-    GaussianCloud, GaussianSHCoefficients, GaussianSplat, Splat2D,
-};
+use myth_resources::gaussian_splat::{GaussianCloud, GaussianSHCoefficients};
 use myth_scene::camera::RenderCamera;
 
 const PREPROCESS_WG_SIZE: u32 = 256;
@@ -43,6 +41,7 @@ const SORT_SCATTER_BLOCK_ROWS: usize = SORT_HISTOGRAM_BLOCK_ROWS;
 const SORT_KEYS_PER_WG: usize = SORT_HISTOGRAM_WG_SIZE as usize * SORT_HISTOGRAM_BLOCK_ROWS;
 
 const SPLAT_VERTEX_COUNT: u32 = 4;
+const SORT_DISPATCH_INDIRECT_OFFSET: u64 = std::mem::size_of::<[u32; 3]>() as u64;
 
 #[repr(C)]
 #[derive(Clone, Copy, bytemuck::Pod, bytemuck::Zeroable)]
@@ -74,13 +73,6 @@ struct GpuSortInfos {
     keys_size: u32,
     padded_size: u32,
     passes: u32,
-    even_pass: u32,
-    odd_pass: u32,
-}
-
-#[repr(C)]
-#[derive(Clone, Copy, bytemuck::Pod, bytemuck::Zeroable)]
-struct GpuDispatchIndirect {
     dispatch_x: u32,
     dispatch_y: u32,
     dispatch_z: u32,
@@ -93,6 +85,39 @@ struct GpuDrawIndirect {
     instance_count: u32,
     base_vertex: u32,
     base_instance: u32,
+}
+
+#[repr(C)]
+#[derive(Clone, Copy, bytemuck::Pod, bytemuck::Zeroable)]
+struct GpuGaussianCore {
+    x: f32,
+    y: f32,
+    z: f32,
+    opacity: u32,
+    sh_idx: u32,
+}
+
+#[repr(C)]
+#[derive(Clone, Copy, bytemuck::Pod, bytemuck::Zeroable)]
+struct GpuGaussianCovariance {
+    cov: [u32; 3],
+}
+
+#[repr(C)]
+#[derive(Clone, Copy, bytemuck::Pod, bytemuck::Zeroable)]
+struct GpuSplatGeometry {
+    pos: [f32; 2],
+    v0: u32,
+    v1: u32,
+}
+
+#[repr(C)]
+#[derive(Clone, Copy, bytemuck::Pod, bytemuck::Zeroable)]
+struct GpuSplatAppearance {
+    depth: f32,
+    color_rg: u32,
+    color_ba: u32,
+    _pad: u32,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -181,15 +206,19 @@ struct GaussianSortPipelines {
     zero_histograms: wgpu::ComputePipeline,
     calculate_histogram: wgpu::ComputePipeline,
     prefix_histogram: wgpu::ComputePipeline,
-    scatter_even: wgpu::ComputePipeline,
-    scatter_odd: wgpu::ComputePipeline,
+    scatter_0: wgpu::ComputePipeline,
+    scatter_1: wgpu::ComputePipeline,
+    scatter_2: wgpu::ComputePipeline,
+    scatter_3: wgpu::ComputePipeline,
 }
 
 struct CloudGpuData {
     num_points: u32,
+    num_sh_coefficients: u32,
     sort_layout: SortBufferLayout,
 
-    gaussian_buf: Tracked<wgpu::Buffer>,
+    gaussian_core_buf: Tracked<wgpu::Buffer>,
+    gaussian_cov_buf: Tracked<wgpu::Buffer>,
     sh_buf: Tracked<wgpu::Buffer>,
     camera_uniform_buf: Tracked<wgpu::Buffer>,
     render_settings_buf: Tracked<wgpu::Buffer>,
@@ -197,9 +226,11 @@ struct CloudGpuData {
 
 #[derive(Clone, Copy)]
 struct CloudGraphBuffers {
-    gaussian_buf: BufferNodeId,
+    gaussian_core_buf: BufferNodeId,
+    gaussian_cov_buf: BufferNodeId,
     sh_buf: BufferNodeId,
-    splat_2d_buf: BufferNodeId,
+    splat_geom_buf: BufferNodeId,
+    splat_attr_buf: BufferNodeId,
     sort_infos_buf: BufferNodeId,
     sort_dispatch_buf: BufferNodeId,
     sort_internal_buf: BufferNodeId,
@@ -212,7 +243,6 @@ struct CloudGraphBuffers {
     render_settings_buf: BufferNodeId,
     num_points: u32,
     sort_infos_init: GpuSortInfos,
-    sort_dispatch_init: GpuDispatchIndirect,
     draw_indirect_init: GpuDrawIndirect,
 }
 
@@ -409,11 +439,13 @@ impl GaussianSplattingFeature {
 
         self.preprocess_layout_g1 = Some(Tracked::new(device.create_bind_group_layout(
             &wgpu::BindGroupLayoutDescriptor {
-                label: Some("GS Preprocess G1 (Gaussians + SH + Splats)"),
+                label: Some("GS Preprocess G1 (Gaussians + SH + Split Splats)"),
                 entries: &[
                     storage_ro_entry(0, cs),
                     storage_ro_entry(1, cs),
-                    storage_rw_entry(2, cs),
+                    storage_ro_entry(2, cs),
+                    storage_rw_entry(3, cs),
+                    storage_rw_entry(4, cs),
                 ],
             },
         )));
@@ -425,7 +457,7 @@ impl GaussianSplattingFeature {
                     storage_rw_entry(0, cs),
                     storage_rw_entry(1, cs),
                     storage_rw_entry(2, cs),
-                    storage_rw_entry(3, cs),
+                    // storage_rw_entry(3, cs),
                 ],
             },
         )));
@@ -454,7 +486,11 @@ impl GaussianSplattingFeature {
         self.render_layout = Some(Tracked::new(device.create_bind_group_layout(
             &wgpu::BindGroupLayoutDescriptor {
                 label: Some("GS Render"),
-                entries: &[storage_ro_entry(0, vs), storage_ro_entry(1, vs)],
+                entries: &[
+                    storage_ro_entry(0, vs),
+                    storage_ro_entry(1, vs),
+                    storage_ro_entry(2, vs),
+                ],
             },
         )));
     }
@@ -526,8 +562,10 @@ impl GaussianSplattingFeature {
                     "GS Sort Calculate Histogram",
                 ),
                 prefix_histogram: make_pipeline("prefix_histogram", "GS Sort Prefix Histogram"),
-                scatter_even: make_pipeline("scatter_even", "GS Sort Scatter Even"),
-                scatter_odd: make_pipeline("scatter_odd", "GS Sort Scatter Odd"),
+                scatter_0: make_pipeline("scatter_pass_0", "GS Sort Scatter Pass 0"),
+                scatter_1: make_pipeline("scatter_pass_1", "GS Sort Scatter Pass 1"),
+                scatter_2: make_pipeline("scatter_pass_2", "GS Sort Scatter Pass 2"),
+                scatter_3: make_pipeline("scatter_pass_3", "GS Sort Scatter Pass 3"),
             });
         }
 
@@ -619,20 +657,48 @@ impl GaussianSplattingFeature {
     ) -> CloudGpuData {
         let num_points =
             u32::try_from(cloud.num_points).expect("Gaussian cloud exceeds u32 capacity");
+        let num_sh_coefficients = u32::try_from(cloud.sh_coefficients.len())
+            .expect("Gaussian SH coefficient table exceeds u32 capacity");
         let sort_layout = sort_buffer_layout(cloud.num_points);
         let upload_count = cloud.num_points.max(1);
+        let sh_upload_count = cloud.sh_coefficients.len().max(1);
 
-        let gaussian_buf = Tracked::new(device.create_buffer(&wgpu::BufferDescriptor {
-            label: Some("GS Gaussian Data"),
-            size: (upload_count * std::mem::size_of::<GaussianSplat>()) as u64,
+        let mut gaussian_cores = Vec::with_capacity(cloud.gaussians.len());
+        let mut gaussian_covariances = Vec::with_capacity(cloud.gaussians.len());
+        for gaussian in &cloud.gaussians {
+            gaussian_cores.push(GpuGaussianCore {
+                x: gaussian.x,
+                y: gaussian.y,
+                z: gaussian.z,
+                opacity: gaussian.opacity,
+                sh_idx: gaussian.sh_idx,
+            });
+            gaussian_covariances.push(GpuGaussianCovariance { cov: gaussian.cov });
+        }
+
+        let gaussian_core_buf = Tracked::new(device.create_buffer(&wgpu::BufferDescriptor {
+            label: Some("GS Gaussian Core Data"),
+            size: (upload_count * std::mem::size_of::<GpuGaussianCore>()) as u64,
             usage: wgpu::BufferUsages::STORAGE | wgpu::BufferUsages::COPY_DST,
             mapped_at_creation: false,
         }));
-        queue.write_buffer(&gaussian_buf, 0, bytemuck::cast_slice(&cloud.gaussians));
+        queue.write_buffer(&gaussian_core_buf, 0, bytemuck::cast_slice(&gaussian_cores));
+
+        let gaussian_cov_buf = Tracked::new(device.create_buffer(&wgpu::BufferDescriptor {
+            label: Some("GS Gaussian Covariance Data"),
+            size: (upload_count * std::mem::size_of::<GpuGaussianCovariance>()) as u64,
+            usage: wgpu::BufferUsages::STORAGE | wgpu::BufferUsages::COPY_DST,
+            mapped_at_creation: false,
+        }));
+        queue.write_buffer(
+            &gaussian_cov_buf,
+            0,
+            bytemuck::cast_slice(&gaussian_covariances),
+        );
 
         let sh_buf = Tracked::new(device.create_buffer(&wgpu::BufferDescriptor {
             label: Some("GS SH Coefficients"),
-            size: (upload_count * std::mem::size_of::<GaussianSHCoefficients>()) as u64,
+            size: (sh_upload_count * std::mem::size_of::<GaussianSHCoefficients>()) as u64,
             usage: wgpu::BufferUsages::STORAGE | wgpu::BufferUsages::COPY_DST,
             mapped_at_creation: false,
         }));
@@ -654,8 +720,10 @@ impl GaussianSplattingFeature {
 
         CloudGpuData {
             num_points,
+            num_sh_coefficients,
             sort_layout,
-            gaussian_buf,
+            gaussian_core_buf,
+            gaussian_cov_buf,
             sh_buf,
             camera_uniform_buf,
             render_settings_buf,
@@ -755,18 +823,27 @@ impl GaussianSplattingFeature {
                 let sort_key_buffer_size =
                     (gpu.sort_layout.padded_key_capacity * std::mem::size_of::<u32>()) as u64;
 
-                let gaussian_buf = builder.read_external_buffer(
-                    "GS_Gaussian_Data",
+                let gaussian_core_buf = builder.read_external_buffer(
+                    "GS_Gaussian_Core_Data",
                     BufferDesc::new(
-                        (upload_count * std::mem::size_of::<GaussianSplat>()) as u64,
+                        (upload_count * std::mem::size_of::<GpuGaussianCore>()) as u64,
                         wgpu::BufferUsages::STORAGE | wgpu::BufferUsages::COPY_DST,
                     ),
-                    &gpu.gaussian_buf,
+                    &gpu.gaussian_core_buf,
+                );
+                let gaussian_cov_buf = builder.read_external_buffer(
+                    "GS_Gaussian_Covariance_Data",
+                    BufferDesc::new(
+                        (upload_count * std::mem::size_of::<GpuGaussianCovariance>()) as u64,
+                        wgpu::BufferUsages::STORAGE | wgpu::BufferUsages::COPY_DST,
+                    ),
+                    &gpu.gaussian_cov_buf,
                 );
                 let sh_buf = builder.read_external_buffer(
                     "GS_SH_Coefficients",
                     BufferDesc::new(
-                        (upload_count * std::mem::size_of::<GaussianSHCoefficients>()) as u64,
+                        (usize::try_from(gpu.num_sh_coefficients.max(1)).expect("Gaussian SH count exceeds usize capacity")
+                            * std::mem::size_of::<GaussianSHCoefficients>()) as u64,
                         wgpu::BufferUsages::STORAGE | wgpu::BufferUsages::COPY_DST,
                     ),
                     &gpu.sh_buf,
@@ -788,10 +865,17 @@ impl GaussianSplattingFeature {
                     &gpu.render_settings_buf,
                 );
 
-                let splat_2d_buf = builder.create_buffer(
-                    "GS_Splat_2D",
+                let splat_geom_buf = builder.create_buffer(
+                    "GS_Splat_Geometry",
                     BufferDesc::new(
-                        (upload_count * std::mem::size_of::<Splat2D>()) as u64,
+                        (upload_count * std::mem::size_of::<GpuSplatGeometry>()) as u64,
+                        wgpu::BufferUsages::STORAGE,
+                    ),
+                );
+                let splat_attr_buf = builder.create_buffer(
+                    "GS_Splat_Appearance",
+                    BufferDesc::new(
+                        (upload_count * std::mem::size_of::<GpuSplatAppearance>()) as u64,
                         wgpu::BufferUsages::STORAGE,
                     ),
                 );
@@ -807,9 +891,9 @@ impl GaussianSplattingFeature {
                 let sort_dispatch_buf = builder.create_buffer(
                     "GS_Sort_Dispatch",
                     BufferDesc::new(
-                        std::mem::size_of::<GpuDispatchIndirect>() as u64,
-                        wgpu::BufferUsages::STORAGE
-                            | wgpu::BufferUsages::COPY_DST
+                        std::mem::size_of::<[u32; 3]>() as u64,
+                        wgpu::BufferUsages::COPY_DST
+                            | wgpu::BufferUsages::COPY_SRC
                             | wgpu::BufferUsages::INDIRECT,
                     ),
                 );
@@ -847,9 +931,11 @@ impl GaussianSplattingFeature {
                 );
 
                 let buffers = CloudGraphBuffers {
-                    gaussian_buf,
+                    gaussian_core_buf,
+                    gaussian_cov_buf,
                     sh_buf,
-                    splat_2d_buf,
+                    splat_geom_buf,
+                    splat_attr_buf,
                     sort_infos_buf,
                     sort_dispatch_buf,
                     sort_internal_buf,
@@ -865,10 +951,6 @@ impl GaussianSplattingFeature {
                         keys_size: 0,
                         padded_size: gpu.sort_layout.padded_key_capacity as u32,
                         passes: SORT_KEYVAL_PASSES,
-                        even_pass: 0,
-                        odd_pass: 0,
-                    },
-                    sort_dispatch_init: GpuDispatchIndirect {
                         dispatch_x: 0,
                         dispatch_y: 1,
                         dispatch_z: 1,
@@ -912,7 +994,8 @@ impl GaussianSplattingFeature {
 
         ctx.graph.add_pass("GS_Render", |builder| {
             for &cloud in cloud_buffers {
-                builder.read_buffer(cloud.splat_2d_buf);
+                builder.read_buffer(cloud.splat_geom_buf);
+                builder.read_buffer(cloud.splat_attr_buf);
                 builder.read_buffer(cloud.sort_indices_a_buf);
                 builder.read_buffer(cloud.draw_indirect_buf);
             }
@@ -963,11 +1046,6 @@ impl<'a> PassNode<'a> for GaussianComputePassNode<'a> {
                 bytemuck::bytes_of(&cloud.buffers.sort_infos_init),
             );
             ctx.queue.write_buffer(
-                ctx.views.get_buffer(cloud.buffers.sort_dispatch_buf),
-                0,
-                bytemuck::bytes_of(&cloud.buffers.sort_dispatch_init),
-            );
-            ctx.queue.write_buffer(
                 ctx.views.get_buffer(cloud.buffers.draw_indirect_buf),
                 0,
                 bytemuck::bytes_of(&cloud.buffers.draw_indirect_init),
@@ -980,9 +1058,11 @@ impl<'a> PassNode<'a> for GaussianComputePassNode<'a> {
 
             let preprocess_bg1 = ctx
                 .build_bind_group(self.preprocess_layout_g1, Some("GS Preprocess BG1"))
-                .bind_buffer(0, cloud.buffers.gaussian_buf)
-                .bind_buffer(1, cloud.buffers.sh_buf)
-                .bind_buffer(2, cloud.buffers.splat_2d_buf)
+                .bind_buffer(0, cloud.buffers.gaussian_core_buf)
+                .bind_buffer(1, cloud.buffers.gaussian_cov_buf)
+                .bind_buffer(2, cloud.buffers.sh_buf)
+                .bind_buffer(3, cloud.buffers.splat_geom_buf)
+                .bind_buffer(4, cloud.buffers.splat_attr_buf)
                 .build();
 
             let preprocess_bg2 = ctx
@@ -990,7 +1070,6 @@ impl<'a> PassNode<'a> for GaussianComputePassNode<'a> {
                 .bind_buffer(0, cloud.buffers.sort_infos_buf)
                 .bind_buffer(1, cloud.buffers.sort_depths_a_buf)
                 .bind_buffer(2, cloud.buffers.sort_indices_a_buf)
-                .bind_buffer(3, cloud.buffers.sort_dispatch_buf)
                 .build();
 
             let preprocess_bg3 = ctx
@@ -1055,6 +1134,14 @@ impl<'a> PassNode<'a> for GaussianComputePassNode<'a> {
                 cpass.dispatch_workgroups(preprocess_workgroups, 1, 1);
             }
 
+            encoder.copy_buffer_to_buffer(
+                ctx.get_buffer(cloud.buffers.sort_infos_buf),
+                SORT_DISPATCH_INDIRECT_OFFSET,
+                ctx.get_buffer(cloud.buffers.sort_dispatch_buf),
+                0,
+                std::mem::size_of::<[u32; 3]>() as u64,
+            );
+
             {
                 let mut cpass = encoder.begin_compute_pass(&wgpu::ComputePassDescriptor {
                     label: Some("GS Sort Zero Histograms"),
@@ -1098,10 +1185,12 @@ impl<'a> PassNode<'a> for GaussianComputePassNode<'a> {
                 });
                 cpass.set_bind_group(0, cloud.sort_bg.expect("GS sort BG missing"), &[]);
 
-                if (pass_index % 2) == 0 {
-                    cpass.set_pipeline(&sort_pipelines.scatter_even);
-                } else {
-                    cpass.set_pipeline(&sort_pipelines.scatter_odd);
+                match pass_index {
+                    0 => cpass.set_pipeline(&sort_pipelines.scatter_0),
+                    1 => cpass.set_pipeline(&sort_pipelines.scatter_1),
+                    2 => cpass.set_pipeline(&sort_pipelines.scatter_2),
+                    3 => cpass.set_pipeline(&sort_pipelines.scatter_3),
+                    _ => unreachable!(),
                 }
 
                 cpass.dispatch_workgroups_indirect(
@@ -1134,8 +1223,9 @@ impl<'a> PassNode<'a> for GaussianRenderPassNode<'a> {
         for cloud in self.clouds.iter_mut() {
             cloud.render_bg = Some(
                 ctx.build_bind_group(self.render_layout, Some("GS Render BG"))
-                    .bind_buffer(0, cloud.buffers.splat_2d_buf)
-                    .bind_buffer(1, cloud.buffers.sort_indices_a_buf)
+                    .bind_buffer(0, cloud.buffers.splat_geom_buf)
+                    .bind_buffer(1, cloud.buffers.splat_attr_buf)
+                    .bind_buffer(2, cloud.buffers.sort_indices_a_buf)
                     .build(),
             );
         }

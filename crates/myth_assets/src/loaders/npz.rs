@@ -32,6 +32,7 @@ use super::ply::{build_covariance, pack2x16float, sigmoid};
 
 /// Parsed header of a `.npy` array inside the NPZ archive.
 #[allow(dead_code)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 struct NpyHeader {
     /// Element data type.
     dtype: NpyDtype,
@@ -372,7 +373,6 @@ pub fn load_gaussian_npz<R: Read + Seek>(reader: R) -> Result<GaussianCloud> {
     // ─── Decode and pack ───────────────────────────────────────────
     let num_geom = scaling_raw.len() / 3;
     let mut gaussians = Vec::with_capacity(num_points);
-    let mut sh_coefficients = Vec::with_capacity(num_points);
     let mut aabb_min = Vec3::splat(f32::INFINITY);
     let mut aabb_max = Vec3::splat(f32::NEG_INFINITY);
 
@@ -437,24 +437,26 @@ pub fn load_gaussian_npz<R: Read + Seek>(reader: R) -> Result<GaussianCloud> {
             pack2x16float(cov[4], cov[5]),
         ];
 
-        gaussians.push(GaussianSplat {
-            x,
-            y,
-            z,
-            opacity: pack2x16float(opacity, 0.0),
-            cov: packed_cov,
-        });
-
-        // ── SH Coefficients ────────────────────────────────────────
         let sh_idx = match feature_indices {
             Some(ref fi) => fi[i] as usize,
             None => i,
         };
         let sh_idx = sh_idx.min(num_dc_entries.saturating_sub(1));
 
+        gaussians.push(GaussianSplat {
+            x,
+            y,
+            z,
+            opacity: pack2x16float(opacity, 0.0),
+            sh_idx: sh_idx as u32,
+            cov: packed_cov,
+        });
+    }
+
+    let mut sh_coefficients = Vec::with_capacity(num_dc_entries);
+    for sh_idx in 0..num_dc_entries {
         let mut sh_flat = [[0.0f32; 3]; 16];
 
-        // DC
         let dc0 = (features_dc_raw[sh_idx * 3] as f32 - features_dc_zero_point as f32)
             * features_dc_scale;
         let dc1 = (features_dc_raw[sh_idx * 3 + 1] as f32 - features_dc_zero_point as f32)
@@ -463,13 +465,11 @@ pub fn load_gaussian_npz<R: Read + Seek>(reader: R) -> Result<GaussianCloud> {
             * features_dc_scale;
         sh_flat[0] = [dc0, dc1, dc2];
 
-        // Rest
         if let Some(ref rest) = features_rest_raw {
             let rest_per_entry = rest_channels;
             let base = sh_idx * rest_per_entry;
             let coeffs_per_channel = num_sh_coeffs_per_channel - 1;
             for c_idx in 0..coeffs_per_channel.min(15) {
-                // Rest is stored as interleaved: [R0 G0 B0 R1 G1 B1 ...]
                 let off = base + c_idx * 3;
                 for ch in 0..3 {
                     if off + ch < rest.len() {
@@ -481,7 +481,6 @@ pub fn load_gaussian_npz<R: Read + Seek>(reader: R) -> Result<GaussianCloud> {
             }
         }
 
-        // Pack into [u32; 24]
         let mut sh_data = [0u32; 24];
         for (c_idx, coeff) in sh_flat.iter().enumerate() {
             for ch in 0..3 {
@@ -492,6 +491,7 @@ pub fn load_gaussian_npz<R: Read + Seek>(reader: R) -> Result<GaussianCloud> {
                 sh_data[u32_idx] |= (h as u32) << (sub_idx * 16);
             }
         }
+
         sh_coefficients.push(GaussianSHCoefficients { data: sh_data });
     }
 
