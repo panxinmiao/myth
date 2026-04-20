@@ -40,28 +40,14 @@ var<storage, read_write> payload_b: array<u32>;
 
 @compute @workgroup_size({{ HISTOGRAM_WG_SIZE }})
 fn zero_histograms(@builtin(global_invocation_id) gid: vec3<u32>, @builtin(num_workgroups) nwg: vec3<u32>) {
-    // if gid.x == 0u {
-    //     infos.even_pass = 0u;
-    //     infos.odd_pass = 1u;
-    // }
-
     let scatter_block_kvs = histogram_wg_size * rs_scatter_block_rows;
     let scatter_blocks_ru = (infos.keys_size + scatter_block_kvs - 1u) / scatter_block_kvs;
 
-    let histo_size = rs_radix_size;
-    var n = (rs_keyval_size + scatter_blocks_ru - 1u) * histo_size;
-    let histogram_words = n;
-    if infos.keys_size < infos.padded_size {
-        n += infos.padded_size - infos.keys_size;
-    }
+    let histogram_words = (rs_keyval_size + scatter_blocks_ru - 1u) * rs_radix_size;
 
     let line_size = nwg.x * histogram_wg_size;
-    for (var cur_index = gid.x; cur_index < n; cur_index += line_size) {
-        if cur_index < histogram_words {
-            atomicStore(&internal_mem[cur_index], 0u);
-        } else {
-            keys_a[infos.keys_size + cur_index - histogram_words] = 0xFFFFFFFFu;
-        }
+    for (var cur_index = gid.x; cur_index < histogram_words; cur_index += line_size) {
+        atomicStore(&internal_mem[cur_index], 0u);
     }
 }
 
@@ -142,6 +128,10 @@ fn prefix_reduce_smem(lid: u32) {
 
 @compute @workgroup_size({{ PREFIX_WG_SIZE }})
 fn prefix_histogram(@builtin(workgroup_id) wid: vec3<u32>, @builtin(local_invocation_id) lid: vec3<u32>) {
+    if infos.keys_size == 0u {
+        return;
+    }
+
     let histogram_base = (rs_keyval_size - 1u - wid.x) * rs_radix_size;
     let histogram_offset = histogram_base + lid.x;
 

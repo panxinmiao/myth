@@ -32,6 +32,8 @@ impl AppHandler for GaussianSplattingDemo {
         let camera_pos = Vec3::new(2.86, 1.52, -0.69);
         let target = Vec3::ZERO;
 
+        scene.tone_mapping.set_mode(myth::ToneMappingMode::Linear);
+
         let cam_node = scene.add_camera(Camera::new_perspective(45.0, 1280.0 / 720.0, 0.1));
         scene
             .node(&cam_node)

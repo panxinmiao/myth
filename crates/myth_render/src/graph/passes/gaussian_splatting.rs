@@ -4,8 +4,9 @@
 //!
 //! 1. Preprocess — project 3D Gaussians to 2D screen-space splats, evaluate
 //!    SH colour, cull invisible points, and emit reverse-Z depth keys.
-//! 2. GPU radix sort — ported from web-splat and adapted to Myth's RDG pass
-//!    execution model. Sorting is back-to-front to match the blend equation.
+//! 2. Sort preparation + GPU radix sort — pad the inactive tail of the active
+//!    dispatch window with sentinels, then sort back-to-front to match the
+//!    blend equation.
 //! 3. Render — draw storage-buffer-pulled triangle strips with back-to-front
 //!    compositing and reverse-Z depth testing against opaque geometry.
 //!
@@ -203,6 +204,7 @@ fn build_sort_shader_options(subgroup_size: u32) -> ShaderCompilationOptions {
 }
 
 struct GaussianSortPipelines {
+    pad_keys: wgpu::ComputePipeline,
     zero_histograms: wgpu::ComputePipeline,
     calculate_histogram: wgpu::ComputePipeline,
     prefix_histogram: wgpu::ComputePipeline,
@@ -532,11 +534,6 @@ impl GaussianSplattingFeature {
         if self.sort_pipelines.is_none() {
             let subgroup_size = detect_sort_subgroup_size(device);
             let shader_options = build_sort_shader_options(subgroup_size);
-            let (module, _) = ctx.shader_manager.get_or_compile(
-                device,
-                ShaderSource::File("entry/utility/gs_radix_sort"),
-                &shader_options,
-            );
 
             let layout = device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
                 label: Some("GS Sort Pipeline Layout"),
@@ -544,28 +541,67 @@ impl GaussianSplattingFeature {
                 immediate_size: 0,
             });
 
-            let make_pipeline = |entry_point: &str, label: &str| {
+            let pad_keys = {
+                let (pad_module, _) = ctx.shader_manager.get_or_compile(
+                    device,
+                    ShaderSource::File("entry/utility/gs_pad_sort_keys"),
+                    &shader_options,
+                );
                 device.create_compute_pipeline(&wgpu::ComputePipelineDescriptor {
-                    label: Some(label),
+                    label: Some("GS Sort Pad Keys"),
                     layout: Some(&layout),
-                    module,
-                    entry_point: Some(entry_point),
+                    module: pad_module,
+                    entry_point: Some("main"),
                     compilation_options: wgpu::PipelineCompilationOptions::default(),
                     cache: None,
                 })
             };
 
+            let (
+                zero_histograms,
+                calculate_histogram,
+                prefix_histogram,
+                scatter_0,
+                scatter_1,
+                scatter_2,
+                scatter_3,
+            ) = {
+                let (sort_module, _) = ctx.shader_manager.get_or_compile(
+                    device,
+                    ShaderSource::File("entry/utility/gs_radix_sort"),
+                    &shader_options,
+                );
+                let make_pipeline = |entry_point: &str, label: &str| {
+                    device.create_compute_pipeline(&wgpu::ComputePipelineDescriptor {
+                        label: Some(label),
+                        layout: Some(&layout),
+                        module: sort_module,
+                        entry_point: Some(entry_point),
+                        compilation_options: wgpu::PipelineCompilationOptions::default(),
+                        cache: None,
+                    })
+                };
+
+                (
+                    make_pipeline("zero_histograms", "GS Sort Zero Histograms"),
+                    make_pipeline("calculate_histogram", "GS Sort Calculate Histogram"),
+                    make_pipeline("prefix_histogram", "GS Sort Prefix Histogram"),
+                    make_pipeline("scatter_pass_0", "GS Sort Scatter Pass 0"),
+                    make_pipeline("scatter_pass_1", "GS Sort Scatter Pass 1"),
+                    make_pipeline("scatter_pass_2", "GS Sort Scatter Pass 2"),
+                    make_pipeline("scatter_pass_3", "GS Sort Scatter Pass 3"),
+                )
+            };
+
             self.sort_pipelines = Some(GaussianSortPipelines {
-                zero_histograms: make_pipeline("zero_histograms", "GS Sort Zero Histograms"),
-                calculate_histogram: make_pipeline(
-                    "calculate_histogram",
-                    "GS Sort Calculate Histogram",
-                ),
-                prefix_histogram: make_pipeline("prefix_histogram", "GS Sort Prefix Histogram"),
-                scatter_0: make_pipeline("scatter_pass_0", "GS Sort Scatter Pass 0"),
-                scatter_1: make_pipeline("scatter_pass_1", "GS Sort Scatter Pass 1"),
-                scatter_2: make_pipeline("scatter_pass_2", "GS Sort Scatter Pass 2"),
-                scatter_3: make_pipeline("scatter_pass_3", "GS Sort Scatter Pass 3"),
+                pad_keys,
+                zero_histograms,
+                calculate_histogram,
+                prefix_histogram,
+                scatter_0,
+                scatter_1,
+                scatter_2,
+                scatter_3,
             });
         }
 
@@ -1141,6 +1177,19 @@ impl<'a> PassNode<'a> for GaussianComputePassNode<'a> {
                 0,
                 std::mem::size_of::<[u32; 3]>() as u64,
             );
+
+            {
+                let mut cpass = encoder.begin_compute_pass(&wgpu::ComputePassDescriptor {
+                    label: Some("GS Sort Pad Keys"),
+                    timestamp_writes: None,
+                });
+                cpass.set_pipeline(&sort_pipelines.pad_keys);
+                cpass.set_bind_group(0, cloud.sort_bg.expect("GS sort BG missing"), &[]);
+                cpass.dispatch_workgroups_indirect(
+                    ctx.get_buffer(cloud.buffers.sort_dispatch_buf),
+                    0,
+                );
+            }
 
             {
                 let mut cpass = encoder.begin_compute_pass(&wgpu::ComputePassDescriptor {
