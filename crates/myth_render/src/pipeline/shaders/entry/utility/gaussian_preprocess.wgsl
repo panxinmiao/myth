@@ -214,8 +214,10 @@ fn main(@builtin(global_invocation_id) gid: vec3<u32>) {
     let T = W * J;
     let cov = transpose(T) * Vrk * T;
 
-    let kernel_size = render_settings.kernel_size;
+    // let kernel_size = render_settings.kernel_size;
+    var kernel_size = 0.0;
     if render_settings.mip_splatting != 0u {
+        kernel_size = render_settings.kernel_size;
         let det_0 = max(1e-6, cov[0][0] * cov[1][1] - cov[0][1] * cov[0][1]);
         let det_1 = max(1e-6, (cov[0][0] + kernel_size) * (cov[1][1] + kernel_size) - cov[0][1] * cov[0][1]);
         var coef = sqrt(det_0 / (det_1 + 1e-6) + 1e-6);
