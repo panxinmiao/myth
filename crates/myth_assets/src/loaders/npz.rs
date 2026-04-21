@@ -10,7 +10,7 @@
 //! | Array               | Dtype  | Shape           | Description |
 //! |---------------------|--------|-----------------|-------------|
 //! | `xyz`               | f16    | `(N, 3)`        | Position    |
-//! | `opacity`           | i8     | `(N, 1)`        | Quantized opacity |
+//! | `opacity`           | i8     | `(N, 1)`        | Quantized linear opacity |
 //! | `scaling`           | i8     | `(N, 3)` or `(M, 3)` | Quantized log-scale |
 //! | `rotation`          | i8     | `(N, 4)` or `(M, 4)` | Quantized quaternion |
 //! | `features_dc`       | i8     | `(K, 3)`        | Quantized SH DC |
@@ -26,7 +26,7 @@ use half::f16;
 use myth_core::{AssetError, Error, Result};
 use myth_resources::gaussian_splat::{GaussianCloud, GaussianSHCoefficients, GaussianSplat};
 
-use super::ply::{build_covariance, pack2x16float, sigmoid};
+use super::ply::{build_covariance, pack2x16float};
 
 // ─── Minimal NumPy Array Parser ────────────────────────────────────────────
 
@@ -386,8 +386,11 @@ pub fn load_gaussian_npz<R: Read + Seek>(reader: R) -> Result<GaussianCloud> {
         aabb_max = aabb_max.max(pos);
 
         // ── Opacity ────────────────────────────────────────────────
+        // Compressed NPZ stores opacity as a directly quantized alpha value.
+        // Applying an extra sigmoid here lifts almost-transparent Gaussians up
+        // toward 0.5 and produces the large-scale fog/glow artifacts.
         let raw_op = (opacity_raw[i] as f32 - opacity_zero_point as f32) * opacity_scale;
-        let opacity = sigmoid(raw_op);
+        let opacity = raw_op.clamp(0.0, 1.0);
 
         // ── Geometry index (for shared rotation/scale) ─────────────
         let geom_idx = match gaussian_indices {

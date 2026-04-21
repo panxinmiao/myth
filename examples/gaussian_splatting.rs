@@ -9,9 +9,11 @@ use std::fs::File;
 use std::io::BufReader;
 
 use myth::prelude::*;
+use myth_dev_utils::FpsCounter;
 
 struct GaussianSplattingDemo {
     controls: OrbitControls,
+    fps_counter: FpsCounter,
 }
 
 impl AppHandler for GaussianSplattingDemo {
@@ -43,10 +45,11 @@ impl AppHandler for GaussianSplattingDemo {
 
         Self {
             controls: OrbitControls::new(camera_pos, target),
+            fps_counter: FpsCounter::new(),
         }
     }
 
-    fn update(&mut self, engine: &mut Engine, _window: &dyn Window, frame: &FrameState) {
+    fn update(&mut self, engine: &mut Engine, window: &dyn Window, frame: &FrameState) {
         if let Some((transform, camera)) = engine
             .scene_manager
             .active_scene_mut()
@@ -55,6 +58,10 @@ impl AppHandler for GaussianSplattingDemo {
             self.controls
                 .update(transform, &engine.input, camera.fov(), frame.dt);
         }
+
+        if let Some(fps) = self.fps_counter.update() {
+            window.set_title(&format!("3D Gaussian Splatting | FPS: {:.2}", fps));
+        }
     }
 }
 
@@ -62,5 +69,9 @@ impl AppHandler for GaussianSplattingDemo {
 fn main() -> myth::Result<()> {
     App::new()
         .with_title("Myth Engine — 3D Gaussian Splatting")
+        .with_settings(RendererSettings {
+            vsync: false,
+            ..Default::default()
+        })
         .run::<GaussianSplattingDemo>()
 }
