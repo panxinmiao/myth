@@ -1,7 +1,7 @@
 // Gaussian Splatting Preprocess Shader
 //
 // Projects 3D Gaussians into 2D screen-space splats, evaluates view-dependent
-// SH colour, and emits reverse-Z sort keys for back-to-front compositing.
+// SH colour, and emits reverse-Z sort keys for front-to-back compositing.
 
 const SH_C0: f32 = 0.28209479177387814;
 const SH_C1: f32 = 0.4886025119029199;
@@ -249,15 +249,7 @@ fn main(@builtin(global_invocation_id) gid: vec3<u32>) {
     let dir_colmap = vec3<f32>(dir.x, -dir.y, -dir.z);
 
     let raw_sh_color = max(vec3<f32>(0.0), evaluate_sh(dir_colmap, sh_idx, render_settings.max_sh_deg));
-    var final_color = raw_sh_color;
-    var final_opacity = opacity;
-
-    if render_settings.color_space_flag == 1u {
-        final_color = pow(raw_sh_color, vec3<f32>(2.2));
-        final_opacity = pow(opacity, render_settings.opacity_compensation);
-    }
-
-    let color = vec4<f32>(final_color, final_opacity);
+    let color = vec4<f32>(raw_sh_color, opacity);
 
     let store_idx = atomicAdd(&sort_infos.keys_size, 1u);
     let v = vec4<f32>(v1 / viewport, v2 / viewport);
@@ -273,7 +265,8 @@ fn main(@builtin(global_invocation_id) gid: vec3<u32>) {
         0u,
     );
 
-    sort_depths[store_idx] = bitcast<u32>(center_depth);
+    // Radix sort is ascending, so invert reverse-Z depth to place near splats first.
+    sort_depths[store_idx] = 0xffffffffu - bitcast<u32>(center_depth);
     sort_indices[store_idx] = store_idx;
 
     let keys_per_wg = 256u * 15u;

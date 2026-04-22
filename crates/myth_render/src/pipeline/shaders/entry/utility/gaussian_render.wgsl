@@ -1,7 +1,7 @@
 // Gaussian Splatting Render Shader
 //
-// Draws screen-space 2D Gaussian splats with standard back-to-front
-// premultiplied-alpha compositing, while preserving Myth's reverse-Z
+// Draws screen-space 2D Gaussian splats with front-to-back
+// premultiplied-alpha accumulation, while preserving Myth's reverse-Z
 // depth testing against opaque geometry.
 
 const CUTOFF: f32 = 2.3539888583335364; // Match web-splat's effective Gaussian support radius.

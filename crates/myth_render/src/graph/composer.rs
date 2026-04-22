@@ -635,16 +635,6 @@ impl<'a> FrameComposer<'a> {
                         );
                     }
 
-                    #[cfg(feature = "3dgs")]
-                    {
-                        // 5b. Gaussian Splatting
-                        active_color = self.ctx.gaussian_splatting_pass.add_to_graph(
-                            c,
-                            active_color,
-                            opaque_out.active_depth,
-                        );
-                    }
-
                     // ── 6. TAA Resolve ────────────────────────────────────────────
                     // Resolve temporal anti-aliasing before bloom/tone-mapping.
                     // The resolved colour replaces post_transparent_color for
@@ -663,6 +653,18 @@ impl<'a> FrameComposer<'a> {
                             if cas_enabled {
                                 active_color = self.ctx.cas_pass.add_to_graph(c, active_color);
                             }
+                        });
+                    }
+
+                    #[cfg(feature = "3dgs")]
+                    {
+                        // 7a. Gaussian Splatting
+                        c.with_group("3D_Gaussian_Splatting", |c| {
+                            active_color = self.ctx.gaussian_splatting_pass.add_to_graph(
+                                c,
+                                active_color,
+                                opaque_out.active_depth,
+                            );
                         });
                     }
 
