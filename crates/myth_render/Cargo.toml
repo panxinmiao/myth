@@ -53,6 +53,7 @@ pollster = { workspace = true }
 default = []
 rdg_inspector = []
 debug_view = ["myth_scene/debug_view"]
+3dgs = ["myth_resources/3dgs", "myth_scene/3dgs", "myth_assets/3dgs"]
 
 [lints]
 workspace = true

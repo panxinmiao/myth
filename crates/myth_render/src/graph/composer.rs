@@ -62,10 +62,12 @@ use crate::graph::frame::{PreparedSkyboxDraw, RenderLists};
 use crate::graph::passes::utils::add_msaa_resolve_pass;
 use crate::graph::passes::{
     AtmosphereFeature, BloomFeature, BrdfLutFeature, CasFeature, EquirectToCubeFeature,
-    FxaaFeature, GaussianSplattingFeature, IblComputeFeature, MsaaSyncFeature, OpaqueFeature,
-    PrepassFeature, ShadowFeature, SimpleForwardFeature, SkyboxFeature, SsaoFeature, SsssFeature,
-    TaaFeature, ToneMappingFeature, TransmissionCopyFeature, TransparentFeature,
+    FxaaFeature, IblComputeFeature, MsaaSyncFeature, OpaqueFeature, PrepassFeature,
+    ShadowFeature, SimpleForwardFeature, SkyboxFeature, SsaoFeature, SsssFeature, TaaFeature,
+    ToneMappingFeature, TransmissionCopyFeature, TransparentFeature,
 };
+#[cfg(feature = "3dgs")]
+use crate::graph::passes::GaussianSplattingFeature;
 use crate::pipeline::PipelineCache;
 use crate::pipeline::ShaderManager;
 use crate::renderer::FrameTime;
@@ -123,6 +125,7 @@ pub struct ComposerContext<'a> {
     pub ibl_pass: &'a mut IblComputeFeature,
     pub atmosphere_pass: &'a mut AtmosphereFeature,
 
+    #[cfg(feature = "3dgs")]
     // Gaussian Splatting
     pub gaussian_splatting_pass: &'a mut GaussianSplattingFeature,
 
@@ -632,12 +635,15 @@ impl<'a> FrameComposer<'a> {
                         );
                     }
 
-                    // 5b. Gaussian Splatting
-                    active_color = self.ctx.gaussian_splatting_pass.add_to_graph(
-                        c,
-                        active_color,
-                        opaque_out.active_depth,
-                    );
+                    #[cfg(feature = "3dgs")]
+                    {
+                        // 5b. Gaussian Splatting
+                        active_color = self.ctx.gaussian_splatting_pass.add_to_graph(
+                            c,
+                            active_color,
+                            opaque_out.active_depth,
+                        );
+                    }
 
                     // ── 6. TAA Resolve ────────────────────────────────────────────
                     // Resolve temporal anti-aliasing before bloom/tone-mapping.

@@ -53,10 +53,11 @@ js-sys = { workspace = true }
 
 [features]
 default = []
+3dgs = ["myth_resources/3dgs"]
 gltf = ["dep:gltf"]
 gltf-meshopt = ["gltf", "dep:meshopt"]
 http = ["dep:ehttp", "dep:url"]
-gaussian-npz = ["dep:zip"]
+gaussian-npz = ["3dgs", "dep:zip"]
 
 [lints]
 workspace = true

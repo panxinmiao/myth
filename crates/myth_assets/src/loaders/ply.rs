@@ -22,6 +22,7 @@ use glam::Vec3;
 use half::f16;
 use myth_core::{AssetError, Error, Result};
 use myth_resources::gaussian_splat::{GaussianCloud, GaussianSHCoefficients, GaussianSplat};
+use myth_resources::image::ColorSpace;
 
 // ─── PLY Header Parsing ────────────────────────────────────────────────────
 
@@ -426,6 +427,8 @@ pub fn load_gaussian_ply<R: Read + Seek>(reader: R) -> Result<GaussianCloud> {
         center,
         mip_splatting: false,
         kernel_size: 0.3,
+        color_space: ColorSpace::Srgb,
+        opacity_compensation: 1.0,
     })
 }
 

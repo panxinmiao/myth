@@ -1964,11 +1964,11 @@ impl GltfViewer {
                                         ui.label("Color:");
                                         let mut color_arr = uniforms_mut.vignette_color.to_array();
                                         if ui
-                                            .color_edit_button_rgba_unmultiplied(&mut color_arr)
+                                            .color_edit_button_rgb(&mut color_arr)
                                             .changed()
                                         {
                                             uniforms_mut.vignette_color =
-                                                Vec4::from_array(color_arr);
+                                                Vec3::from_array(color_arr);
                                         }
                                     });
 

@@ -27,6 +27,7 @@ use crate::graph::core::{
 use crate::pipeline::{ShaderCompilationOptions, ShaderSource};
 use myth_resources::GaussianCloudHandle;
 use myth_resources::gaussian_splat::{GaussianCloud, GaussianSHCoefficients};
+use myth_resources::image::ColorSpace;
 use myth_scene::camera::RenderCamera;
 
 const PREPROCESS_WG_SIZE: u32 = 256;
@@ -63,9 +64,9 @@ struct GpuRenderSettings {
     mip_splatting: u32,
     kernel_size: f32,
     scene_extent: f32,
-    _pad0: f32,
-    _pad1: f32,
-    _pad2: f32,
+    color_space_flag: u32,
+    opacity_compensation: f32,
+    _pad0: u32,
 }
 
 #[repr(C)]
@@ -801,9 +802,12 @@ impl GaussianSplattingFeature {
             mip_splatting: u32::from(cloud.mip_splatting),
             kernel_size: cloud.kernel_size,
             scene_extent: cloud.scene_extent().max(1e-5),
-            _pad0: 0.0,
-            _pad1: 0.0,
-            _pad2: 0.0,
+            color_space_flag: match cloud.color_space {
+                ColorSpace::Linear => 0,
+                ColorSpace::Srgb => 1,
+            },
+            opacity_compensation: cloud.opacity_compensation,
+            _pad0: 0,
         };
         queue.write_buffer(
             &data.render_settings_buf,

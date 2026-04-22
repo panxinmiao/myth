@@ -14,10 +14,12 @@ use crate::graph::frame::RenderLists;
 use crate::graph::passes::DebugViewFeature;
 use crate::graph::passes::{
     AtmosphereFeature, BloomFeature, BrdfLutFeature, CasFeature, EquirectToCubeFeature,
-    FxaaFeature, GaussianSplattingFeature, IblComputeFeature, MsaaSyncFeature, OpaqueFeature,
-    PrepassFeature, ShadowFeature, SimpleForwardFeature, SkyboxFeature, SsaoFeature, SsssFeature,
-    TaaFeature, ToneMappingFeature, TransmissionCopyFeature, TransparentFeature,
+    FxaaFeature, IblComputeFeature, MsaaSyncFeature, OpaqueFeature, PrepassFeature,
+    ShadowFeature, SimpleForwardFeature, SkyboxFeature, SsaoFeature, SsssFeature, TaaFeature,
+    ToneMappingFeature, TransmissionCopyFeature, TransparentFeature,
 };
+#[cfg(feature = "3dgs")]
+use crate::graph::passes::GaussianSplattingFeature;
 use myth_assets::AssetServer;
 use myth_core::Result;
 use myth_scene::Scene;
@@ -96,6 +98,7 @@ struct RendererState {
     pub(crate) ibl_pass: IblComputeFeature,
     pub(crate) atmosphere_pass: AtmosphereFeature,
 
+    #[cfg(feature = "3dgs")]
     // Gaussian Splatting
     pub(crate) gaussian_splatting_pass: GaussianSplattingFeature,
 
@@ -260,6 +263,7 @@ impl Renderer {
             ibl_pass,
             atmosphere_pass: AtmosphereFeature::new(),
 
+            #[cfg(feature = "3dgs")]
             gaussian_splatting_pass: GaussianSplattingFeature::new(),
 
             #[cfg(feature = "debug_view")]
@@ -465,6 +469,7 @@ impl Renderer {
                 );
             }
 
+            #[cfg(feature = "3dgs")]
             // Gaussian Splatting
             if scene.has_gaussian_clouds() {
                 let mut cloud_entries = Vec::new();
@@ -631,6 +636,7 @@ impl Renderer {
             ibl_pass: &mut state.ibl_pass,
             atmosphere_pass: &mut state.atmosphere_pass,
 
+            #[cfg(feature = "3dgs")]
             gaussian_splatting_pass: &mut state.gaussian_splatting_pass,
 
             #[cfg(feature = "debug_view")]

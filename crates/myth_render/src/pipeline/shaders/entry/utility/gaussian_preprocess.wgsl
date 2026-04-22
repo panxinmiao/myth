@@ -71,9 +71,9 @@ struct RenderSettings {
     mip_splatting: u32,
     kernel_size: f32,
     scene_extent: f32,
-    _pad0: f32,
-    _pad1: f32,
-    _pad2: f32,
+    color_space_flag: u32,
+    opacity_compensation: f32,
+    _pad0: u32,
 };
 
 @group(0) @binding(0)
@@ -248,10 +248,16 @@ fn main(@builtin(global_invocation_id) gid: vec3<u32>) {
 
     let dir_colmap = vec3<f32>(dir.x, -dir.y, -dir.z);
 
-    let color = vec4<f32>(
-        max(vec3<f32>(0.0), evaluate_sh(dir_colmap, sh_idx, render_settings.max_sh_deg)),
-        opacity
-    );
+    let raw_sh_color = max(vec3<f32>(0.0), evaluate_sh(dir_colmap, sh_idx, render_settings.max_sh_deg));
+    var final_color = raw_sh_color;
+    var final_opacity = opacity;
+
+    if render_settings.color_space_flag == 1u {
+        final_color = pow(raw_sh_color, vec3<f32>(2.2));
+        final_opacity = pow(opacity, render_settings.opacity_compensation);
+    }
+
+    let color = vec4<f32>(final_color, final_opacity);
 
     let store_idx = atomicAdd(&sort_infos.keys_size, 1u);
     let v = vec4<f32>(v1 / viewport, v2 / viewport);

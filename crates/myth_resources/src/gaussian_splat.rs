@@ -7,6 +7,8 @@
 use bytemuck::{Pod, Zeroable};
 use glam::Vec3;
 
+use crate::image::ColorSpace;
+
 // ─── GPU Structures ────────────────────────────────────────────────────────
 
 /// A single 3D Gaussian primitive in GPU-ready layout.
@@ -99,6 +101,10 @@ pub struct GaussianCloud {
     pub mip_splatting: bool,
     /// Kernel size for mip-splatting anti-aliasing.
     pub kernel_size: f32,
+    /// Source color space used by the SH-fitted color coefficients.
+    pub color_space: ColorSpace,
+    /// Alpha compensation exponent applied during optional sRGB linearization.
+    pub opacity_compensation: f32,
 }
 
 impl GaussianCloud {

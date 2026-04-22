@@ -7,6 +7,7 @@ use crate::io::{AssetReaderVariant, AssetSource};
 use crate::prefab::SharedPrefab;
 use crate::storage::AssetStorage;
 use myth_core::{AssetError, Error, Result};
+#[cfg(feature = "3dgs")]
 use myth_resources::gaussian_splat::GaussianCloud;
 use myth_resources::geometry::Geometry;
 use myth_resources::image::{ColorSpace, Image, ImageDimension, PixelFormat};
@@ -14,8 +15,10 @@ use myth_resources::material::Material;
 use myth_resources::screen_space::SssRegistry;
 use myth_resources::texture::Texture;
 use myth_resources::{
-    GaussianCloudHandle, GeometryHandle, ImageHandle, MaterialHandle, PrefabHandle, TextureHandle,
+    GeometryHandle, ImageHandle, MaterialHandle, PrefabHandle, TextureHandle,
 };
+#[cfg(feature = "3dgs")]
+use myth_resources::GaussianCloudHandle;
 
 #[cfg(not(target_arch = "wasm32"))]
 use std::sync::OnceLock;
@@ -131,6 +134,7 @@ pub struct AssetServer {
     pub images: Arc<AssetStorage<ImageHandle, Image>>,
     pub textures: Arc<AssetStorage<TextureHandle, Texture>>,
     pub prefabs: Arc<AssetStorage<PrefabHandle, SharedPrefab>>,
+    #[cfg(feature = "3dgs")]
     pub gaussian_clouds: Arc<AssetStorage<GaussianCloudHandle, GaussianCloud>>,
 
     pub sss_registry: Arc<RwLock<SssRegistry>>,
@@ -179,6 +183,7 @@ impl AssetServer {
             images,
             textures,
             prefabs: Arc::new(AssetStorage::new()),
+            #[cfg(feature = "3dgs")]
             gaussian_clouds: Arc::new(AssetStorage::new()),
 
             sss_registry: Arc::new(RwLock::new(SssRegistry::new())),

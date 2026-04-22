@@ -9,7 +9,7 @@
 //! - **Vignette**: Edge darkening effect controlled by intensity and smoothness
 //! - **Color Grading (LUT)**: 3D lookup table for color manipulation
 
-use glam::Vec4;
+use glam::Vec3;
 
 use myth_macros::gpu_struct;
 
@@ -115,20 +115,20 @@ pub struct ToneMappingUniforms {
     #[default(1.0)]
     pub exposure: f32,
     #[default(1.0)]
+    pub gamma: f32,
+    #[default(1.0)]
     pub contrast: f32,
     #[default(1.0)]
     pub saturation: f32,
     pub chromatic_aberration: f32,
 
     pub film_grain: f32,
-    pub vignette_intensity: f32,
-    #[default(0.5)]
-    pub vignette_smoothness: f32,
     #[default(1.0)]
     pub lut_contribution: f32,
-
-    #[default(Vec4::new(0.0, 0.0, 0.0, 1.0))]
-    pub vignette_color: Vec4,
+    #[default(0.5)]
+    pub vignette_smoothness: f32,
+    pub vignette_color: Vec3,
+    pub vignette_intensity: f32,
 }
 
 /// Tone mapping configuration.
@@ -226,6 +226,11 @@ impl ToneMappingSettings {
         self.uniforms.write().exposure = exposure;
     }
 
+    /// Sets the final display gamma compensation.
+    pub fn set_gamma(&mut self, gamma: f32) {
+        self.uniforms.write().gamma = gamma;
+    }
+
     /// Sets the contrast adjustment.
     pub fn set_contrast(&mut self, contrast: f32) {
         self.uniforms.write().contrast = contrast;
@@ -262,8 +267,8 @@ impl ToneMappingSettings {
     }
 
     /// Sets the vignette color.
-    /// This is the color used for the vignette effect (default: black with full alpha).
-    pub fn set_vignette_color(&mut self, color: Vec4) {
+    /// This is the color used for the vignette effect (default: black).
+    pub fn set_vignette_color(&mut self, color: Vec3) {
         self.uniforms.write().vignette_color = color;
     }
 
@@ -296,6 +301,13 @@ impl ToneMappingSettings {
     #[must_use]
     pub fn exposure(&self) -> f32 {
         self.uniforms.read().exposure
+    }
+
+    /// Returns the current gamma compensation value.
+    #[inline]
+    #[must_use]
+    pub fn gamma(&self) -> f32 {
+        self.uniforms.read().gamma
     }
 
     /// Returns the current vignette intensity.
@@ -350,7 +362,7 @@ impl ToneMappingSettings {
     /// Returns the current vignette color.
     #[inline]
     #[must_use]
-    pub fn vignette_color(&self) -> Vec4 {
+    pub fn vignette_color(&self) -> Vec3 {
         self.uniforms.read().vignette_color
     }
 

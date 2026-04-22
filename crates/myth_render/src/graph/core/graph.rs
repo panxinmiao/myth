@@ -423,6 +423,7 @@ impl<'a> RenderGraph<'a> {
     /// Returns a slice reference valid for the frame lifetime `'a`.
     /// Requires `T: Copy` to ensure no `Drop` glue.
     #[inline]
+    #[allow(dead_code)]
     pub(crate) fn alloc_slice<T: Copy>(&self, src: &[T]) -> &'a [T] {
         self.arena.alloc_slice_copy(src)
     }

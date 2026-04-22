@@ -24,7 +24,9 @@ impl AppHandler for GaussianSplattingDemo {
         let npz_path = "examples/assets/3dgs/point_cloud1.npz";
         let file = File::open(npz_path).expect("Failed to open NPZ file");
         let reader = BufReader::new(file);
-        let cloud = myth::load_gaussian_npz(reader).expect("Failed to parse NPZ Gaussian cloud");
+        let mut cloud = myth::load_gaussian_npz(reader).expect("Failed to parse NPZ Gaussian cloud");
+
+        cloud.color_space = ColorSpace::Linear;
 
         // Register in the asset server and add to scene
         let cloud_handle = engine.assets.gaussian_clouds.add(cloud);
@@ -35,6 +37,7 @@ impl AppHandler for GaussianSplattingDemo {
         let target = Vec3::ZERO;
 
         scene.tone_mapping.set_mode(myth::ToneMappingMode::Linear);
+        scene.tone_mapping.set_gamma(1.0/2.2);
 
         let cam_node = scene.add_camera(Camera::new_perspective(45.0, 1280.0 / 720.0, 0.1));
         scene
