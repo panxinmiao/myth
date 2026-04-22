@@ -740,6 +740,8 @@ impl SkyboxFeature {
             .get_sampler_by_index(sampler_id)
             .expect("Skybox sampler index must be valid")
             .clone();
+        let bg_uniforms_resource_id = (variant != SkyboxVariant::Procedural)
+            .then(|| ctx.resource_manager.ensure_buffer_id(bg_uniforms));
 
         let bind_group = if variant == SkyboxVariant::Procedural {
             let Some(resources) = procedural_resources else {
@@ -781,32 +783,43 @@ impl SkyboxFeature {
                 self.current_pipeline = None;
                 return;
             };
+            let bg_uniforms_resource_id =
+                bg_uniforms_resource_id.expect("Skybox params resource id must exist");
 
-            let (params_buffer, params_buffer_id) = {
+            let params_buffer = {
                 let params_gpu = bg_uniforms
                     .gpu_handle()
                     .and_then(|h| ctx.resource_manager.gpu_buffers.get(h))
                     .expect("Skybox params GPU buffer must exist");
-                (params_gpu.buffer.clone(), params_gpu.id)
+                params_gpu.buffer.clone()
             };
 
             ctx.build_bind_group(layout, Some("Skybox BG (Texture)"))
-                .bind_raw_buffer(0, RawBufferBinding::new(&params_buffer, params_buffer_id, None))
+                .bind_raw_buffer(
+                    0,
+                    RawBufferBinding::new(&params_buffer, bg_uniforms_resource_id, None),
+                )
                 .bind_texture_view_with_id(1, &tex_view, tex_view_resource_key)
                 .bind_sampler_with_id(2, &sampler, sampler_id as u64)
                 .build()
                 .clone()
         } else {
-            let (params_buffer, params_buffer_id) = {
+            let bg_uniforms_resource_id =
+                bg_uniforms_resource_id.expect("Skybox params resource id must exist");
+
+            let params_buffer = {
                 let params_gpu = bg_uniforms
                     .gpu_handle()
                     .and_then(|h| ctx.resource_manager.gpu_buffers.get(h))
                     .expect("Skybox params GPU buffer must exist");
-                (params_gpu.buffer.clone(), params_gpu.id)
+                params_gpu.buffer.clone()
             };
 
             ctx.build_bind_group(layout, Some("Skybox BG (Gradient)"))
-                .bind_raw_buffer(0, RawBufferBinding::new(&params_buffer, params_buffer_id, None))
+                .bind_raw_buffer(
+                    0,
+                    RawBufferBinding::new(&params_buffer, bg_uniforms_resource_id, None),
+                )
                 .build()
                 .clone()
         };
