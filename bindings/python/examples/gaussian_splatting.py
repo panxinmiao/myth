@@ -12,8 +12,11 @@ Usage:
 
 import myth
 
+from __asset_utils import get_asset
+
 app = myth.App(
     title="Myth Engine — 3D Gaussian Splatting",
+    render_path=myth.RenderPath.HIGH_FIDELITY,
     vsync=True,
 )
 
@@ -29,8 +32,11 @@ def on_init(ctx: myth.Engine):
     scene = ctx.create_scene()
 
     # Load the compressed NPZ Gaussian cloud
-    cloud = ctx.load_gaussian_npz("examples/assets/3dgs/point_cloud.npz")
-    gs_node = scene.add_gaussian_cloud("gaussian_cloud", cloud)
+    cloud = ctx.load_gaussian_npz(get_asset("3dgs/point_cloud.npz"))
+    cloud.color_space = "linear"
+    scene.add_gaussian_cloud("gaussian_cloud", cloud)
+
+    scene.set_tone_mapping("linear", gamma=1.0 / 2.2)
 
     # Camera
     cam = scene.add_camera(myth.PerspectiveCamera(fov=45, near=0.1))
@@ -43,7 +49,7 @@ def on_init(ctx: myth.Engine):
 
 @app.update
 def on_update(ctx: myth.Engine, frame: myth.FrameState):
-    orbit.update(ctx, frame)
+    orbit.update(cam, frame.dt)
 
 
 app.run()

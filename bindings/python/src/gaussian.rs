@@ -23,6 +23,12 @@ pub struct PyGaussianCloud {
 impl PyGaussianCloud {
     /// Number of Gaussian primitives in the cloud.
     #[getter]
+    fn count(&self) -> PyResult<usize> {
+        self.num_points()
+    }
+
+    /// Number of Gaussian primitives in the cloud.
+    #[getter]
     fn num_points(&self) -> PyResult<usize> {
         with_engine(|engine| {
             engine
@@ -99,11 +105,73 @@ impl PyGaussianCloud {
         })
     }
 
+    /// Source color space for the SH-fitted color coefficients.
+    #[getter]
+    fn color_space(&self) -> PyResult<&'static str> {
+        with_engine(|engine| {
+            engine
+                .assets
+                .gaussian_clouds
+                .get(self.handle)
+                .map(|c| match c.color_space {
+                    myth_engine::ColorSpace::Linear => "linear",
+                    myth_engine::ColorSpace::Srgb => "srgb",
+                })
+                .unwrap_or("srgb")
+        })
+    }
+
+    #[setter]
+    fn set_color_space(&self, value: &str) -> PyResult<()> {
+        let color_space = match value.to_lowercase().as_str() {
+            "linear" => myth_engine::ColorSpace::Linear,
+            "srgb" => myth_engine::ColorSpace::Srgb,
+            _ => {
+                return Err(pyo3::exceptions::PyValueError::new_err(
+                    "color_space must be 'srgb' or 'linear'",
+                ));
+            }
+        };
+
+        with_engine(|engine| {
+            let cloud = engine
+                .assets
+                .gaussian_clouds
+                .get(self.handle)
+                .ok_or_else(|| {
+                    pyo3::exceptions::PyRuntimeError::new_err("GaussianCloud asset not found")
+                })?;
+
+            let updated_cloud = myth_engine::GaussianCloud {
+                gaussians: cloud.gaussians.clone(),
+                sh_coefficients: cloud.sh_coefficients.clone(),
+                sh_degree: cloud.sh_degree,
+                num_points: cloud.num_points,
+                aabb_min: cloud.aabb_min,
+                aabb_max: cloud.aabb_max,
+                center: cloud.center,
+                mip_splatting: cloud.mip_splatting,
+                kernel_size: cloud.kernel_size,
+                color_space,
+                opacity_compensation: cloud.opacity_compensation,
+            };
+
+            engine
+                .assets
+                .gaussian_clouds
+                .update(self.handle, updated_cloud)
+                .ok_or_else(|| {
+                    pyo3::exceptions::PyRuntimeError::new_err("GaussianCloud asset not loaded")
+                })?;
+            Ok(())
+        })?
+    }
+
     fn __repr__(&self) -> PyResult<String> {
         with_engine(|engine| {
             if let Some(c) = engine.assets.gaussian_clouds.get(self.handle) {
                 format!(
-                    "GaussianCloud(num_points={}, sh_degree={})",
+                    "GaussianCloud(count={}, sh_degree={})",
                     c.num_points, c.sh_degree
                 )
             } else {
@@ -121,13 +189,9 @@ impl PyGaussianCloud {
 ///
 /// Returns a ``GaussianCloud`` object.
 pub fn load_gaussian_ply_impl(path: &str) -> PyResult<PyGaussianCloud> {
-    let file = std::fs::File::open(path).map_err(|e| {
-        pyo3::exceptions::PyIOError::new_err(format!("Cannot open PLY file '{path}': {e}"))
-    })?;
-    let reader = std::io::BufReader::new(file);
-    let cloud = myth_engine::load_gaussian_ply(reader).map_err(|e| {
+    let cloud = myth_engine::load_gaussian_ply_from_source(path).map_err(|e| {
         pyo3::exceptions::PyRuntimeError::new_err(format!(
-            "Failed to parse Gaussian PLY '{path}': {e}"
+            "Failed to load Gaussian PLY '{path}': {e}"
         ))
     })?;
     let handle = with_engine(|engine| engine.assets.gaussian_clouds.add(cloud))?;
@@ -139,13 +203,9 @@ pub fn load_gaussian_ply_impl(path: &str) -> PyResult<PyGaussianCloud> {
 /// Returns a ``GaussianCloud`` object.
 #[cfg(feature = "gaussian-npz")]
 pub fn load_gaussian_npz_impl(path: &str) -> PyResult<PyGaussianCloud> {
-    let file = std::fs::File::open(path).map_err(|e| {
-        pyo3::exceptions::PyIOError::new_err(format!("Cannot open NPZ file '{path}': {e}"))
-    })?;
-    let reader = std::io::BufReader::new(file);
-    let cloud = myth_engine::load_gaussian_npz(reader).map_err(|e| {
+    let cloud = myth_engine::load_gaussian_npz_from_source(path).map_err(|e| {
         pyo3::exceptions::PyRuntimeError::new_err(format!(
-            "Failed to parse Gaussian NPZ '{path}': {e}"
+            "Failed to load Gaussian NPZ '{path}': {e}"
         ))
     })?;
     let handle = with_engine(|engine| engine.assets.gaussian_clouds.add(cloud))?;

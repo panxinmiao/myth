@@ -59,7 +59,7 @@ fn vs_main(@builtin(vertex_index) vertex_idx: u32, @builtin(instance_index) inst
 @fragment
 fn fs_main(in: VertexOutput) -> @location(0) vec4<f32> {
     let radius_sq = dot(in.local_pos, in.local_pos);
-    if radius_sq > CUTOFF * CUTOFF {
+    if radius_sq > 2 * CUTOFF {
         discard;
     }
 

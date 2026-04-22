@@ -218,9 +218,18 @@ pub use myth_resources::{
 pub use myth_assets::loaders::npz::load_gaussian_npz;
 #[cfg(feature = "3dgs")]
 pub use myth_assets::loaders::ply::load_gaussian_ply;
+#[cfg(all(feature = "gaussian-npz", not(target_arch = "wasm32")))]
+pub use myth_assets::load_gaussian_npz_from_source;
+#[cfg(feature = "gaussian-npz")]
+pub use myth_assets::load_gaussian_npz_from_source_async;
+#[cfg(all(feature = "3dgs", not(target_arch = "wasm32")))]
+pub use myth_assets::load_gaussian_ply_from_source;
+#[cfg(feature = "3dgs")]
+pub use myth_assets::load_gaussian_ply_from_source_async;
 pub use myth_assets::{AssetServer, GeometryHandle, ImageHandle, MaterialHandle, TextureHandle};
 pub use myth_assets::{
-    ColorSpace, GaussianCloudHandle, GeometryQuery, ResolveGeometry, ResolveMaterial, SceneExt,
+    AssetSource, ColorSpace, GaussianCloudHandle, GeometryQuery, ResolveGeometry,
+    ResolveMaterial, SceneExt,
 };
 
 // Animation

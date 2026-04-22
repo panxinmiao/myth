@@ -26,7 +26,7 @@ use std::sync::OnceLock;
 use tokio::runtime::Runtime;
 
 #[cfg(not(target_arch = "wasm32"))]
-fn get_asset_runtime() -> &'static Runtime {
+pub(crate) fn get_asset_runtime() -> &'static Runtime {
     static RUNTIME: OnceLock<Runtime> = OnceLock::new();
     RUNTIME.get_or_init(|| Runtime::new().expect("Failed to create asset loader runtime"))
 }

@@ -306,8 +306,8 @@ impl PyScene {
     /// Convenience: set tone mapping mode (and optionally exposure).
     ///
     /// Supported modes: "linear", "neutral", "reinhard", "cineon", "aces", "agx"
-    #[pyo3(signature = (mode, exposure=None))]
-    fn set_tone_mapping(&self, mode: &str, exposure: Option<f32>) -> PyResult<()> {
+    #[pyo3(signature = (mode, exposure=None, gamma=None))]
+    fn set_tone_mapping(&self, mode: &str, exposure: Option<f32>, gamma: Option<f32>) -> PyResult<()> {
         let tm = match mode.to_lowercase().as_str() {
             "linear" => ToneMappingMode::Linear,
             "neutral" => ToneMappingMode::Neutral,
@@ -324,6 +324,7 @@ impl PyScene {
         with_active_scene(|scene| {
             scene.tone_mapping.mode = tm;
             scene.tone_mapping.set_exposure(exposure.unwrap_or(1.0));
+            scene.tone_mapping.set_gamma(gamma.unwrap_or(1.0));
         })?;
         Ok(())
     }
@@ -332,7 +333,7 @@ impl PyScene {
     ///
     /// Supported modes: "linear", "neutral", "reinhard", "cineon", "aces", "agx"
     fn set_tone_mapping_mode(&self, mode: &str) -> PyResult<()> {
-        self.set_tone_mapping(mode, None)
+        self.set_tone_mapping(mode, None, None)
     }
 
     // ----------------------------------------------------------------

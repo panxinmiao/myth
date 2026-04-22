@@ -5,9 +5,6 @@
 //! order = 500
 //!
 
-use std::fs::File;
-use std::io::BufReader;
-
 use myth::prelude::*;
 use myth_dev_utils::FpsCounter;
 
@@ -21,16 +18,17 @@ impl AppHandler for GaussianSplattingDemo {
         let scene = engine.scene_manager.create_active();
 
         // Load the compressed NPZ point cloud
-        let npz_path = "examples/assets/3dgs/point_cloud1.npz";
-        let file = File::open(npz_path).expect("Failed to open NPZ file");
-        let reader = BufReader::new(file);
-        let mut cloud = myth::load_gaussian_npz(reader).expect("Failed to parse NPZ Gaussian cloud");
+        let npz_path = "examples/assets/3dgs/point_cloud.npz";
+        let mut cloud = myth::load_gaussian_npz_from_source(npz_path)
+            .expect("Failed to load NPZ Gaussian cloud");
 
         cloud.color_space = ColorSpace::Linear;
 
         // Register in the asset server and add to scene
         let cloud_handle = engine.assets.gaussian_clouds.add(cloud);
         let _cloud_node = scene.add_gaussian_cloud("gaussian_cloud", cloud_handle);
+
+        // scene.node(&_cloud_node).set_rotation_euler(0.0, std::f32::consts::PI / 2.0,  -std::f32::consts::PI / 2.0);
 
         // Camera — use the first camera from the training data as a starting view
         let camera_pos = Vec3::new(2.86, 1.52, -0.69);
