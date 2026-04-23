@@ -5,6 +5,7 @@ use glam::Affine3A;
 use myth_animation::AnimationClip;
 use myth_core::Transform;
 use myth_resources::Mesh;
+use myth_scene::{Camera, Light};
 
 /// Prefab node: contains only data, uses indices to reference child nodes
 #[derive(Debug, Clone)]
@@ -15,6 +16,10 @@ pub struct PrefabNode {
     pub children_indices: Vec<usize>,
     /// Mesh component (if any)
     pub mesh: Option<Mesh>,
+    /// Camera component (if any)
+    pub camera: Option<Camera>,
+    /// Light component (if any)
+    pub light: Option<Light>,
     /// Referenced skeleton index (in Prefab.skeletons)
     pub skin_index: Option<usize>,
     /// Morph weights (if any)
@@ -32,6 +37,8 @@ impl PrefabNode {
             transform: Transform::new(),
             children_indices: Vec::new(),
             mesh: None,
+            camera: None,
+            light: None,
             skin_index: None,
             morph_weights: None,
             is_split_primitive: false,
