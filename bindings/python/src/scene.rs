@@ -885,6 +885,32 @@ impl PyMeshComponent {
         })
     }
 
+    #[setter]
+    fn set_morph_target_influences(&self, influences: Vec<f32>) -> PyResult<()> {
+        with_active_scene(|scene| {
+            scene.set_morph_weights(self.handle, influences.clone());
+            if let Some(mesh) = scene.get_mesh_mut(self.handle) {
+                mesh.set_morph_target_influences(&influences);
+            }
+        })
+    }
+
+    #[getter]
+    fn get_morph_target_influences(&self) -> PyResult<Vec<f32>> {
+        let result = with_active_scene(|scene| {
+            scene
+                .get_morph_weights(self.handle)
+                .cloned()
+                .or_else(|| {
+                    scene
+                        .get_mesh(self.handle)
+                        .map(|m| m.morph_target_influences().to_vec())
+                })
+                .unwrap_or_default()
+        })?;
+        Ok(result)
+    }
+
     fn __repr__(&self) -> String {
         format!("MeshComponent(handle={:?})", self.handle)
     }

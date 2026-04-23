@@ -812,6 +812,8 @@ class MeshComponent:
     """Whether this mesh receives shadows."""
     render_order: int
     """Draw order override."""
+    morph_target_influences: Sequence[float]
+    """List of morph target influences (0..1)."""
 
 # ============================================================================
 # Object3D
