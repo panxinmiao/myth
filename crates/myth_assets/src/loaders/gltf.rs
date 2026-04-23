@@ -787,6 +787,7 @@ impl GltfLoader {
             "KHR_materials_specular".to_string(),
             "KHR_texture_transform".to_string(),
             "KHR_mesh_quantization".to_string(),
+            "KHR_lights_punctual".to_string(),
             "EXT_meshopt_compression".to_string(),
             "EXT_texture_webp".to_string(),
         ]);
