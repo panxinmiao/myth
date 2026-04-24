@@ -2,8 +2,11 @@
 //
 // Projects 3D Gaussians into 2D screen-space splats, evaluates view-dependent
 // SH colour, and emits reverse-Z sort keys for front-to-back compositing.
+// Sort dispatch granularity is specialized at pipeline creation.
 
 {{ binding_code }}
+
+override GS_SORT_KEYS_PER_WG: u32 = 3840u;
 
 const SH_C0: f32 = 0.28209479177387814;
 const SH_C1: f32 = 0.4886025119029199;
@@ -278,8 +281,7 @@ fn main(@builtin(global_invocation_id) gid: vec3<u32>) {
     sort_depths[store_idx] = 0xffffffffu - bitcast<u32>(center_depth);
     sort_indices[store_idx] = store_idx;
 
-    let keys_per_wg = 256u * 15u;
-    if (store_idx % keys_per_wg) == 0u {
+    if (store_idx % GS_SORT_KEYS_PER_WG) == 0u {
         atomicAdd(&sort_infos.dispatch_x, 1u);
     }
 }

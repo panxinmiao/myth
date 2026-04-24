@@ -38,9 +38,8 @@ const SORT_SCATTER_WG_SIZE: u32 = 256;
 const SORT_RADIX_LOG2: u32 = 8;
 const SORT_RADIX_SIZE: usize = 1 << SORT_RADIX_LOG2;
 const SORT_KEYVAL_PASSES: u32 = 4;
-const SORT_HISTOGRAM_BLOCK_ROWS: usize = 15;
-const SORT_SCATTER_BLOCK_ROWS: usize = SORT_HISTOGRAM_BLOCK_ROWS;
-const SORT_KEYS_PER_WG: usize = SORT_HISTOGRAM_WG_SIZE as usize * SORT_HISTOGRAM_BLOCK_ROWS;
+const SORT_MIN_BLOCK_ROWS: usize = 1;
+const SORT_MAX_BLOCK_ROWS: usize = 15;
 
 const SPLAT_VERTEX_COUNT: u32 = 4;
 const SORT_DISPATCH_INDIRECT_OFFSET: u64 = std::mem::size_of::<[u32; 3]>() as u64;
@@ -137,29 +136,78 @@ struct SortBufferLayout {
     internal_buffer_words: usize,
 }
 
-fn padded_sort_key_capacity(key_count: usize) -> usize {
-    let key_count = key_count.max(1);
-    ((key_count + SORT_KEYS_PER_WG) / SORT_KEYS_PER_WG + 1) * SORT_KEYS_PER_WG
+/// Device-specialized radix-sort parameters shared by both CPU-side buffer
+/// sizing and WGSL pipeline overrides.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+struct GaussianSortConfig {
+    subgroup_size: u32,
+    block_rows: usize,
+    keys_per_wg: usize,
+    rs_mem_dwords: usize,
 }
 
-fn sort_scatter_blocks(key_count: usize) -> usize {
-    let scatter_block_kvs = SORT_HISTOGRAM_WG_SIZE as usize * SORT_SCATTER_BLOCK_ROWS;
-    (key_count.max(1) + scatter_block_kvs - 1) / scatter_block_kvs
-}
+impl GaussianSortConfig {
+    fn for_device(device: &wgpu::Device) -> Self {
+        let subgroup_size = normalize_sort_subgroup_size(device.adapter_info().subgroup_min_size);
+        let max_workgroup_storage_bytes =
+            device.limits().max_compute_workgroup_storage_size as usize;
+        let max_workgroup_storage_words = max_workgroup_storage_bytes / std::mem::size_of::<u32>();
+        let fixed_workgroup_words = SORT_RADIX_SIZE * 2;
+        let block_rows = max_workgroup_storage_words.saturating_sub(fixed_workgroup_words)
+            / SORT_SCATTER_WG_SIZE as usize;
+        let block_rows = block_rows.clamp(SORT_MIN_BLOCK_ROWS, SORT_MAX_BLOCK_ROWS);
+        let keys_per_wg = SORT_HISTOGRAM_WG_SIZE as usize * block_rows;
+        let rs_mem_dwords = SORT_RADIX_SIZE + SORT_SCATTER_WG_SIZE as usize * block_rows;
 
-fn sort_buffer_layout(key_count: usize) -> SortBufferLayout {
-    let scatter_blocks_ru = sort_scatter_blocks(key_count).max(1);
-    let padded_key_capacity = padded_sort_key_capacity(key_count);
-    let internal_buffer_words = (SORT_KEYVAL_PASSES as usize + scatter_blocks_ru) * SORT_RADIX_SIZE;
+        debug_assert!(
+            (rs_mem_dwords + SORT_RADIX_SIZE) * std::mem::size_of::<u32>()
+                <= max_workgroup_storage_bytes
+        );
 
-    SortBufferLayout {
-        padded_key_capacity,
-        internal_buffer_words,
+        Self {
+            subgroup_size,
+            block_rows,
+            keys_per_wg,
+            rs_mem_dwords,
+        }
+    }
+
+    fn buffer_layout(self, key_count: usize) -> SortBufferLayout {
+        let scatter_blocks_ru = self.sort_scatter_blocks(key_count).max(1);
+        let padded_key_capacity = self.padded_sort_key_capacity(key_count);
+        let internal_buffer_words =
+            (SORT_KEYVAL_PASSES as usize + scatter_blocks_ru) * SORT_RADIX_SIZE;
+
+        SortBufferLayout {
+            padded_key_capacity,
+            internal_buffer_words,
+        }
+    }
+
+    fn padded_sort_key_capacity(self, key_count: usize) -> usize {
+        let key_count = key_count.max(1);
+        ((key_count + self.keys_per_wg) / self.keys_per_wg + 1) * self.keys_per_wg
+    }
+
+    fn sort_scatter_blocks(self, key_count: usize) -> usize {
+        let scatter_block_kvs = SORT_HISTOGRAM_WG_SIZE as usize * self.block_rows;
+        (key_count.max(1) + scatter_block_kvs - 1) / scatter_block_kvs
+    }
+
+    fn block_rows_u32(self) -> u32 {
+        self.block_rows as u32
+    }
+
+    fn keys_per_wg_u32(self) -> u32 {
+        self.keys_per_wg as u32
+    }
+
+    fn rs_mem_dwords_u32(self) -> u32 {
+        self.rs_mem_dwords as u32
     }
 }
 
-fn detect_sort_subgroup_size(device: &wgpu::Device) -> u32 {
-    let reported = device.adapter_info().subgroup_min_size;
+fn normalize_sort_subgroup_size(reported: u32) -> u32 {
     match reported {
         32.. => 32,
         16..=31 => 16,
@@ -168,18 +216,8 @@ fn detect_sort_subgroup_size(device: &wgpu::Device) -> u32 {
     }
 }
 
-fn build_sort_shader_options(subgroup_size: u32) -> ShaderCompilationOptions {
-    let subgroup_size = match subgroup_size {
-        32.. => 32,
-        16..=31 => 16,
-        8..=15 => 8,
-        _ => 32,
-    };
-
-    let subgroup_size_usize = subgroup_size as usize;
-    let rs_sweep_0_size = SORT_RADIX_SIZE / subgroup_size_usize;
-    let rs_sweep_1_size = rs_sweep_0_size / subgroup_size_usize;
-    let rs_mem_dwords = SORT_RADIX_SIZE + SORT_SCATTER_BLOCK_ROWS * SORT_SCATTER_WG_SIZE as usize;
+fn build_sort_shader_options(sort_config: GaussianSortConfig) -> ShaderCompilationOptions {
+    let subgroup_size = sort_config.subgroup_size;
 
     let mut options = ShaderCompilationOptions::default();
     options.add_define("HISTOGRAM_SG_SIZE", &subgroup_size.to_string());
@@ -189,21 +227,6 @@ fn build_sort_shader_options(subgroup_size: u32) -> ShaderCompilationOptions {
     options.add_define("RS_RADIX_LOG2", &SORT_RADIX_LOG2.to_string());
     options.add_define("RS_RADIX_SIZE", &SORT_RADIX_SIZE.to_string());
     options.add_define("RS_KEYVAL_SIZE", &SORT_KEYVAL_PASSES.to_string());
-    options.add_define(
-        "RS_HISTOGRAM_BLOCK_ROWS",
-        &SORT_HISTOGRAM_BLOCK_ROWS.to_string(),
-    );
-    options.add_define(
-        "RS_SCATTER_BLOCK_ROWS",
-        &SORT_SCATTER_BLOCK_ROWS.to_string(),
-    );
-    options.add_define("RS_MEM_DWORDS", &rs_mem_dwords.to_string());
-    options.add_define("RS_MEM_SWEEP_0_OFFSET", "0");
-    options.add_define("RS_MEM_SWEEP_1_OFFSET", &rs_sweep_0_size.to_string());
-    options.add_define(
-        "RS_MEM_SWEEP_2_OFFSET",
-        &(rs_sweep_0_size + rs_sweep_1_size).to_string(),
-    );
     options
 }
 
@@ -268,6 +291,7 @@ struct CloudRenderState<'a> {
 pub struct GaussianSplattingFeature {
     preprocess_pipeline: Option<wgpu::ComputePipeline>,
     preprocess_global_layout_id: Option<u64>,
+    sort_config: Option<GaussianSortConfig>,
     sort_pipelines: Option<GaussianSortPipelines>,
     render_pipeline: Option<wgpu::RenderPipeline>,
     render_pipeline_key: Option<GaussianRenderPipelineKey>,
@@ -301,6 +325,7 @@ impl GaussianSplattingFeature {
         Self {
             preprocess_pipeline: None,
             preprocess_global_layout_id: None,
+            sort_config: None,
             sort_pipelines: None,
             render_pipeline: None,
             render_pipeline_key: None,
@@ -561,6 +586,9 @@ impl GaussianSplattingFeature {
 
     fn ensure_pipelines(&mut self, ctx: &mut ExtractContext) {
         let device = ctx.device;
+        let sort_config = *self
+            .sort_config
+            .get_or_insert_with(|| GaussianSortConfig::for_device(device));
         let global_state_key = (ctx.render_state.id, ctx.extracted_scene.scene_id);
         let gpu_world = ctx
             .resource_manager
@@ -589,13 +617,22 @@ impl GaussianSplattingFeature {
                 immediate_size: 0,
             });
 
+            let preprocess_constants = [(
+                "GS_SORT_KEYS_PER_WG",
+                f64::from(sort_config.keys_per_wg_u32()),
+            )];
+            let preprocess_compilation_options = wgpu::PipelineCompilationOptions {
+                constants: &preprocess_constants,
+                ..Default::default()
+            };
+
             self.preprocess_pipeline = Some(device.create_compute_pipeline(
                 &wgpu::ComputePipelineDescriptor {
                     label: Some("GS Preprocess Pipeline"),
                     layout: Some(&layout),
                     module,
                     entry_point: Some("main"),
-                    compilation_options: wgpu::PipelineCompilationOptions::default(),
+                    compilation_options: preprocess_compilation_options,
                     cache: None,
                 },
             ));
@@ -604,14 +641,37 @@ impl GaussianSplattingFeature {
         }
 
         if self.sort_pipelines.is_none() {
-            let subgroup_size = detect_sort_subgroup_size(device);
-            let shader_options = build_sort_shader_options(subgroup_size);
+            let shader_options = build_sort_shader_options(sort_config);
 
             let layout = device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
                 label: Some("GS Sort Pipeline Layout"),
                 bind_group_layouts: &[Some(self.sort_layout.as_ref().unwrap())],
                 immediate_size: 0,
             });
+
+            let pad_constants = [(
+                "RS_HISTOGRAM_BLOCK_ROWS",
+                f64::from(sort_config.block_rows_u32()),
+            )];
+            let pad_compilation_options = wgpu::PipelineCompilationOptions {
+                constants: &pad_constants,
+                ..Default::default()
+            };
+            let sort_constants = [
+                (
+                    "RS_HISTOGRAM_BLOCK_ROWS",
+                    f64::from(sort_config.block_rows_u32()),
+                ),
+                (
+                    "RS_SCATTER_BLOCK_ROWS",
+                    f64::from(sort_config.block_rows_u32()),
+                ),
+                ("RS_MEM_DWORDS", f64::from(sort_config.rs_mem_dwords_u32())),
+            ];
+            let sort_compilation_options = wgpu::PipelineCompilationOptions {
+                constants: &sort_constants,
+                ..Default::default()
+            };
 
             let pad_keys = {
                 let (pad_module, _) = ctx.shader_manager.get_or_compile(
@@ -624,7 +684,7 @@ impl GaussianSplattingFeature {
                     layout: Some(&layout),
                     module: pad_module,
                     entry_point: Some("main"),
-                    compilation_options: wgpu::PipelineCompilationOptions::default(),
+                    compilation_options: pad_compilation_options,
                     cache: None,
                 })
             };
@@ -649,7 +709,7 @@ impl GaussianSplattingFeature {
                         layout: Some(&layout),
                         module: sort_module,
                         entry_point: Some(entry_point),
-                        compilation_options: wgpu::PipelineCompilationOptions::default(),
+                        compilation_options: sort_compilation_options.clone(),
                         cache: None,
                     })
                 };
@@ -839,7 +899,10 @@ impl GaussianSplattingFeature {
             u32::try_from(cloud.num_points).expect("Gaussian cloud exceeds u32 capacity");
         let num_sh_coefficients = u32::try_from(cloud.sh_coefficients.len())
             .expect("Gaussian SH coefficient table exceeds u32 capacity");
-        let sort_layout = sort_buffer_layout(cloud.num_points);
+        let sort_layout = self
+            .sort_config
+            .expect("GS sort config must exist before GPU upload")
+            .buffer_layout(cloud.num_points);
         let upload_count = cloud.num_points.max(1);
         let sh_upload_count = cloud.sh_coefficients.len().max(1);
 

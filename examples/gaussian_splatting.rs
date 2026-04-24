@@ -23,13 +23,9 @@ impl AppHandler for GaussianSplattingDemo {
     fn init(engine: &mut Engine, _window: &dyn Window) -> Self {
         let scene = engine.scene_manager.create_active();
 
-        // Load the compressed NPZ point cloud
+        // Queue the compressed NPZ point cloud for background loading
         let npz_path = format!("{}3dgs/point_cloud.npz", ASSET_PATH);
-        let cloud = myth::load_gaussian_npz_from_source(npz_path)
-            .expect("Failed to load NPZ Gaussian cloud");
-
-        // Register in the asset server and add to scene
-        let cloud_handle = engine.assets.gaussian_clouds.add(cloud);
+        let cloud_handle = engine.assets.load_gaussian_npz(npz_path);
         let _cloud_node = scene.add_gaussian_cloud("gaussian_cloud", cloud_handle);
 
         scene.node(&_cloud_node).set_rotation_euler(
