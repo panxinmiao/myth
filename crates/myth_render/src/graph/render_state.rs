@@ -122,12 +122,19 @@ impl RenderState {
         self.uniforms.write()
     }
 
-    pub fn update(&mut self, camera: &RenderCamera, frame_time: FrameTime) {
+    pub fn update(
+        &mut self,
+        camera: &RenderCamera,
+        frame_time: FrameTime,
+        viewport_size: (u32, u32),
+    ) {
         let prev_vp = self.prev_view_projection;
         let prev_j = self.prev_jitter;
         let prev_unjittered_vp = self.prev_unjittered_vp;
 
         let unjittered_vp = camera.unjittered_projection * camera.view_matrix;
+        let focal_x = (camera.projection_matrix.x_axis.x * viewport_size.0 as f32 * 0.5).abs();
+        let focal_y = (camera.projection_matrix.y_axis.y * viewport_size.1 as f32 * 0.5).abs();
 
         let mut u = self.uniforms_mut();
         u.view_projection = camera.view_projection_matrix;
@@ -139,6 +146,8 @@ impl RenderState {
         u.unjittered_view_projection = unjittered_vp;
         u.prev_unjittered_view_projection = prev_unjittered_vp;
         u.camera_position = camera.position.into();
+        u.viewport = glam::Vec2::new(viewport_size.0 as f32, viewport_size.1 as f32);
+        u.focal = glam::Vec2::new(focal_x, focal_y);
         u.time = frame_time.time % 7200.0; // Wrap time to avoid precision issues in shaders
         u.time_cycle_2pi = frame_time.time % std::f32::consts::PI * 2.0;
         u.delta_time = frame_time.delta_time;

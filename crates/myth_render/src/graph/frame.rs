@@ -496,7 +496,7 @@ impl RenderFrame {
         );
 
         // ── 6. Global GPU resources ────────────────────────────────────
-        self.render_state.update(camera, frame_time);
+        self.render_state.update(camera, frame_time, surface_size);
         resource_manager.prepare_global(assets, scene, &self.render_state);
     }
 

@@ -16,7 +16,7 @@
 
 use std::sync::Arc;
 
-use glam::Vec3A;
+use glam::{Mat4, Vec3, Vec3A};
 
 use crate::HDR_TEXTURE_FORMAT;
 use crate::core::gpu::{CommonSampler, Tracked};
@@ -29,7 +29,6 @@ use crate::pipeline::{ShaderCompilationOptions, ShaderSource};
 use myth_resources::GaussianCloudHandle;
 use myth_resources::gaussian_splat::{GaussianCloud, GaussianSHCoefficients};
 use myth_resources::image::ColorSpace;
-use myth_scene::camera::RenderCamera;
 
 const PREPROCESS_WG_SIZE: u32 = 256;
 
@@ -55,17 +54,6 @@ struct GpuCompositeSettings {
 
 #[repr(C)]
 #[derive(Clone, Copy, bytemuck::Pod, bytemuck::Zeroable)]
-struct GpuCameraUniforms {
-    view: [f32; 16],
-    view_inv: [f32; 16],
-    proj: [f32; 16],
-    proj_inv: [f32; 16],
-    viewport: [f32; 2],
-    focal: [f32; 2],
-}
-
-#[repr(C)]
-#[derive(Clone, Copy, bytemuck::Pod, bytemuck::Zeroable)]
 struct GpuRenderSettings {
     gaussian_scaling: f32,
     max_sh_deg: u32,
@@ -75,6 +63,8 @@ struct GpuRenderSettings {
     color_space_flag: u32,
     opacity_compensation: f32,
     _pad0: u32,
+    model_matrix: [f32; 16],
+    model_inv_matrix: [f32; 16],
 }
 
 #[repr(C)]
@@ -236,7 +226,6 @@ struct CloudGpuData {
     gaussian_core_buf: Tracked<wgpu::Buffer>,
     gaussian_cov_buf: Tracked<wgpu::Buffer>,
     sh_buf: Tracked<wgpu::Buffer>,
-    camera_uniform_buf: Tracked<wgpu::Buffer>,
     render_settings_buf: Tracked<wgpu::Buffer>,
 }
 
@@ -255,7 +244,6 @@ struct CloudGraphBuffers {
     sort_indices_a_buf: BufferNodeId,
     sort_indices_b_buf: BufferNodeId,
     draw_indirect_buf: BufferNodeId,
-    camera_uniform_buf: BufferNodeId,
     render_settings_buf: BufferNodeId,
     num_points: u32,
     sort_infos_init: GpuSortInfos,
@@ -265,7 +253,6 @@ struct CloudGraphBuffers {
 #[derive(Clone, Copy)]
 struct CloudComputeState<'a> {
     buffers: CloudGraphBuffers,
-    preprocess_bg0: Option<&'a wgpu::BindGroup>,
     preprocess_bg1: Option<&'a wgpu::BindGroup>,
     preprocess_bg2: Option<&'a wgpu::BindGroup>,
     preprocess_bg3: Option<&'a wgpu::BindGroup>,
@@ -280,13 +267,13 @@ struct CloudRenderState<'a> {
 
 pub struct GaussianSplattingFeature {
     preprocess_pipeline: Option<wgpu::ComputePipeline>,
+    preprocess_global_layout_id: Option<u64>,
     sort_pipelines: Option<GaussianSortPipelines>,
     render_pipeline: Option<wgpu::RenderPipeline>,
     render_pipeline_key: Option<GaussianRenderPipelineKey>,
     composite_pipeline: Option<wgpu::RenderPipeline>,
     composite_pipeline_key: Option<GaussianCompositePipelineKey>,
 
-    preprocess_layout_g0: Option<Tracked<wgpu::BindGroupLayout>>,
     preprocess_layout_g1: Option<Tracked<wgpu::BindGroupLayout>>,
     preprocess_layout_g2: Option<Tracked<wgpu::BindGroupLayout>>,
     preprocess_layout_g3: Option<Tracked<wgpu::BindGroupLayout>>,
@@ -313,12 +300,12 @@ impl GaussianSplattingFeature {
     pub fn new() -> Self {
         Self {
             preprocess_pipeline: None,
+            preprocess_global_layout_id: None,
             sort_pipelines: None,
             render_pipeline: None,
             render_pipeline_key: None,
             composite_pipeline: None,
             composite_pipeline_key: None,
-            preprocess_layout_g0: None,
             preprocess_layout_g1: None,
             preprocess_layout_g2: None,
             preprocess_layout_g3: None,
@@ -337,9 +324,7 @@ impl GaussianSplattingFeature {
     pub fn extract_and_prepare(
         &mut self,
         ctx: &mut ExtractContext,
-        cloud_entries: &[(GaussianCloudHandle, Arc<GaussianCloud>, Vec3A)],
-        camera: &RenderCamera,
-        viewport_size: (u32, u32),
+        cloud_entries: &[(GaussianCloudHandle, Arc<GaussianCloud>, Mat4)],
     ) {
         if cloud_entries.is_empty() {
             self.sorted_order.clear();
@@ -413,26 +398,26 @@ impl GaussianSplattingFeature {
             }
         }
 
-        for (handle, cloud, _) in cloud_entries {
+        for (handle, cloud, model_matrix) in cloud_entries {
             if let Some((_, _, gpu_data)) = self
                 .clouds
                 .iter()
                 .find(|(existing_handle, _, _)| *existing_handle == *handle)
             {
-                Self::update_cloud_uniforms(ctx.queue, gpu_data, camera, cloud, viewport_size);
+                Self::update_cloud_uniforms(ctx.queue, gpu_data, cloud, *model_matrix);
             }
         }
 
-        let camera_position = camera.position;
+        let camera_position = ctx.render_camera.position;
         let mut cloud_order: Vec<(usize, f32)> = cloud_entries
             .iter()
-            .filter_map(|(handle, cloud, world_pos)| {
+            .filter_map(|(handle, cloud, model_matrix)| {
                 let cloud_index = self
                     .clouds
                     .iter()
                     .position(|(existing_handle, _, _)| existing_handle == handle)?;
-                let local_center = Vec3A::new(cloud.center.x, cloud.center.y, cloud.center.z);
-                let world_center = *world_pos + local_center;
+                let local_center = Vec3::new(cloud.center.x, cloud.center.y, cloud.center.z);
+                let world_center = Vec3A::from(model_matrix.transform_point3(local_center));
                 let distance_sq = camera_position.distance_squared(world_center);
                 Some((cloud_index, distance_sq))
             })
@@ -449,7 +434,7 @@ impl GaussianSplattingFeature {
     }
 
     fn ensure_layouts(&mut self, device: &wgpu::Device) {
-        if self.preprocess_layout_g0.is_some() {
+        if self.preprocess_layout_g1.is_some() {
             return;
         }
 
@@ -491,13 +476,6 @@ impl GaussianSplattingFeature {
 
         let cs = wgpu::ShaderStages::COMPUTE;
         let vs = wgpu::ShaderStages::VERTEX;
-
-        self.preprocess_layout_g0 = Some(Tracked::new(device.create_bind_group_layout(
-            &wgpu::BindGroupLayoutDescriptor {
-                label: Some("GS Preprocess G0 (Camera)"),
-                entries: &[uniform_entry(0, cs)],
-            },
-        )));
 
         self.preprocess_layout_g1 = Some(Tracked::new(device.create_bind_group_layout(
             &wgpu::BindGroupLayoutDescriptor {
@@ -584,9 +562,17 @@ impl GaussianSplattingFeature {
 
     fn ensure_pipelines(&mut self, ctx: &mut ExtractContext) {
         let device = ctx.device;
+        let global_state_key = (ctx.render_state.id, ctx.extracted_scene.scene_id);
+        let gpu_world = ctx
+            .resource_manager
+            .get_global_state(global_state_key.0, global_state_key.1)
+            .expect("GS preprocess requires a global render-state bind group");
 
-        if self.preprocess_pipeline.is_none() {
-            let shader_options = ShaderCompilationOptions::default();
+        if self.preprocess_pipeline.is_none()
+            || self.preprocess_global_layout_id != Some(gpu_world.layout_id)
+        {
+            let mut shader_options = ShaderCompilationOptions::default();
+            shader_options.inject_code("binding_code", &gpu_world.binding_wgsl);
             let (module, _) = ctx.shader_manager.get_or_compile(
                 device,
                 ShaderSource::File("entry/utility/gaussian_preprocess"),
@@ -596,7 +582,7 @@ impl GaussianSplattingFeature {
             let layout = device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
                 label: Some("GS Preprocess Pipeline Layout"),
                 bind_group_layouts: &[
-                    Some(self.preprocess_layout_g0.as_ref().unwrap()),
+                    Some(&gpu_world.layout),
                     Some(self.preprocess_layout_g1.as_ref().unwrap()),
                     Some(self.preprocess_layout_g2.as_ref().unwrap()),
                     Some(self.preprocess_layout_g3.as_ref().unwrap()),
@@ -614,6 +600,8 @@ impl GaussianSplattingFeature {
                     cache: None,
                 },
             ));
+
+            self.preprocess_global_layout_id = Some(gpu_world.layout_id);
         }
 
         if self.sort_pipelines.is_none() {
@@ -897,13 +885,6 @@ impl GaussianSplattingFeature {
         }));
         queue.write_buffer(&sh_buf, 0, bytemuck::cast_slice(&cloud.sh_coefficients));
 
-        let camera_uniform_buf = Tracked::new(device.create_buffer(&wgpu::BufferDescriptor {
-            label: Some("GS Camera Uniform"),
-            size: std::mem::size_of::<GpuCameraUniforms>() as u64,
-            usage: wgpu::BufferUsages::UNIFORM | wgpu::BufferUsages::COPY_DST,
-            mapped_at_creation: false,
-        }));
-
         let render_settings_buf = Tracked::new(device.create_buffer(&wgpu::BufferDescriptor {
             label: Some("GS Render Settings"),
             size: std::mem::size_of::<GpuRenderSettings>() as u64,
@@ -918,7 +899,6 @@ impl GaussianSplattingFeature {
             gaussian_core_buf,
             gaussian_cov_buf,
             sh_buf,
-            camera_uniform_buf,
             render_settings_buf,
         }
     }
@@ -926,31 +906,10 @@ impl GaussianSplattingFeature {
     fn update_cloud_uniforms(
         queue: &wgpu::Queue,
         data: &CloudGpuData,
-        camera: &RenderCamera,
         cloud: &GaussianCloud,
-        viewport_size: (u32, u32),
+        model_matrix: Mat4,
     ) {
-        let view = camera.view_matrix;
-        let proj = camera.projection_matrix;
-        let view_inv = view.inverse();
-        let proj_inv = proj.inverse();
-
-        let focal_x = (proj.x_axis.x * viewport_size.0 as f32 * 0.5).abs();
-        let focal_y = (proj.y_axis.y * viewport_size.1 as f32 * 0.5).abs();
-
-        let camera_uniforms = GpuCameraUniforms {
-            view: view.to_cols_array(),
-            view_inv: view_inv.to_cols_array(),
-            proj: proj.to_cols_array(),
-            proj_inv: proj_inv.to_cols_array(),
-            viewport: [viewport_size.0 as f32, viewport_size.1 as f32],
-            focal: [focal_x, focal_y],
-        };
-        queue.write_buffer(
-            &data.camera_uniform_buf,
-            0,
-            bytemuck::bytes_of(&camera_uniforms),
-        );
+        let model_inv_matrix = model_matrix.inverse();
 
         let render_settings = GpuRenderSettings {
             gaussian_scaling: 1.0,
@@ -964,6 +923,8 @@ impl GaussianSplattingFeature {
             },
             opacity_compensation: cloud.opacity_compensation,
             _pad0: 0,
+            model_matrix: model_matrix.to_cols_array(),
+            model_inv_matrix: model_inv_matrix.to_cols_array(),
         };
         queue.write_buffer(
             &data.render_settings_buf,
@@ -986,10 +947,6 @@ impl GaussianSplattingFeature {
         let sort_pipelines = self.sort_pipelines.as_ref();
         let render_pipeline = self.render_pipeline.as_ref();
 
-        let preprocess_layout_g0 = self
-            .preprocess_layout_g0
-            .as_ref()
-            .expect("GS preprocess layout G0 missing");
         let preprocess_layout_g1 = self
             .preprocess_layout_g1
             .as_ref()
@@ -1052,14 +1009,6 @@ impl GaussianSplattingFeature {
                         wgpu::BufferUsages::STORAGE | wgpu::BufferUsages::COPY_DST,
                     ),
                     &gpu.sh_buf,
-                );
-                let camera_uniform_buf = builder.read_external_buffer(
-                    "GS_Camera_Uniform",
-                    BufferDesc::new(
-                        std::mem::size_of::<GpuCameraUniforms>() as u64,
-                        wgpu::BufferUsages::UNIFORM | wgpu::BufferUsages::COPY_DST,
-                    ),
-                    &gpu.camera_uniform_buf,
                 );
                 let render_settings_buf = builder.read_external_buffer(
                     "GS_Render_Settings",
@@ -1149,7 +1098,6 @@ impl GaussianSplattingFeature {
                     sort_indices_a_buf,
                     sort_indices_b_buf,
                     draw_indirect_buf,
-                    camera_uniform_buf,
                     render_settings_buf,
                     num_points: gpu.num_points,
                     sort_infos_init: GpuSortInfos {
@@ -1171,7 +1119,6 @@ impl GaussianSplattingFeature {
                 graph_buffers.push(buffers);
                 compute_states.push(CloudComputeState {
                     buffers,
-                    preprocess_bg0: None,
                     preprocess_bg1: None,
                     preprocess_bg2: None,
                     preprocess_bg3: None,
@@ -1186,7 +1133,6 @@ impl GaussianSplattingFeature {
                 GaussianComputePassNode {
                     preprocess_pipeline,
                     sort_pipelines,
-                    preprocess_layout_g0,
                     preprocess_layout_g1,
                     preprocess_layout_g2,
                     preprocess_layout_g3,
@@ -1288,7 +1234,6 @@ impl GaussianSplattingFeature {
 struct GaussianComputePassNode<'a> {
     preprocess_pipeline: Option<&'a wgpu::ComputePipeline>,
     sort_pipelines: Option<&'a GaussianSortPipelines>,
-    preprocess_layout_g0: &'a Tracked<wgpu::BindGroupLayout>,
     preprocess_layout_g1: &'a Tracked<wgpu::BindGroupLayout>,
     preprocess_layout_g2: &'a Tracked<wgpu::BindGroupLayout>,
     preprocess_layout_g3: &'a Tracked<wgpu::BindGroupLayout>,
@@ -1309,11 +1254,6 @@ impl<'a> PassNode<'a> for GaussianComputePassNode<'a> {
                 0,
                 bytemuck::bytes_of(&cloud.buffers.draw_indirect_init),
             );
-
-            let preprocess_bg0 = ctx
-                .build_bind_group(self.preprocess_layout_g0, Some("GS Preprocess BG0"))
-                .bind_buffer(0, cloud.buffers.camera_uniform_buf)
-                .build();
 
             let preprocess_bg1 = ctx
                 .build_bind_group(self.preprocess_layout_g1, Some("GS Preprocess BG1"))
@@ -1346,7 +1286,6 @@ impl<'a> PassNode<'a> for GaussianComputePassNode<'a> {
                 .bind_buffer(5, cloud.buffers.sort_indices_b_buf)
                 .build();
 
-            cloud.preprocess_bg0 = Some(preprocess_bg0);
             cloud.preprocess_bg1 = Some(preprocess_bg1);
             cloud.preprocess_bg2 = Some(preprocess_bg2);
             cloud.preprocess_bg3 = Some(preprocess_bg3);
@@ -1359,6 +1298,7 @@ impl<'a> PassNode<'a> for GaussianComputePassNode<'a> {
             .preprocess_pipeline
             .expect("GS preprocess pipeline missing");
         let sort_pipelines = self.sort_pipelines.expect("GS sort pipelines missing");
+        let global_bind_group = ctx.baked_lists.global_bind_group;
 
         for cloud in self.clouds.iter() {
             let preprocess_workgroups =
@@ -1370,11 +1310,7 @@ impl<'a> PassNode<'a> for GaussianComputePassNode<'a> {
                     timestamp_writes: None,
                 });
                 cpass.set_pipeline(preprocess_pipeline);
-                cpass.set_bind_group(
-                    0,
-                    cloud.preprocess_bg0.expect("GS preprocess BG0 missing"),
-                    &[],
-                );
+                cpass.set_bind_group(0, global_bind_group, &[]);
                 cpass.set_bind_group(
                     1,
                     cloud.preprocess_bg1.expect("GS preprocess BG1 missing"),

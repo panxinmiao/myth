@@ -475,20 +475,17 @@ impl Renderer {
                 let mut cloud_entries = Vec::new();
                 for (node_handle, cloud_handle) in &scene.gaussian_clouds {
                     if let Some(cloud) = assets.gaussian_clouds.get(*cloud_handle) {
-                        let world_pos = scene
+                        let world_matrix = scene
                             .get_node(node_handle)
-                            .map(|n| n.transform.world_matrix.translation)
-                            .unwrap_or_default();
-                        cloud_entries.push((*cloud_handle, cloud, world_pos));
+                            .map(|node| glam::Mat4::from(*node.world_matrix()))
+                            .unwrap_or(glam::Mat4::IDENTITY);
+                        cloud_entries.push((*cloud_handle, cloud, world_matrix));
                     }
                 }
                 if !cloud_entries.is_empty() {
-                    state.gaussian_splatting_pass.extract_and_prepare(
-                        &mut extract_ctx,
-                        &cloud_entries,
-                        &camera,
-                        self.size,
-                    );
+                    state
+                        .gaussian_splatting_pass
+                        .extract_and_prepare(&mut extract_ctx, &cloud_entries);
                 }
             }
 

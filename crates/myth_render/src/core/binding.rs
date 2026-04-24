@@ -94,7 +94,9 @@ impl Bindings for RenderState {
         builder.add_uniform::<RenderStateUniforms>(
             "render_state",
             self.uniforms(),
-            wgpu::ShaderStages::VERTEX | wgpu::ShaderStages::FRAGMENT,
+            wgpu::ShaderStages::VERTEX
+                | wgpu::ShaderStages::FRAGMENT
+                | wgpu::ShaderStages::COMPUTE,
         );
     }
 }

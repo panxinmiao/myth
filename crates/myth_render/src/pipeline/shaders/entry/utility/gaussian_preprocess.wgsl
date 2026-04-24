@@ -3,6 +3,8 @@
 // Projects 3D Gaussians into 2D screen-space splats, evaluates view-dependent
 // SH colour, and emits reverse-Z sort keys for front-to-back compositing.
 
+{{ binding_code }}
+
 const SH_C0: f32 = 0.28209479177387814;
 const SH_C1: f32 = 0.4886025119029199;
 const SH_C2 = array<f32, 5>(
@@ -21,15 +23,6 @@ const SH_C3 = array<f32, 7>(
     1.445305721320277,
     -0.5900435899266435
 );
-
-struct CameraUniforms {
-    view: mat4x4<f32>,
-    view_inv: mat4x4<f32>,
-    proj: mat4x4<f32>,
-    proj_inv: mat4x4<f32>,
-    viewport: vec2<f32>,
-    focal: vec2<f32>,
-};
 
 struct GaussianCore {
     x: f32,
@@ -74,10 +67,9 @@ struct RenderSettings {
     color_space_flag: u32,
     opacity_compensation: f32,
     _pad0: u32,
+    model_matrix: mat4x4<f32>,
+    model_inv_matrix: mat4x4<f32>,
 };
-
-@group(0) @binding(0)
-var<uniform> camera: CameraUniforms;
 
 @group(1) @binding(0)
 var<storage, read> gaussians: array<GaussianCore>;
@@ -161,6 +153,14 @@ fn safe_normalize(v: vec2<f32>) -> vec2<f32> {
     return vec2<f32>(1.0, 0.0);
 }
 
+fn safe_normalize3(v: vec3<f32>) -> vec3<f32> {
+    let len_sq = dot(v, v);
+    if len_sq > 1e-12 {
+        return v * inverseSqrt(len_sq);
+    }
+    return vec3<f32>(0.0, 0.0, 1.0);
+}
+
 @compute @workgroup_size(256, 1, 1)
 fn main(@builtin(global_invocation_id) gid: vec3<u32>) {
     let idx = gid.x;
@@ -168,15 +168,16 @@ fn main(@builtin(global_invocation_id) gid: vec3<u32>) {
         return;
     }
 
-    let focal = camera.focal;
-    let viewport = camera.viewport;
+    let focal = u_render_state.focal;
+    let viewport = u_render_state.viewport;
     let vertex = gaussians[idx];
     let a = unpack2x16float(vertex.opacity);
-    let xyz = vec3<f32>(vertex.x, -vertex.y, -vertex.z);
+    let local_xyz = vec3<f32>(vertex.x, -vertex.y, -vertex.z);
     var opacity = a.x;
 
-    let camspace = camera.view * vec4<f32>(xyz, 1.0);
-    let pos2d = camera.proj * camspace;
+    let world_pos = render_settings.model_matrix * vec4<f32>(local_xyz, 1.0);
+    let camspace = u_render_state.view_matrix * world_pos;
+    let pos2d = u_render_state.projection_matrix * camspace;
     let bounds = 1.2 * pos2d.w;
     let center_depth = pos2d.z / pos2d.w;
 
@@ -206,11 +207,17 @@ fn main(@builtin(global_invocation_id) gid: vec3<u32>) {
         0.0, 0.0, 0.0
     );
 
-    let W = transpose(mat3x3<f32>(
-        camera.view[0].xyz,
-        camera.view[1].xyz,
-        camera.view[2].xyz
-    ));
+    let view_linear = mat3x3<f32>(
+        u_render_state.view_matrix[0].xyz,
+        u_render_state.view_matrix[1].xyz,
+        u_render_state.view_matrix[2].xyz
+    );
+    let model_linear = mat3x3<f32>(
+        render_settings.model_matrix[0].xyz,
+        render_settings.model_matrix[1].xyz,
+        render_settings.model_matrix[2].xyz
+    );
+    let W = transpose(view_linear * model_linear);
     let T = W * J;
     let cov = transpose(T) * Vrk * T;
 
@@ -242,11 +249,13 @@ fn main(@builtin(global_invocation_id) gid: vec3<u32>) {
 
     let center_ndc = pos2d.xy / pos2d.w;
 
-    let camera_pos = camera.view_inv[3].xyz;
-    let dir = normalize(xyz - camera_pos);
+    let dir_world = safe_normalize3(world_pos.xyz - u_render_state.camera_position);
+    let dir_local = safe_normalize3(
+        (render_settings.model_inv_matrix * vec4<f32>(dir_world, 0.0)).xyz
+    );
     let sh_idx = min(vertex.sh_idx, max(arrayLength(&sh_coefs), 1u) - 1u);
 
-    let dir_colmap = vec3<f32>(dir.x, -dir.y, -dir.z);
+    let dir_colmap = vec3<f32>(dir_local.x, -dir_local.y, -dir_local.z);
 
     let raw_sh_color = max(vec3<f32>(0.0), evaluate_sh(dir_colmap, sh_idx, render_settings.max_sh_deg));
     let color = vec4<f32>(raw_sh_color, opacity);
