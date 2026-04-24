@@ -424,8 +424,7 @@ impl GaussianSplattingFeature {
             .collect();
 
         cloud_order.sort_by(|left, right| {
-            left
-                .1
+            left.1
                 .partial_cmp(&right.1)
                 .unwrap_or(std::cmp::Ordering::Equal)
         });
@@ -1004,8 +1003,10 @@ impl GaussianSplattingFeature {
                 let sh_buf = builder.read_external_buffer(
                     "GS_SH_Coefficients",
                     BufferDesc::new(
-                        (usize::try_from(gpu.num_sh_coefficients.max(1)).expect("Gaussian SH count exceeds usize capacity")
-                            * std::mem::size_of::<GaussianSHCoefficients>()) as u64,
+                        (usize::try_from(gpu.num_sh_coefficients.max(1))
+                            .expect("Gaussian SH count exceeds usize capacity")
+                            * std::mem::size_of::<GaussianSHCoefficients>())
+                            as u64,
                         wgpu::BufferUsages::STORAGE | wgpu::BufferUsages::COPY_DST,
                     ),
                     &gpu.sh_buf,

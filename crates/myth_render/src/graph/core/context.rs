@@ -104,11 +104,7 @@ pub struct RawBufferBinding<'a> {
 
 impl<'a> RawBufferBinding<'a> {
     #[must_use]
-    pub fn new(
-        buffer: &'a wgpu::Buffer,
-        resource_id: u64,
-        size: Option<wgpu::BufferSize>,
-    ) -> Self {
+    pub fn new(buffer: &'a wgpu::Buffer, resource_id: u64, size: Option<wgpu::BufferSize>) -> Self {
         Self {
             buffer,
             resource_id,
@@ -218,7 +214,8 @@ impl<'ctx, 'frame> BindGroupBuilder<'ctx, 'frame> {
         resource: wgpu::BindingResource<'ctx>,
     ) -> Self {
         self.key = self.key.with_resource(resource_id);
-        self.entries.push(wgpu::BindGroupEntry { binding, resource });
+        self.entries
+            .push(wgpu::BindGroupEntry { binding, resource });
         self
     }
 
@@ -262,11 +259,7 @@ impl<'ctx, 'frame> BindGroupBuilder<'ctx, 'frame> {
             .views
             .expect("TextureNodeId binding requires PrepareContext-backed RDG views");
         let view = views.get_texture_view(id);
-        self.push_entry(
-            binding,
-            view.id(),
-            wgpu::BindingResource::TextureView(view),
-        )
+        self.push_entry(binding, view.id(), wgpu::BindingResource::TextureView(view))
     }
 
     #[must_use]
@@ -302,12 +295,12 @@ impl<'ctx, 'frame> BindGroupBuilder<'ctx, 'frame> {
     }
 
     #[must_use]
-    pub fn bind_tracked_sampler(
-        self,
-        binding: u32,
-        sampler: &'ctx Tracked<wgpu::Sampler>,
-    ) -> Self {
-        self.push_entry(binding, sampler.id(), wgpu::BindingResource::Sampler(sampler))
+    pub fn bind_tracked_sampler(self, binding: u32, sampler: &'ctx Tracked<wgpu::Sampler>) -> Self {
+        self.push_entry(
+            binding,
+            sampler.id(),
+            wgpu::BindingResource::Sampler(sampler),
+        )
     }
 
     #[must_use]
@@ -324,11 +317,7 @@ impl<'ctx, 'frame> BindGroupBuilder<'ctx, 'frame> {
     }
 
     #[must_use]
-    pub fn bind_raw_texture_view(
-        self,
-        binding: u32,
-        raw: RawTextureViewBinding<'ctx>,
-    ) -> Self {
+    pub fn bind_raw_texture_view(self, binding: u32, raw: RawTextureViewBinding<'ctx>) -> Self {
         self.push_entry(
             binding,
             raw.resource_id,

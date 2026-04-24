@@ -462,9 +462,11 @@ struct ToneMapPassNode<'a> {
 
 impl<'a> PassNode<'a> for ToneMapPassNode<'a> {
     fn prepare(&mut self, ctx: &mut PrepareContext<'a>) {
-        self.transient_bg = Some(crate::myth_bind_group!(ctx, self.transient_layout, Some("ToneMap Transient BG (G2)"), [
-            0 => self.input_tex,
-        ]));
+        self.transient_bg = Some(
+            crate::myth_bind_group!(ctx, self.transient_layout, Some("ToneMap Transient BG (G2)"), [
+                0 => self.input_tex,
+            ]),
+        );
     }
 
     fn execute(&self, ctx: &ExecuteContext, encoder: &mut wgpu::CommandEncoder) {

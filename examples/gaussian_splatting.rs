@@ -3,6 +3,7 @@
 //! category = "Advanced"
 //! description = "Loads and renders a 3D Gaussian Splatting point cloud from an NPZ file."
 //! order = 500
+//! features = ["3dgs", "gaussian-npz"]
 //!
 
 use myth::prelude::*;
@@ -31,7 +32,11 @@ impl AppHandler for GaussianSplattingDemo {
         let cloud_handle = engine.assets.gaussian_clouds.add(cloud);
         let _cloud_node = scene.add_gaussian_cloud("gaussian_cloud", cloud_handle);
 
-        scene.node(&_cloud_node).set_rotation_euler(std::f32::consts::FRAC_PI_2, 0.0, std::f32::consts::FRAC_PI_2);
+        scene.node(&_cloud_node).set_rotation_euler(
+            std::f32::consts::FRAC_PI_2,
+            0.0,
+            std::f32::consts::FRAC_PI_2,
+        );
 
         // Camera — use the first camera from the training data as a starting view
         let camera_pos = Vec3::new(0.0, 2.0, 2.5);

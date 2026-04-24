@@ -505,14 +505,16 @@ struct SsaoRawNode<'a> {
 
 impl<'a> PassNode<'a> for SsaoRawNode<'a> {
     fn prepare(&mut self, ctx: &mut PrepareContext<'a>) {
-        self.transient_bg = Some(crate::myth_bind_group!(ctx, self.raw_layout, Some("SSAO Raw BG (G1)"), [
-            0 => self.depth_tex,
-            1 => self.normal_tex,
-            2 => self.noise_texture_view,
-            3 => CommonSampler::LinearClamp,
-            4 => CommonSampler::NearestRepeat,
-            5 => CommonSampler::NearestClamp,
-        ]));
+        self.transient_bg = Some(
+            crate::myth_bind_group!(ctx, self.raw_layout, Some("SSAO Raw BG (G1)"), [
+                0 => self.depth_tex,
+                1 => self.normal_tex,
+                2 => self.noise_texture_view,
+                3 => CommonSampler::LinearClamp,
+                4 => CommonSampler::NearestRepeat,
+                5 => CommonSampler::NearestClamp,
+            ]),
+        );
     }
 
     fn execute(&self, ctx: &ExecuteContext, encoder: &mut wgpu::CommandEncoder) {
@@ -560,13 +562,15 @@ struct SsaoBlurNode<'a> {
 
 impl<'a> PassNode<'a> for SsaoBlurNode<'a> {
     fn prepare(&mut self, ctx: &mut PrepareContext<'a>) {
-        self.transient_bg = Some(crate::myth_bind_group!(ctx, self.blur_layout, Some("SSAO Blur BG (G0)"), [
-            0 => self.raw_tex,
-            1 => self.depth_tex,
-            2 => self.normal_tex,
-            3 => CommonSampler::LinearClamp,
-            4 => CommonSampler::NearestClamp,
-        ]));
+        self.transient_bg = Some(
+            crate::myth_bind_group!(ctx, self.blur_layout, Some("SSAO Blur BG (G0)"), [
+                0 => self.raw_tex,
+                1 => self.depth_tex,
+                2 => self.normal_tex,
+                3 => CommonSampler::LinearClamp,
+                4 => CommonSampler::NearestClamp,
+            ]),
+        );
     }
 
     fn execute(&self, ctx: &ExecuteContext, encoder: &mut wgpu::CommandEncoder) {

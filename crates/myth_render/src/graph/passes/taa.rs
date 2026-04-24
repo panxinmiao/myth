@@ -481,16 +481,18 @@ struct TaaPassNode<'a> {
 
 impl<'a> PassNode<'a> for TaaPassNode<'a> {
     fn prepare(&mut self, ctx: &mut PrepareContext<'a>) {
-        self.transient_bg = Some(crate::myth_bind_group!(ctx, self.layout, Some("TAA BindGroup"), [
-            0 => self.current_color,
-            1 => self.history_view,
-            2 => self.velocity,
-            3 => self.scene_depth,
-            4 => self.history_depth_view,
-            5 => CommonSampler::LinearClamp,
-            6 => CommonSampler::NearestClamp,
-            7 => self.params_buffer,
-        ]));
+        self.transient_bg = Some(
+            crate::myth_bind_group!(ctx, self.layout, Some("TAA BindGroup"), [
+                0 => self.current_color,
+                1 => self.history_view,
+                2 => self.velocity,
+                3 => self.scene_depth,
+                4 => self.history_depth_view,
+                5 => CommonSampler::LinearClamp,
+                6 => CommonSampler::NearestClamp,
+                7 => self.params_buffer,
+            ]),
+        );
     }
 
     fn execute(&self, ctx: &ExecuteContext, encoder: &mut wgpu::CommandEncoder) {

@@ -345,9 +345,11 @@ struct DebugViewPassNode<'a> {
 
 impl<'a> PassNode<'a> for DebugViewPassNode<'a> {
     fn prepare(&mut self, ctx: &mut PrepareContext<'a>) {
-        self.transient_bg = Some(crate::myth_bind_group!(ctx, self.transient_layout, Some("DebugView Transient BG (G1)"), [
-            0 => self.source_tex,
-        ]));
+        self.transient_bg = Some(
+            crate::myth_bind_group!(ctx, self.transient_layout, Some("DebugView Transient BG (G1)"), [
+                0 => self.source_tex,
+            ]),
+        );
     }
 
     fn execute(&self, ctx: &ExecuteContext, encoder: &mut CommandEncoder) {

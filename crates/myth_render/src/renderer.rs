@@ -12,14 +12,14 @@ use crate::graph::core::graph::GraphStorage;
 use crate::graph::frame::RenderLists;
 #[cfg(feature = "debug_view")]
 use crate::graph::passes::DebugViewFeature;
-use crate::graph::passes::{
-    AtmosphereFeature, BloomFeature, BrdfLutFeature, CasFeature, EquirectToCubeFeature,
-    FxaaFeature, IblComputeFeature, MsaaSyncFeature, OpaqueFeature, PrepassFeature,
-    ShadowFeature, SimpleForwardFeature, SkyboxFeature, SsaoFeature, SsssFeature, TaaFeature,
-    ToneMappingFeature, TransmissionCopyFeature, TransparentFeature,
-};
 #[cfg(feature = "3dgs")]
 use crate::graph::passes::GaussianSplattingFeature;
+use crate::graph::passes::{
+    AtmosphereFeature, BloomFeature, BrdfLutFeature, CasFeature, EquirectToCubeFeature,
+    FxaaFeature, IblComputeFeature, MsaaSyncFeature, OpaqueFeature, PrepassFeature, ShadowFeature,
+    SimpleForwardFeature, SkyboxFeature, SsaoFeature, SsssFeature, TaaFeature, ToneMappingFeature,
+    TransmissionCopyFeature, TransparentFeature,
+};
 use myth_assets::AssetServer;
 use myth_core::Result;
 use myth_scene::Scene;

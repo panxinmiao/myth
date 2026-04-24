@@ -237,11 +237,13 @@ struct CasPassNode<'a> {
 
 impl<'a> PassNode<'a> for CasPassNode<'a> {
     fn prepare(&mut self, ctx: &mut PrepareContext<'a>) {
-        self.transient_bg = Some(crate::myth_bind_group!(ctx, self.layout, Some("CAS BindGroup"), [
-            0 => self.input_tex,
-            1 => CommonSampler::NearestClamp,
-            2 => self.params_buffer,
-        ]));
+        self.transient_bg = Some(
+            crate::myth_bind_group!(ctx, self.layout, Some("CAS BindGroup"), [
+                0 => self.input_tex,
+                1 => CommonSampler::NearestClamp,
+                2 => self.params_buffer,
+            ]),
+        );
     }
 
     fn execute(&self, ctx: &ExecuteContext, encoder: &mut CommandEncoder) {

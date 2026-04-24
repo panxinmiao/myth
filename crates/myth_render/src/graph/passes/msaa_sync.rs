@@ -209,10 +209,12 @@ struct MsaaSyncPassNode<'a> {
 
 impl<'a> PassNode<'a> for MsaaSyncPassNode<'a> {
     fn prepare(&mut self, ctx: &mut PrepareContext<'a>) {
-        self.transient_bg = Some(crate::myth_bind_group!(ctx, self.layout, Some("MSAA Sync BindGroup"), [
-            0 => self.src_hdr,
-            1 => CommonSampler::LinearClamp,
-        ]));
+        self.transient_bg = Some(
+            crate::myth_bind_group!(ctx, self.layout, Some("MSAA Sync BindGroup"), [
+                0 => self.src_hdr,
+                1 => CommonSampler::LinearClamp,
+            ]),
+        );
     }
 
     fn execute(&self, ctx: &ExecuteContext, encoder: &mut CommandEncoder) {

@@ -375,15 +375,17 @@ struct SsssHorizontalNode<'a> {
 
 impl<'a> PassNode<'a> for SsssHorizontalNode<'a> {
     fn prepare(&mut self, ctx: &mut PrepareContext<'a>) {
-        self.bind_group = Some(crate::myth_bind_group!(ctx, self.bind_group_layout, Some("SSSS Horizontal Bind Group"), [
-            0 => self.scene_color_in,
-            1 => self.normal_in,
-            2 => self.depth_in,
-            3 => self.profiles_buffer,
-            4 => CommonSampler::LinearClamp,
-            5 => self.feature_id,
-            6 => self.specular_tex,
-        ]));
+        self.bind_group = Some(
+            crate::myth_bind_group!(ctx, self.bind_group_layout, Some("SSSS Horizontal Bind Group"), [
+                0 => self.scene_color_in,
+                1 => self.normal_in,
+                2 => self.depth_in,
+                3 => self.profiles_buffer,
+                4 => CommonSampler::LinearClamp,
+                5 => self.feature_id,
+                6 => self.specular_tex,
+            ]),
+        );
     }
 
     fn execute(&self, ctx: &ExecuteContext, encoder: &mut wgpu::CommandEncoder) {
@@ -432,15 +434,17 @@ struct SsssVerticalNode<'a> {
 
 impl<'a> PassNode<'a> for SsssVerticalNode<'a> {
     fn prepare(&mut self, ctx: &mut PrepareContext<'a>) {
-        self.bind_group = Some(crate::myth_bind_group!(ctx, self.bind_group_layout, Some("SSSS Vertical Bind Group"), [
-            0 => self.temp_blur,
-            1 => self.normal_in,
-            2 => self.depth_in,
-            3 => self.profiles_buffer,
-            4 => CommonSampler::LinearClamp,
-            5 => self.feature_id,
-            6 => self.specular_tex,
-        ]));
+        self.bind_group = Some(
+            crate::myth_bind_group!(ctx, self.bind_group_layout, Some("SSSS Vertical Bind Group"), [
+                0 => self.temp_blur,
+                1 => self.normal_in,
+                2 => self.depth_in,
+                3 => self.profiles_buffer,
+                4 => CommonSampler::LinearClamp,
+                5 => self.feature_id,
+                6 => self.specular_tex,
+            ]),
+        );
     }
 
     fn execute(&self, ctx: &ExecuteContext, encoder: &mut wgpu::CommandEncoder) {

@@ -9,9 +9,9 @@ use rustc_hash::FxHashMap;
 
 use crate::core::gpu::Tracked;
 use crate::graph::composer::GraphBuilderContext;
-use crate::graph::core::{BufferDesc, BufferNodeId, PrepareContext, TextureNodeId};
 use crate::graph::core::context::{ExecuteContext, ExtractContext};
 use crate::graph::core::node::PassNode;
+use crate::graph::core::{BufferDesc, BufferNodeId, PrepareContext, TextureNodeId};
 use crate::pipeline::{
     ComputePipelineId, ComputePipelineKey, ShaderCompilationOptions, ShaderSource,
 };
@@ -47,51 +47,55 @@ pub struct IblComputeFeature {
 impl IblComputeFeature {
     #[must_use]
     pub fn new(device: &wgpu::Device) -> Self {
-        let source_layout = Tracked::new(device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
-            label: Some("IBL Source BGL"),
-            entries: &[
-                wgpu::BindGroupLayoutEntry {
+        let source_layout = Tracked::new(device.create_bind_group_layout(
+            &wgpu::BindGroupLayoutDescriptor {
+                label: Some("IBL Source BGL"),
+                entries: &[
+                    wgpu::BindGroupLayoutEntry {
+                        binding: 0,
+                        visibility: wgpu::ShaderStages::COMPUTE,
+                        ty: wgpu::BindingType::Texture {
+                            sample_type: wgpu::TextureSampleType::Float { filterable: true },
+                            view_dimension: wgpu::TextureViewDimension::Cube,
+                            multisampled: false,
+                        },
+                        count: None,
+                    },
+                    wgpu::BindGroupLayoutEntry {
+                        binding: 1,
+                        visibility: wgpu::ShaderStages::COMPUTE,
+                        ty: wgpu::BindingType::Sampler(wgpu::SamplerBindingType::Filtering),
+                        count: None,
+                    },
+                    wgpu::BindGroupLayoutEntry {
+                        binding: 2,
+                        visibility: wgpu::ShaderStages::COMPUTE,
+                        ty: wgpu::BindingType::Buffer {
+                            ty: wgpu::BufferBindingType::Uniform,
+                            has_dynamic_offset: false,
+                            min_binding_size: None,
+                        },
+                        count: None,
+                    },
+                ],
+            },
+        ));
+
+        let dest_layout = Tracked::new(device.create_bind_group_layout(
+            &wgpu::BindGroupLayoutDescriptor {
+                label: Some("IBL Dest BGL"),
+                entries: &[wgpu::BindGroupLayoutEntry {
                     binding: 0,
                     visibility: wgpu::ShaderStages::COMPUTE,
-                    ty: wgpu::BindingType::Texture {
-                        sample_type: wgpu::TextureSampleType::Float { filterable: true },
-                        view_dimension: wgpu::TextureViewDimension::Cube,
-                        multisampled: false,
+                    ty: wgpu::BindingType::StorageTexture {
+                        access: wgpu::StorageTextureAccess::WriteOnly,
+                        format: wgpu::TextureFormat::Rgba16Float,
+                        view_dimension: wgpu::TextureViewDimension::D2Array,
                     },
                     count: None,
-                },
-                wgpu::BindGroupLayoutEntry {
-                    binding: 1,
-                    visibility: wgpu::ShaderStages::COMPUTE,
-                    ty: wgpu::BindingType::Sampler(wgpu::SamplerBindingType::Filtering),
-                    count: None,
-                },
-                wgpu::BindGroupLayoutEntry {
-                    binding: 2,
-                    visibility: wgpu::ShaderStages::COMPUTE,
-                    ty: wgpu::BindingType::Buffer {
-                        ty: wgpu::BufferBindingType::Uniform,
-                        has_dynamic_offset: false,
-                        min_binding_size: None,
-                    },
-                    count: None,
-                },
-            ],
-        }));
-
-        let dest_layout = Tracked::new(device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
-            label: Some("IBL Dest BGL"),
-            entries: &[wgpu::BindGroupLayoutEntry {
-                binding: 0,
-                visibility: wgpu::ShaderStages::COMPUTE,
-                ty: wgpu::BindingType::StorageTexture {
-                    access: wgpu::StorageTextureAccess::WriteOnly,
-                    format: wgpu::TextureFormat::Rgba16Float,
-                    view_dimension: wgpu::TextureViewDimension::D2Array,
-                },
-                count: None,
-            }],
-        }));
+                }],
+            },
+        ));
 
         let sampler = device.create_sampler(&wgpu::SamplerDescriptor {
             label: Some("IBL PMREM Sampler"),
@@ -361,7 +365,11 @@ impl<'a> PassNode<'a> for IblComputePassNode<'a> {
                 timestamp_writes: None,
             });
             cpass.set_pipeline(pipeline);
-            cpass.set_bind_group(0, self.mips[mip].source_bg.expect("IBL source BG missing"), &[]);
+            cpass.set_bind_group(
+                0,
+                self.mips[mip].source_bg.expect("IBL source BG missing"),
+                &[],
+            );
             cpass.set_bind_group(1, self.mips[mip].dest_bg.expect("IBL dest BG missing"), &[]);
             let group_count = mip_size.div_ceil(8);
             cpass.dispatch_workgroups(group_count, group_count, 6);

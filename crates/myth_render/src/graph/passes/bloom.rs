@@ -824,9 +824,11 @@ struct BloomDownsampleNode<'a> {
 
 impl<'a> PassNode<'a> for BloomDownsampleNode<'a> {
     fn prepare(&mut self, ctx: &mut PrepareContext<'a>) {
-        self.transient_bg = Some(crate::myth_bind_group!(ctx, self.transient_layout, Some("Bloom DS G1"), [
-            0 => self.input_tex,
-        ]));
+        self.transient_bg = Some(
+            crate::myth_bind_group!(ctx, self.transient_layout, Some("Bloom DS G1"), [
+                0 => self.input_tex,
+            ]),
+        );
     }
 
     fn execute(&self, ctx: &ExecuteContext, encoder: &mut wgpu::CommandEncoder) {
@@ -862,9 +864,11 @@ struct BloomUpsampleNode<'a> {
 
 impl<'a> PassNode<'a> for BloomUpsampleNode<'a> {
     fn prepare(&mut self, ctx: &mut PrepareContext<'a>) {
-        self.transient_bg = Some(crate::myth_bind_group!(ctx, self.transient_layout, Some("Bloom US G1"), [
-            0 => self.coarser_tex,
-        ]));
+        self.transient_bg = Some(
+            crate::myth_bind_group!(ctx, self.transient_layout, Some("Bloom US G1"), [
+                0 => self.coarser_tex,
+            ]),
+        );
     }
 
     fn execute(&self, ctx: &ExecuteContext, encoder: &mut wgpu::CommandEncoder) {
@@ -901,10 +905,12 @@ struct BloomCompositeNode<'a> {
 
 impl<'a> PassNode<'a> for BloomCompositeNode<'a> {
     fn prepare(&mut self, ctx: &mut PrepareContext<'a>) {
-        self.transient_bg = Some(crate::myth_bind_group!(ctx, self.transient_layout, Some("Bloom Comp G1"), [
-            0 => self.original_tex,
-            1 => self.bloom_tex,
-        ]));
+        self.transient_bg = Some(
+            crate::myth_bind_group!(ctx, self.transient_layout, Some("Bloom Comp G1"), [
+                0 => self.original_tex,
+                1 => self.bloom_tex,
+            ]),
+        );
     }
 
     fn execute(&self, ctx: &ExecuteContext, encoder: &mut wgpu::CommandEncoder) {

@@ -176,10 +176,12 @@ struct FxaaPassNode<'a> {
 
 impl<'a> PassNode<'a> for FxaaPassNode<'a> {
     fn prepare(&mut self, ctx: &mut PrepareContext<'a>) {
-        self.transient_bg = Some(crate::myth_bind_group!(ctx, self.layout, Some("FXAA BindGroup"), [
-            0 => self.input_tex,
-            1 => CommonSampler::LinearClamp,
-        ]));
+        self.transient_bg = Some(
+            crate::myth_bind_group!(ctx, self.layout, Some("FXAA BindGroup"), [
+                0 => self.input_tex,
+                1 => CommonSampler::LinearClamp,
+            ]),
+        );
     }
 
     fn execute(&self, ctx: &ExecuteContext, encoder: &mut CommandEncoder) {

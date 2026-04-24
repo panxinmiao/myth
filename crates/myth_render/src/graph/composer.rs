@@ -59,15 +59,15 @@ use crate::graph::core::{
     TextureDesc, TransientPool, ViewResolver,
 };
 use crate::graph::frame::{PreparedSkyboxDraw, RenderLists};
+#[cfg(feature = "3dgs")]
+use crate::graph::passes::GaussianSplattingFeature;
 use crate::graph::passes::utils::add_msaa_resolve_pass;
 use crate::graph::passes::{
     AtmosphereFeature, BloomFeature, BrdfLutFeature, CasFeature, EquirectToCubeFeature,
-    FxaaFeature, IblComputeFeature, MsaaSyncFeature, OpaqueFeature, PrepassFeature,
-    ShadowFeature, SimpleForwardFeature, SkyboxFeature, SsaoFeature, SsssFeature, TaaFeature,
-    ToneMappingFeature, TransmissionCopyFeature, TransparentFeature,
+    FxaaFeature, IblComputeFeature, MsaaSyncFeature, OpaqueFeature, PrepassFeature, ShadowFeature,
+    SimpleForwardFeature, SkyboxFeature, SsaoFeature, SsssFeature, TaaFeature, ToneMappingFeature,
+    TransmissionCopyFeature, TransparentFeature,
 };
-#[cfg(feature = "3dgs")]
-use crate::graph::passes::GaussianSplattingFeature;
 use crate::pipeline::PipelineCache;
 use crate::pipeline::ShaderManager;
 use crate::renderer::FrameTime;

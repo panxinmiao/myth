@@ -42,7 +42,9 @@ pub use io::HttpAssetReader;
 use myth_core::{AssetError, Error, Result};
 use myth_resources::image::{Image, ImageDimension, PixelFormat};
 use myth_resources::texture::TextureSampler;
-use std::{borrow::Cow, io::Cursor, path::Path};
+use std::path::Path;
+#[cfg(feature = "3dgs")]
+use std::{borrow::Cow, io::Cursor};
 
 pub use myth_resources::ColorSpace;
 

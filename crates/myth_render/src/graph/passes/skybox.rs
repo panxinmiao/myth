@@ -717,8 +717,10 @@ impl SkyboxFeature {
         };
         let procedural_moon = match background_mode {
             BackgroundMode::Procedural(params) => {
-                let moon =
-                    Self::resolve_procedural_moon_view(ctx.resource_manager, params.moon_albedo_texture);
+                let moon = Self::resolve_procedural_moon_view(
+                    ctx.resource_manager,
+                    params.moon_albedo_texture,
+                );
                 Some((moon.view.clone(), moon.resource_key, moon.enabled))
             }
             _ => None,
