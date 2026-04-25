@@ -602,7 +602,7 @@ impl GaussianSplattingFeature {
             shader_options.inject_code("binding_code", &gpu_world.binding_wgsl);
             let (module, _) = ctx.shader_manager.get_or_compile(
                 device,
-                ShaderSource::File("entry/utility/gaussian_preprocess"),
+                ShaderSource::File("entry/utility/3dgs/gaussian_preprocess"),
                 &shader_options,
             );
 
@@ -676,7 +676,7 @@ impl GaussianSplattingFeature {
             let pad_keys = {
                 let (pad_module, _) = ctx.shader_manager.get_or_compile(
                     device,
-                    ShaderSource::File("entry/utility/gs_pad_sort_keys"),
+                    ShaderSource::File("entry/utility/3dgs/gs_pad_sort_keys"),
                     &shader_options,
                 );
                 device.create_compute_pipeline(&wgpu::ComputePipelineDescriptor {
@@ -700,7 +700,7 @@ impl GaussianSplattingFeature {
             ) = {
                 let (sort_module, _) = ctx.shader_manager.get_or_compile(
                     device,
-                    ShaderSource::File("entry/utility/gs_radix_sort"),
+                    ShaderSource::File("entry/utility/3dgs/gs_radix_sort"),
                     &shader_options,
                 );
                 let make_pipeline = |entry_point: &str, label: &str| {
@@ -746,7 +746,7 @@ impl GaussianSplattingFeature {
             let shader_options = ShaderCompilationOptions::default();
             let (module, _) = ctx.shader_manager.get_or_compile(
                 device,
-                ShaderSource::File("entry/utility/gaussian_render"),
+                ShaderSource::File("entry/utility/3dgs/gaussian_render"),
                 &shader_options,
             );
 
@@ -824,7 +824,7 @@ impl GaussianSplattingFeature {
             let shader_options = ShaderCompilationOptions::default();
             let (module, _) = ctx.shader_manager.get_or_compile(
                 device,
-                ShaderSource::File("entry/utility/gs_composite"),
+                ShaderSource::File("entry/utility/3dgs/gs_composite"),
                 &shader_options,
             );
 
