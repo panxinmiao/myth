@@ -15,7 +15,7 @@ use std::sync::atomic::{AtomicU64, Ordering};
 
 use rustc_hash::FxHashMap;
 
-use crate::core::gpu::{ResourceState, Tracked};
+use crate::core::gpu::{CommonSampler, ResourceState, Tracked};
 use crate::graph::composer::GraphBuilderContext;
 use crate::graph::core::{
     BufferDesc, BufferNodeId, ExecuteContext, ExtractContext, PassNode, PrepareContext,
@@ -270,7 +270,6 @@ pub struct AtmosphereFeature {
     sky_to_cube_layout: Option<Tracked<wgpu::BindGroupLayout>>,
     sky_to_cube_eq_layout: Option<Tracked<wgpu::BindGroupLayout>>,
     sky_to_cube_cube_layout: Option<Tracked<wgpu::BindGroupLayout>>,
-    sampler: Option<wgpu::Sampler>,
     scene_states: FxHashMap<u32, AtmosphereSceneState>,
 }
 
@@ -294,7 +293,6 @@ impl AtmosphereFeature {
             sky_to_cube_layout: None,
             sky_to_cube_eq_layout: None,
             sky_to_cube_cube_layout: None,
-            sampler: None,
             scene_states: FxHashMap::default(),
         }
     }
@@ -306,7 +304,6 @@ impl AtmosphereFeature {
         params: &ProceduralSkyParams,
     ) {
         self.ensure_layouts(ctx.device);
-        self.ensure_sampler(ctx.device);
         self.ensure_pipelines(ctx);
         self.ensure_scene_state(ctx, scene_id, params);
         self.update_starbox_state(ctx, scene_id, params);
@@ -397,10 +394,6 @@ impl AtmosphereFeature {
             .as_ref()
             .expect("atmosphere sky-view layout must exist");
         let sky_to_cube_layout = self.sky_to_cube_layout_for_kind(sky_to_cube_kind);
-        let sampler = self
-            .sampler
-            .as_ref()
-            .expect("atmosphere sampler must exist");
         let atmosphere_params_desc = BufferDesc::new(
             std::mem::size_of::<GpuAtmosphereParams>() as u64,
             wgpu::BufferUsages::UNIFORM | wgpu::BufferUsages::COPY_DST,
@@ -488,7 +481,6 @@ impl AtmosphereFeature {
                         state,
                         pipeline: multi_scatter_pipeline,
                         layout: multi_scatter_layout,
-                        sampler,
                         bind_group: None,
                     };
                     (node, output)
@@ -521,7 +513,6 @@ impl AtmosphereFeature {
                     state,
                     pipeline: sky_view_pipeline,
                     layout: sky_view_layout,
-                    sampler,
                     bind_group: None,
                 };
                 (node, output)
@@ -544,7 +535,6 @@ impl AtmosphereFeature {
                         state,
                         pipeline: sky_to_cube_pipeline,
                         layout: sky_to_cube_layout,
-                        sampler,
                         base_cube_storage_view,
                         starbox: state.starbox.as_ref(),
                         moon_texture: &state.moon_texture,
@@ -770,27 +760,6 @@ impl AtmosphereFeature {
                 })
             }
         }
-    }
-
-    fn ensure_sampler(&mut self, device: &wgpu::Device) {
-        if self.sampler.is_some() {
-            return;
-        }
-
-        self.sampler = Some(device.create_sampler(&wgpu::SamplerDescriptor {
-            label: Some("Atmosphere Linear Sampler"),
-            address_mode_u: wgpu::AddressMode::ClampToEdge,
-            address_mode_v: wgpu::AddressMode::ClampToEdge,
-            address_mode_w: wgpu::AddressMode::ClampToEdge,
-            mag_filter: wgpu::FilterMode::Linear,
-            min_filter: wgpu::FilterMode::Linear,
-            mipmap_filter: wgpu::MipmapFilterMode::Linear,
-            lod_min_clamp: 0.0,
-            lod_max_clamp: 32.0,
-            compare: None,
-            anisotropy_clamp: 1,
-            border_color: None,
-        }));
     }
 
     fn ensure_layouts(&mut self, device: &wgpu::Device) {
@@ -1215,7 +1184,6 @@ struct AtmosphereMultiScatterNode<'a> {
     state: &'a AtmosphereSceneState,
     pipeline: &'a wgpu::ComputePipeline,
     layout: &'a Tracked<wgpu::BindGroupLayout>,
-    sampler: &'a wgpu::Sampler,
     bind_group: Option<&'a wgpu::BindGroup>,
 }
 
@@ -1238,7 +1206,7 @@ impl<'a> PassNode<'a> for AtmosphereMultiScatterNode<'a> {
             ctx.build_bind_group(self.layout, Some("Atmo Multi-Scatter BG"))
                 .bind_buffer(0, self.atmosphere_params_buf)
                 .bind_texture(1, self.transmittance_tex)
-                .bind_sampler(2, self.sampler)
+                .bind_common_sampler(2, CommonSampler::LinearClamp)
                 .bind_texture(3, self.output_tex)
                 .build(),
         );
@@ -1274,7 +1242,6 @@ struct AtmosphereSkyViewNode<'a> {
     state: &'a AtmosphereSceneState,
     pipeline: &'a wgpu::ComputePipeline,
     layout: &'a Tracked<wgpu::BindGroupLayout>,
-    sampler: &'a wgpu::Sampler,
     bind_group: Option<&'a wgpu::BindGroup>,
 }
 
@@ -1298,7 +1265,7 @@ impl<'a> PassNode<'a> for AtmosphereSkyViewNode<'a> {
                 .bind_buffer(0, self.atmosphere_params_buf)
                 .bind_texture(1, self.transmittance_tex)
                 .bind_texture(2, self.multi_scatter_tex)
-                .bind_sampler(3, self.sampler)
+                .bind_common_sampler(3, CommonSampler::LinearClamp)
                 .bind_texture(4, self.output_tex)
                 .build(),
         );
@@ -1326,7 +1293,6 @@ struct AtmosphereSkyToCubeNode<'a> {
     state: &'a AtmosphereSceneState,
     pipeline: &'a wgpu::ComputePipeline,
     layout: &'a Tracked<wgpu::BindGroupLayout>,
-    sampler: &'a wgpu::Sampler,
     base_cube_storage_view: &'a Tracked<wgpu::TextureView>,
     starbox: Option<&'a ResolvedAtmosphereStarbox>,
     moon_texture: &'a ResolvedAtmosphereMoonTexture,
@@ -1357,7 +1323,7 @@ impl<'a> PassNode<'a> for AtmosphereSkyToCubeNode<'a> {
         let builder = ctx
             .build_bind_group(self.layout, label)
             .bind_texture(0, self.sky_view_tex)
-            .bind_sampler(1, self.sampler)
+            .bind_common_sampler(1, CommonSampler::LinearClamp)
             .bind_buffer(2, self.bake_params_buf)
             .bind_tracked_texture_view(3, self.base_cube_storage_view)
             .bind_texture(4, self.transmittance_tex)

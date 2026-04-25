@@ -345,22 +345,14 @@ impl<'ctx, 'frame> BindGroupBuilder<'ctx, 'frame> {
     }
 
     #[must_use]
-    pub fn bind_sampler_with_id(
-        self,
-        binding: u32,
-        sampler: &'ctx wgpu::Sampler,
-        resource_id: u64,
-    ) -> Self {
-        self.bind_raw_sampler(binding, RawSamplerBinding::new(sampler, resource_id))
-    }
-
-    #[must_use]
-    pub fn bind_sampler(self, binding: u32, sampler: &'ctx wgpu::Sampler) -> Self {
-        self.bind_sampler_with_id(
-            binding,
-            sampler,
-            (std::ptr::from_ref(sampler) as *const wgpu::Sampler as usize) as u64,
-        )
+    pub fn bind_sampler_by_id(self, binding: u32, index: usize) -> Self {
+        let sampler = self
+            .sampler_registry
+            .get_sampler_by_index(index)
+            .expect("Sampler not found");
+        let resource = wgpu::BindingResource::Sampler(sampler);
+        let resource_id = 0x434f_4d4d_4f4e_0000 | index as u64;
+        self.push_entry(binding, resource_id, resource)
     }
 
     #[must_use]
@@ -672,8 +664,7 @@ impl ViewResolver<'_> {
     /// Returns the raw `wgpu::Buffer` handle for the given node.
     #[must_use]
     pub fn get_buffer(&self, id: BufferNodeId) -> &wgpu::Buffer {
-        let tracked = self.get_tracked_buffer(id);
-        tracked
+        self.get_tracked_buffer(id)
     }
 
     /// Returns the physical-buffer allocation UID for the given node.
@@ -944,8 +935,7 @@ impl ExecuteContext<'_> {
     /// Returns the raw [`wgpu::Buffer`] handle for the given node.
     #[must_use]
     pub fn get_buffer(&self, id: BufferNodeId) -> &wgpu::Buffer {
-        let tracked = self.get_tracked_buffer(id);
-        tracked
+        self.get_tracked_buffer(id)
     }
 
     /// Returns a buffer binding truncated to the resource's logical size.

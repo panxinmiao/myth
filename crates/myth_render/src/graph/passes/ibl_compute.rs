@@ -7,7 +7,7 @@
 
 use rustc_hash::FxHashMap;
 
-use crate::core::gpu::Tracked;
+use crate::core::gpu::{CommonSampler, Tracked};
 use crate::graph::composer::GraphBuilderContext;
 use crate::graph::core::context::{ExecuteContext, ExtractContext};
 use crate::graph::core::node::PassNode;
@@ -40,7 +40,6 @@ pub struct IblComputeFeature {
     pipeline_ids: FxHashMap<IblPipelineVariant, ComputePipelineId>,
     source_layout: Tracked<wgpu::BindGroupLayout>,
     dest_layout: Tracked<wgpu::BindGroupLayout>,
-    sampler: wgpu::Sampler,
     scene_states: FxHashMap<u32, IblSceneState>,
 }
 
@@ -97,26 +96,10 @@ impl IblComputeFeature {
             },
         ));
 
-        let sampler = device.create_sampler(&wgpu::SamplerDescriptor {
-            label: Some("IBL PMREM Sampler"),
-            address_mode_u: wgpu::AddressMode::ClampToEdge,
-            address_mode_v: wgpu::AddressMode::ClampToEdge,
-            address_mode_w: wgpu::AddressMode::ClampToEdge,
-            mag_filter: wgpu::FilterMode::Linear,
-            min_filter: wgpu::FilterMode::Linear,
-            mipmap_filter: wgpu::MipmapFilterMode::Linear,
-            lod_min_clamp: 0.0,
-            lod_max_clamp: 32.0,
-            compare: None,
-            anisotropy_clamp: 1,
-            border_color: None,
-        });
-
         Self {
             pipeline_ids: FxHashMap::default(),
             source_layout,
             dest_layout,
-            sampler,
             scene_states: FxHashMap::default(),
         }
     }
@@ -279,7 +262,6 @@ impl IblComputeFeature {
             .map(|&id| ctx.pipeline_cache.get_compute_pipeline(id));
         let source_layout = &self.source_layout;
         let dest_layout = &self.dest_layout;
-        let sampler = &self.sampler;
         let params_desc = BufferDesc::new(
             std::mem::size_of::<[f32; 4]>() as u64,
             wgpu::BufferUsages::UNIFORM | wgpu::BufferUsages::COPY_DST,
@@ -310,7 +292,6 @@ impl IblComputeFeature {
                 pipeline,
                 source_layout,
                 dest_layout,
-                sampler,
                 mips: mip_states,
             };
             (node, ())
@@ -332,7 +313,6 @@ struct IblComputePassNode<'a> {
     pipeline: Option<&'a wgpu::ComputePipeline>,
     source_layout: &'a Tracked<wgpu::BindGroupLayout>,
     dest_layout: &'a Tracked<wgpu::BindGroupLayout>,
-    sampler: &'a wgpu::Sampler,
     mips: &'a mut [IblMipState<'a>],
 }
 
@@ -342,7 +322,7 @@ impl<'a> PassNode<'a> for IblComputePassNode<'a> {
             mip.source_bg = Some(
                 ctx.build_bind_group(self.source_layout, Some("IBL Source BG"))
                     .bind_texture(0, self.base_cube)
-                    .bind_sampler(1, self.sampler)
+                    .bind_common_sampler(1, CommonSampler::LinearClamp)
                     .bind_buffer(2, mip.params_buffer)
                     .build(),
             );

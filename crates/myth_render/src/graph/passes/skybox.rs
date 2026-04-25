@@ -22,7 +22,7 @@
 
 use rustc_hash::FxHashMap;
 
-use crate::core::gpu::{ResourceState, Tracked};
+use crate::core::gpu::{CommonSampler, ResourceState, Tracked};
 use crate::graph::composer::GraphBuilderContext;
 use crate::graph::core::{
     ExecuteContext, ExtractContext, PassNode, RawBufferBinding, RenderTargetOps, TextureNodeId,
@@ -363,7 +363,7 @@ pub struct SkyboxFeature {
     layout_procedural_eq: Option<Tracked<wgpu::BindGroupLayout>>,
     layout_procedural_cube: Option<Tracked<wgpu::BindGroupLayout>>,
 
-    procedural_sampler: Option<Tracked<wgpu::Sampler>>,
+    // procedural_sampler: Option<Tracked<wgpu::Sampler>>,
 
     // ─── Pipeline Cache ────────────────────────────────────────────
     local_cache: FxHashMap<SkyboxPipelineKey, RenderPipelineId>,
@@ -391,7 +391,7 @@ impl SkyboxFeature {
             layout_procedural: None,
             layout_procedural_eq: None,
             layout_procedural_cube: None,
-            procedural_sampler: None,
+            // procedural_sampler: None,
             local_cache: FxHashMap::default(),
             current_bind_group: None,
             current_pipeline: None,
@@ -424,22 +424,6 @@ impl SkyboxFeature {
             device,
             wgpu::TextureViewDimension::Cube,
             "Skybox Layout (Procedural Cube)",
-        )));
-        self.procedural_sampler = Some(Tracked::new(device.create_sampler(
-            &wgpu::SamplerDescriptor {
-                label: Some("Skybox Procedural Sampler"),
-                address_mode_u: wgpu::AddressMode::ClampToEdge,
-                address_mode_v: wgpu::AddressMode::ClampToEdge,
-                address_mode_w: wgpu::AddressMode::ClampToEdge,
-                mag_filter: wgpu::FilterMode::Linear,
-                min_filter: wgpu::FilterMode::Linear,
-                mipmap_filter: wgpu::MipmapFilterMode::Linear,
-                lod_min_clamp: 0.0,
-                lod_max_clamp: 32.0,
-                compare: None,
-                anisotropy_clamp: 1,
-                border_color: None,
-            },
         )));
     }
 
@@ -736,12 +720,7 @@ impl SkyboxFeature {
 
         // Build bind group (group 1)
         let layout = self.layout_for_variant(variant, procedural_starbox_kind);
-        let sampler = ctx
-            .resource_manager
-            .sampler_registry
-            .get_sampler_by_index(sampler_id)
-            .expect("Skybox sampler index must be valid")
-            .clone();
+
         let bg_uniforms_resource_id = (variant != SkyboxVariant::Procedural)
             .then(|| ctx.resource_manager.ensure_buffer_id(bg_uniforms));
 
@@ -753,10 +732,6 @@ impl SkyboxFeature {
             };
             let (moon_view, moon_resource_key, _) =
                 procedural_moon_binding.expect("procedural moon view must exist");
-            let sampler = self
-                .procedural_sampler
-                .as_ref()
-                .expect("procedural skybox sampler must exist");
 
             let label = if procedural_starbox.is_some() {
                 Some("Skybox BG (Procedural+Starbox)")
@@ -768,7 +743,7 @@ impl SkyboxFeature {
                 .build_bind_group(layout, label)
                 .bind_tracked_buffer(0, resources.bake_params_buffer)
                 .bind_tracked_texture_view(1, resources.sky_view_view)
-                .bind_tracked_sampler(2, sampler)
+                .bind_common_sampler(2, CommonSampler::LinearClamp)
                 .bind_tracked_texture_view(3, resources.transmittance_view)
                 .bind_texture_view_with_id(4, &moon_view, moon_resource_key);
 
@@ -802,7 +777,7 @@ impl SkyboxFeature {
                     RawBufferBinding::new(&params_buffer, bg_uniforms_resource_id, None),
                 )
                 .bind_texture_view_with_id(1, &tex_view, tex_view_resource_key)
-                .bind_sampler_with_id(2, &sampler, sampler_id as u64)
+                .bind_sampler_by_id(2, sampler_id)
                 .build()
                 .clone()
         } else {

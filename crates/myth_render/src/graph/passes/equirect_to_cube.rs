@@ -54,8 +54,6 @@ pub struct EquirectToCubeFeature {
     cubemap_pipeline_id: Option<ComputePipelineId>,
     equirect_layout: Tracked<wgpu::BindGroupLayout>,
     cubemap_layout: Tracked<wgpu::BindGroupLayout>,
-    equirect_sampler: Tracked<wgpu::Sampler>,
-    cubemap_sampler: Tracked<wgpu::Sampler>,
     scene_states: FxHashMap<u32, SceneSourceConvertState>,
 }
 
@@ -130,43 +128,11 @@ impl EquirectToCubeFeature {
             },
         ));
 
-        let equirect_sampler = Tracked::new(device.create_sampler(&wgpu::SamplerDescriptor {
-            label: Some("Environment Equirect Sampler"),
-            address_mode_u: EQUIRECT_SAMPLER_KEY.address_mode_u,
-            address_mode_v: EQUIRECT_SAMPLER_KEY.address_mode_v,
-            address_mode_w: EQUIRECT_SAMPLER_KEY.address_mode_w,
-            mag_filter: EQUIRECT_SAMPLER_KEY.mag_filter,
-            min_filter: EQUIRECT_SAMPLER_KEY.min_filter,
-            mipmap_filter: EQUIRECT_SAMPLER_KEY.mipmap_filter,
-            lod_min_clamp: EQUIRECT_SAMPLER_KEY.lod_min_clamp,
-            lod_max_clamp: EQUIRECT_SAMPLER_KEY.lod_max_clamp,
-            compare: EQUIRECT_SAMPLER_KEY.compare,
-            anisotropy_clamp: EQUIRECT_SAMPLER_KEY.anisotropy_clamp.unwrap_or(1),
-            border_color: EQUIRECT_SAMPLER_KEY.border_color,
-        }));
-
-        let cubemap_sampler = Tracked::new(device.create_sampler(&wgpu::SamplerDescriptor {
-            label: Some("Environment Cubemap Sampler"),
-            address_mode_u: CUBEMAP_SAMPLER_KEY.address_mode_u,
-            address_mode_v: CUBEMAP_SAMPLER_KEY.address_mode_v,
-            address_mode_w: CUBEMAP_SAMPLER_KEY.address_mode_w,
-            mag_filter: CUBEMAP_SAMPLER_KEY.mag_filter,
-            min_filter: CUBEMAP_SAMPLER_KEY.min_filter,
-            mipmap_filter: CUBEMAP_SAMPLER_KEY.mipmap_filter,
-            lod_min_clamp: CUBEMAP_SAMPLER_KEY.lod_min_clamp,
-            lod_max_clamp: CUBEMAP_SAMPLER_KEY.lod_max_clamp,
-            compare: CUBEMAP_SAMPLER_KEY.compare,
-            anisotropy_clamp: CUBEMAP_SAMPLER_KEY.anisotropy_clamp.unwrap_or(1),
-            border_color: CUBEMAP_SAMPLER_KEY.border_color,
-        }));
-
         Self {
             equirect_pipeline_id: None,
             cubemap_pipeline_id: None,
             equirect_layout,
             cubemap_layout,
-            equirect_sampler,
-            cubemap_sampler,
             scene_states: FxHashMap::default(),
         }
     }
@@ -208,13 +174,26 @@ impl EquirectToCubeFeature {
         });
 
         if needs_rebuild {
-            let (layout, sampler, _) = self
+            let layout = self
                 .layout_and_sampler(source_type)
                 .expect("procedural atmosphere should not reach source conversion");
+
+            let (sampler_id, _) = match source_type {
+                CubeSourceType::Equirectangular => ctx
+                    .resource_manager
+                    .sampler_registry
+                    .get_custom(ctx.device, &EQUIRECT_SAMPLER_KEY),
+                CubeSourceType::Cubemap => ctx
+                    .resource_manager
+                    .sampler_registry
+                    .get_custom(ctx.device, &CUBEMAP_SAMPLER_KEY),
+                CubeSourceType::Procedural => unreachable!(),
+            };
+
             let bind_group = ctx
                 .build_bind_group(layout, Some("Environment Source Convert BG"))
                 .bind_texture_view_with_id(0, &source_view, source_view_id)
-                .bind_tracked_sampler(1, sampler)
+                .bind_sampler_by_id(1, sampler_id)
                 .bind_tracked_texture_view(2, &dest_view)
                 .build()
                 .clone();
@@ -311,18 +290,10 @@ impl EquirectToCubeFeature {
     fn layout_and_sampler(
         &self,
         source_type: CubeSourceType,
-    ) -> Option<(
-        &Tracked<wgpu::BindGroupLayout>,
-        &Tracked<wgpu::Sampler>,
-        CubeSourceType,
-    )> {
+    ) -> Option<&Tracked<wgpu::BindGroupLayout>> {
         match source_type {
-            CubeSourceType::Equirectangular => {
-                Some((&self.equirect_layout, &self.equirect_sampler, source_type))
-            }
-            CubeSourceType::Cubemap => {
-                Some((&self.cubemap_layout, &self.cubemap_sampler, source_type))
-            }
+            CubeSourceType::Equirectangular => Some(&self.equirect_layout),
+            CubeSourceType::Cubemap => Some(&self.cubemap_layout),
             CubeSourceType::Procedural => None,
         }
     }
