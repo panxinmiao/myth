@@ -67,6 +67,11 @@ Native (Windows, macOS, Linux, iOS, Android) + WebGPU/WASM + Python bindings.
 * **Post-Processing & FX**
     * **HDR Pipeline** + **Bloom** + **Color Grading** + **TAA / FXAA / MSAA**.
 
+* **3D Gaussian Splatting (3DGS)**
+    * **Hybrid 3D Gaussian Splatting**: GPU-driven 3DGS path fully unified with the PBR RenderGraph.
+    * **High Performance**: Custom GPU radix sort and indirect drawing for extreme rendering throughput.
+    * **Physically Correct Compositing**: Accurate handling of sRGB/Linear color spaces for artifact-free blending with opaque geometry and post-processing (Bloom, Tone Mapping).
+
 * **Assets & Tooling**
     * **Full glTF 2.0 Support** (PBR, animations, morph targets).
     * **Asynchronous Asset System** + **Embedded egui Inspector**.

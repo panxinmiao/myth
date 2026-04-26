@@ -68,6 +68,11 @@ Myth 通过引入**严格的基于 SSA（静态单赋值）的渲染图 (RenderG
 * **后期处理与特效**
     * **HDR 管线** + **泛光 (Bloom)** + **色彩分级 (Color Grading)** + **TAA / FXAA / MSAA**。
 
+* **3D 高斯溅射 (3D Gaussian Splatting)**
+    * **混合式 3D 高斯溅射**：GPU 驱动的 3DGS 路径与 PBR RenderGraph 完全集成。
+    * **高性能**：自定义 GPU 基数排序和间接绘制，实现极致的渲染吞吐量。
+    * **物理正确的合成**：准确处理 sRGB/线性颜色空间，与不透明几何体和后期处理（Bloom、Tone Mapping）实现无瑕疵的混合。
+
 * **资产与工具链**
     * **完整支持 glTF 2.0**（PBR、动画、变形目标）。
     * **异步资产系统** + **内嵌 egui 检查器**。

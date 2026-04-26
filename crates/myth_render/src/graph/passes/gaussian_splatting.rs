@@ -610,9 +610,9 @@ impl GaussianSplattingFeature {
                 label: Some("GS Preprocess Pipeline Layout"),
                 bind_group_layouts: &[
                     Some(&gpu_world.layout),
-                    Some(self.preprocess_layout_g1.as_ref().unwrap()),
-                    Some(self.preprocess_layout_g2.as_ref().unwrap()),
-                    Some(self.preprocess_layout_g3.as_ref().unwrap()),
+                    self.preprocess_layout_g1.as_deref(),
+                    self.preprocess_layout_g2.as_deref(),
+                    self.preprocess_layout_g3.as_deref(),
                 ],
                 immediate_size: 0,
             });

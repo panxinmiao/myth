@@ -311,12 +311,12 @@ impl BloomFeature {
             write_mask: wgpu::ColorWrites::ALL,
         });
 
-        let ds_static = self.ds_static_layout.as_ref().unwrap();
-        let ds_trans = self.ds_transient_layout.as_ref().unwrap();
-        let us_static = self.us_static_layout.as_ref().unwrap();
-        let us_trans = self.us_transient_layout.as_ref().unwrap();
-        let comp_static = self.comp_static_layout.as_ref().unwrap();
-        let comp_trans = self.comp_transient_layout.as_ref().unwrap();
+        let ds_static = self.ds_static_layout.as_deref();
+        let ds_trans = self.ds_transient_layout.as_deref();
+        let us_static = self.us_static_layout.as_deref();
+        let us_trans = self.us_transient_layout.as_deref();
+        let comp_static = self.comp_static_layout.as_deref();
+        let comp_trans = self.comp_transient_layout.as_deref();
 
         // ─── Downsample Pipeline ───────────────────────────────────
         {
@@ -328,7 +328,7 @@ impl BloomFeature {
 
             let layout = device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
                 label: Some("Bloom DS Pipeline Layout"),
-                bind_group_layouts: &[Some(ds_static), Some(ds_trans)],
+                bind_group_layouts: &[ds_static, ds_trans],
                 immediate_size: 0,
             });
 
@@ -363,7 +363,7 @@ impl BloomFeature {
 
             let layout = device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
                 label: Some("Bloom US Pipeline Layout"),
-                bind_group_layouts: &[Some(us_static), Some(us_trans)],
+                bind_group_layouts: &[us_static, us_trans],
                 immediate_size: 0,
             });
 
@@ -398,7 +398,7 @@ impl BloomFeature {
 
             let layout = device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
                 label: Some("Bloom Comp Pipeline Layout"),
-                bind_group_layouts: &[Some(comp_static), Some(comp_trans)],
+                bind_group_layouts: &[comp_static, comp_trans],
                 immediate_size: 0,
             });
 
