@@ -272,10 +272,8 @@ impl RenderLists {
     /// - Opaque: by Pipeline > Material > Depth (front-to-back)
     /// - Transparent: by Depth (back-to-front) > Pipeline > Material
     pub fn sort(&mut self) {
-        self.opaque
-            .sort_unstable_by(|a, b| a.sort_key.cmp(&b.sort_key));
-        self.transparent
-            .sort_unstable_by(|a, b| a.sort_key.cmp(&b.sort_key));
+        self.opaque.sort_unstable_by_key(|a| a.sort_key);
+        self.transparent.sort_unstable_by_key(|a| a.sort_key);
     }
 
     /// Returns `true` if both lists are empty.
