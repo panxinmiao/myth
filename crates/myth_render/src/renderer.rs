@@ -12,6 +12,8 @@ use crate::graph::core::graph::GraphStorage;
 use crate::graph::frame::RenderLists;
 #[cfg(feature = "debug_view")]
 use crate::graph::passes::DebugViewFeature;
+#[cfg(feature = "3dgs")]
+use crate::graph::passes::GaussianSplattingFeature;
 use crate::graph::passes::{
     AtmosphereFeature, BloomFeature, BrdfLutFeature, CasFeature, EquirectToCubeFeature,
     FxaaFeature, IblComputeFeature, MsaaSyncFeature, OpaqueFeature, PrepassFeature, ShadowFeature,
@@ -95,6 +97,10 @@ struct RendererState {
     pub(crate) equirect_to_cube_pass: EquirectToCubeFeature,
     pub(crate) ibl_pass: IblComputeFeature,
     pub(crate) atmosphere_pass: AtmosphereFeature,
+
+    #[cfg(feature = "3dgs")]
+    // Gaussian Splatting
+    pub(crate) gaussian_splatting_pass: GaussianSplattingFeature,
 
     // Debug view (compile-time gated)
     #[cfg(feature = "debug_view")]
@@ -256,6 +262,9 @@ impl Renderer {
             equirect_to_cube_pass,
             ibl_pass,
             atmosphere_pass: AtmosphereFeature::new(),
+
+            #[cfg(feature = "3dgs")]
+            gaussian_splatting_pass: GaussianSplattingFeature::new(),
 
             #[cfg(feature = "debug_view")]
             debug_view_pass: DebugViewFeature::new(),
@@ -460,6 +469,26 @@ impl Renderer {
                 );
             }
 
+            #[cfg(feature = "3dgs")]
+            // Gaussian Splatting
+            if scene.has_gaussian_clouds() {
+                let mut cloud_entries = Vec::new();
+                for (node_handle, cloud_handle) in &scene.gaussian_clouds {
+                    if let Some(cloud) = assets.gaussian_clouds.get(*cloud_handle) {
+                        let world_matrix = scene
+                            .get_node(node_handle)
+                            .map(|node| glam::Mat4::from(*node.world_matrix()))
+                            .unwrap_or(glam::Mat4::IDENTITY);
+                        cloud_entries.push((*cloud_handle, cloud, world_matrix));
+                    }
+                }
+                if !cloud_entries.is_empty() {
+                    state
+                        .gaussian_splatting_pass
+                        .extract_and_prepare(&mut extract_ctx, &cloud_entries);
+                }
+            }
+
             if is_hf {
                 if let Some(taa_settins) = camera.aa_mode.taa_settings() {
                     state.taa_pass.extract_and_prepare(
@@ -603,6 +632,9 @@ impl Renderer {
             equirect_to_cube_pass: &mut state.equirect_to_cube_pass,
             ibl_pass: &mut state.ibl_pass,
             atmosphere_pass: &mut state.atmosphere_pass,
+
+            #[cfg(feature = "3dgs")]
+            gaussian_splatting_pass: &mut state.gaussian_splatting_pass,
 
             #[cfg(feature = "debug_view")]
             debug_view_pass: &mut state.debug_view_pass,

@@ -104,5 +104,8 @@ $$ endif
         rgb = rgb + grain;
     }
 
+    let gamma = max(u_effect.gamma, 1e-4);
+    rgb = pow(max(rgb, vec3<f32>(0.0)), vec3<f32>(1.0 / gamma));
+
     return vec4<f32>(rgb, color_sample.a);
 }

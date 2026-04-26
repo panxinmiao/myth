@@ -59,6 +59,8 @@ use crate::graph::core::{
     TextureDesc, TransientPool, ViewResolver,
 };
 use crate::graph::frame::{PreparedSkyboxDraw, RenderLists};
+#[cfg(feature = "3dgs")]
+use crate::graph::passes::GaussianSplattingFeature;
 use crate::graph::passes::utils::add_msaa_resolve_pass;
 use crate::graph::passes::{
     AtmosphereFeature, BloomFeature, BrdfLutFeature, CasFeature, EquirectToCubeFeature,
@@ -122,6 +124,10 @@ pub struct ComposerContext<'a> {
     pub equirect_to_cube_pass: &'a mut EquirectToCubeFeature,
     pub ibl_pass: &'a mut IblComputeFeature,
     pub atmosphere_pass: &'a mut AtmosphereFeature,
+
+    #[cfg(feature = "3dgs")]
+    // Gaussian Splatting
+    pub gaussian_splatting_pass: &'a mut GaussianSplattingFeature,
 
     // Debug view (compile-time gated)
     #[cfg(feature = "debug_view")]
@@ -650,6 +656,18 @@ impl<'a> FrameComposer<'a> {
                         });
                     }
 
+                    #[cfg(feature = "3dgs")]
+                    {
+                        // 7a. Gaussian Splatting
+                        c.with_group("3D_Gaussian_Splatting", |c| {
+                            active_color = self.ctx.gaussian_splatting_pass.add_to_graph(
+                                c,
+                                active_color,
+                                opaque_out.active_depth,
+                            );
+                        });
+                    }
+
                     // 7. Transmission Copy
                     let transmission_tex = if has_transmission {
                         Some(
@@ -719,7 +737,7 @@ impl<'a> FrameComposer<'a> {
                         // Route through an intermediate LDR texture for FXAA input
                         let ldr =
                             ctx.graph
-                                .register_resource("LDR_Intermediate", surface_desc, false);
+                                .register_texture("LDR_Intermediate", surface_desc, false);
                         self.ctx.tone_map_pass.add_to_graph(ctx, active_color, ldr)
                     } else {
                         self.ctx

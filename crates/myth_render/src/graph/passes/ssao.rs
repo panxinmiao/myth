@@ -27,7 +27,6 @@
 //! Composer via `add_to_graph()`.  The pass never accesses Scene directly.
 //! Samplers are obtained from the global [`SamplerRegistry`].
 
-use crate::core::binding::BindGroupKey;
 use crate::core::gpu::{CommonSampler, Tracked};
 use crate::graph::composer::GraphBuilderContext;
 use crate::graph::core::{
@@ -506,67 +505,16 @@ struct SsaoRawNode<'a> {
 
 impl<'a> PassNode<'a> for SsaoRawNode<'a> {
     fn prepare(&mut self, ctx: &mut PrepareContext<'a>) {
-        let PrepareContext {
-            views,
-            global_bind_group_cache: cache,
-            device,
-            sampler_registry,
-            ..
-        } = ctx;
-        let device = *device;
-
-        let depth_view = views.get_texture_view(self.depth_tex);
-
-        let normal_view = views.get_texture_view(self.normal_tex);
-        let noise_view: &Tracked<wgpu::TextureView> = self.noise_texture_view;
-
-        let linear_sampler = sampler_registry.get_common(CommonSampler::LinearClamp);
-        let noise_sampler = sampler_registry.get_common(CommonSampler::NearestRepeat);
-        let point_sampler = sampler_registry.get_common(CommonSampler::NearestClamp);
-
-        let layout = self.raw_layout;
-
-        let key = BindGroupKey::new(layout.id())
-            .with_resource(depth_view.id())
-            .with_resource(normal_view.id())
-            .with_resource(noise_view.id());
-        // .with_resource(CommonSampler::LinearClamp as u64)
-        // .with_resource(CommonSampler::NearestRepeat as u64)
-        // .with_resource(CommonSampler::NearestClamp as u64);
-
-        let bg = cache.get_or_create_bg(key, || {
-            device.create_bind_group(&wgpu::BindGroupDescriptor {
-                label: Some("SSAO Raw BG (G1)"),
-                layout,
-                entries: &[
-                    wgpu::BindGroupEntry {
-                        binding: 0,
-                        resource: wgpu::BindingResource::TextureView(depth_view),
-                    },
-                    wgpu::BindGroupEntry {
-                        binding: 1,
-                        resource: wgpu::BindingResource::TextureView(normal_view),
-                    },
-                    wgpu::BindGroupEntry {
-                        binding: 2,
-                        resource: wgpu::BindingResource::TextureView(noise_view),
-                    },
-                    wgpu::BindGroupEntry {
-                        binding: 3,
-                        resource: wgpu::BindingResource::Sampler(linear_sampler),
-                    },
-                    wgpu::BindGroupEntry {
-                        binding: 4,
-                        resource: wgpu::BindingResource::Sampler(noise_sampler),
-                    },
-                    wgpu::BindGroupEntry {
-                        binding: 5,
-                        resource: wgpu::BindingResource::Sampler(point_sampler),
-                    },
-                ],
-            })
-        });
-        self.transient_bg = Some(bg);
+        self.transient_bg = Some(
+            crate::myth_bind_group!(ctx, self.raw_layout, Some("SSAO Raw BG (G1)"), [
+                0 => self.depth_tex,
+                1 => self.normal_tex,
+                2 => self.noise_texture_view,
+                3 => CommonSampler::LinearClamp,
+                4 => CommonSampler::NearestRepeat,
+                5 => CommonSampler::NearestClamp,
+            ]),
+        );
     }
 
     fn execute(&self, ctx: &ExecuteContext, encoder: &mut wgpu::CommandEncoder) {
@@ -614,61 +562,15 @@ struct SsaoBlurNode<'a> {
 
 impl<'a> PassNode<'a> for SsaoBlurNode<'a> {
     fn prepare(&mut self, ctx: &mut PrepareContext<'a>) {
-        let PrepareContext {
-            views,
-            global_bind_group_cache: cache,
-            device,
-            sampler_registry,
-            ..
-        } = ctx;
-        let device = *device;
-
-        let depth_view = views.get_texture_view(self.depth_tex);
-
-        let raw_view = views.get_texture_view(self.raw_tex);
-        let normal_view = views.get_texture_view(self.normal_tex);
-
-        let linear_sampler = sampler_registry.get_common(CommonSampler::LinearClamp);
-        let point_sampler = sampler_registry.get_common(CommonSampler::NearestClamp);
-
-        let layout = self.blur_layout;
-
-        let key = BindGroupKey::new(layout.id())
-            .with_resource(raw_view.id())
-            .with_resource(depth_view.id())
-            .with_resource(normal_view.id());
-        // .with_resource(CommonSampler::LinearClamp as u64)
-        // .with_resource(CommonSampler::NearestClamp as u64);
-
-        let bg = cache.get_or_create_bg(key, || {
-            device.create_bind_group(&wgpu::BindGroupDescriptor {
-                label: Some("SSAO Blur BG (G0)"),
-                layout,
-                entries: &[
-                    wgpu::BindGroupEntry {
-                        binding: 0,
-                        resource: wgpu::BindingResource::TextureView(raw_view),
-                    },
-                    wgpu::BindGroupEntry {
-                        binding: 1,
-                        resource: wgpu::BindingResource::TextureView(depth_view),
-                    },
-                    wgpu::BindGroupEntry {
-                        binding: 2,
-                        resource: wgpu::BindingResource::TextureView(normal_view),
-                    },
-                    wgpu::BindGroupEntry {
-                        binding: 3,
-                        resource: wgpu::BindingResource::Sampler(linear_sampler),
-                    },
-                    wgpu::BindGroupEntry {
-                        binding: 4,
-                        resource: wgpu::BindingResource::Sampler(point_sampler),
-                    },
-                ],
-            })
-        });
-        self.transient_bg = Some(bg);
+        self.transient_bg = Some(
+            crate::myth_bind_group!(ctx, self.blur_layout, Some("SSAO Blur BG (G0)"), [
+                0 => self.raw_tex,
+                1 => self.depth_tex,
+                2 => self.normal_tex,
+                3 => CommonSampler::LinearClamp,
+                4 => CommonSampler::NearestClamp,
+            ]),
+        );
     }
 
     fn execute(&self, ctx: &ExecuteContext, encoder: &mut wgpu::CommandEncoder) {

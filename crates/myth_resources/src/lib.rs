@@ -23,6 +23,8 @@ pub mod bloom;
 pub mod buffer;
 pub mod builder;
 pub mod fxaa;
+#[cfg(feature = "3dgs")]
+pub mod gaussian_splat;
 pub mod geometry;
 pub mod handles;
 pub mod image;
@@ -41,7 +43,8 @@ pub mod version_tracker;
 
 // Re-export handle types
 pub use handles::{
-    GeometryHandle, GpuBufferHandle, ImageHandle, MaterialHandle, PrefabHandle, TextureHandle,
+    GaussianCloudHandle, GeometryHandle, GpuBufferHandle, ImageHandle, MaterialHandle,
+    PrefabHandle, TextureHandle,
 };
 
 // Re-export common resource types
@@ -61,6 +64,8 @@ pub use anti_aliasing::AntiAliasingMode;
 pub use bloom::BloomSettings;
 pub use buffer::BufferRef;
 pub use fxaa::{FxaaQuality, FxaaSettings};
+#[cfg(feature = "3dgs")]
+pub use gaussian_splat::{GaussianCloud, GaussianSHCoefficients, GaussianSplat, Splat2D};
 pub use geometry::{
     Attribute, BoundingBox, BoundingSphere, Geometry, IndexAttribute, IndexFormat, VertexFormat,
 };

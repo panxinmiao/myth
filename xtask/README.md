@@ -62,6 +62,13 @@ All of the commands above support the following flags to customize the build beh
   cargo xtask build-gallery --features "some_feature"
   ```
 
+* **Wasm Optimization Control**
+  You can enable `wasm-opt` in release builds using the `--optimize-wasm` flag:
+   ```bash
+   # Build in release mode with wasm-opt optimization
+   cargo xtask build-gallery --release --optimize-wasm
+   ```
+
 ## Build Pipeline Overview
 
 When you execute a build task, the script automatically performs the following steps:

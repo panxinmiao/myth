@@ -7,6 +7,8 @@ pub mod debug_view;
 pub mod draw;
 pub mod equirect_to_cube;
 pub mod fxaa;
+#[cfg(feature = "3dgs")]
+pub mod gaussian_splatting;
 pub mod ibl_compute;
 pub mod msaa_sync;
 pub mod opaque;
@@ -30,6 +32,8 @@ pub use compute::BrdfLutFeature;
 pub use debug_view::DebugViewFeature;
 pub use equirect_to_cube::EquirectToCubeFeature;
 pub use fxaa::FxaaFeature;
+#[cfg(feature = "3dgs")]
+pub use gaussian_splatting::GaussianSplattingFeature;
 pub use ibl_compute::IblComputeFeature;
 pub use msaa_sync::MsaaSyncFeature;
 pub use opaque::OpaqueFeature;

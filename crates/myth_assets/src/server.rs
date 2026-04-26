@@ -7,6 +7,10 @@ use crate::io::{AssetReaderVariant, AssetSource};
 use crate::prefab::SharedPrefab;
 use crate::storage::AssetStorage;
 use myth_core::{AssetError, Error, Result};
+#[cfg(feature = "3dgs")]
+use myth_resources::GaussianCloudHandle;
+#[cfg(feature = "3dgs")]
+use myth_resources::gaussian_splat::GaussianCloud;
 use myth_resources::geometry::Geometry;
 use myth_resources::image::{ColorSpace, Image, ImageDimension, PixelFormat};
 use myth_resources::material::Material;
@@ -20,7 +24,7 @@ use std::sync::OnceLock;
 use tokio::runtime::Runtime;
 
 #[cfg(not(target_arch = "wasm32"))]
-fn get_asset_runtime() -> &'static Runtime {
+pub(crate) fn get_asset_runtime() -> &'static Runtime {
     static RUNTIME: OnceLock<Runtime> = OnceLock::new();
     RUNTIME.get_or_init(|| Runtime::new().expect("Failed to create asset loader runtime"))
 }
@@ -62,6 +66,14 @@ struct PrefabLoadEvent {
     result: std::result::Result<SharedPrefab, String>,
 }
 
+/// Completed 3D Gaussian cloud load event.
+#[cfg(feature = "3dgs")]
+struct GaussianLoadEvent {
+    handle: GaussianCloudHandle,
+    source: String,
+    result: std::result::Result<GaussianCloud, String>,
+}
+
 /// Internal channel pair for background → main thread communication.
 struct LoadingChannel<T> {
     tx: Sender<T>,
@@ -83,6 +95,8 @@ impl<T> LoadingChannel<T> {
 struct LoadingPipeline {
     image_channel: LoadingChannel<ImageLoadEvent>,
     prefab_channel: LoadingChannel<PrefabLoadEvent>,
+    #[cfg(feature = "3dgs")]
+    gaussian_channel: LoadingChannel<GaussianLoadEvent>,
 }
 
 // ────────────────────────────────────────────────────────────────────────────
@@ -105,7 +119,8 @@ const MYTH_ASSET_NAMESPACE: Uuid = uuid::uuid!("6ba7b810-9dad-11d1-80b4-00c04fd4
 /// # Fire-and-Forget Loading
 ///
 /// The primary loading API ([`load_texture`](Self::load_texture),
-/// [`load_hdr_texture`](Self::load_hdr_texture), etc.) returns a handle
+/// [`load_hdr_texture`](Self::load_hdr_texture),
+/// [`load_gaussian_ply`](Self::load_gaussian_ply), etc.) returns a handle
 /// **immediately** and schedules the actual I/O + decode on a background
 /// task.  Call [`process_loading_events`](Self::process_loading_events)
 /// once per frame (the engine does this automatically) to promote completed
@@ -128,6 +143,8 @@ pub struct AssetServer {
     pub images: Arc<AssetStorage<ImageHandle, Image>>,
     pub textures: Arc<AssetStorage<TextureHandle, Texture>>,
     pub prefabs: Arc<AssetStorage<PrefabHandle, SharedPrefab>>,
+    #[cfg(feature = "3dgs")]
+    pub gaussian_clouds: Arc<AssetStorage<GaussianCloudHandle, GaussianCloud>>,
 
     pub sss_registry: Arc<RwLock<SssRegistry>>,
 
@@ -175,12 +192,16 @@ impl AssetServer {
             images,
             textures,
             prefabs: Arc::new(AssetStorage::new()),
+            #[cfg(feature = "3dgs")]
+            gaussian_clouds: Arc::new(AssetStorage::new()),
 
             sss_registry: Arc::new(RwLock::new(SssRegistry::new())),
 
             loading: Arc::new(LoadingPipeline {
                 image_channel: LoadingChannel::new(),
                 prefab_channel: LoadingChannel::new(),
+                #[cfg(feature = "3dgs")]
+                gaussian_channel: LoadingChannel::new(),
             }),
 
             default_white_texture,
@@ -460,6 +481,69 @@ impl AssetServer {
         tex_handle
     }
 
+    /// Loads a 3D Gaussian splatting cloud from a `.ply`, returning a handle immediately.
+    ///
+    /// The underlying I/O and parse run on a background task and completed
+    /// loads are promoted by [`process_loading_events`](Self::process_loading_events).
+    /// Duplicate requests for the same URI return the same handle.
+    #[cfg(feature = "3dgs")]
+    #[allow(clippy::needless_pass_by_value)]
+    pub fn load_gaussian_ply(&self, source: impl AssetSource) -> GaussianCloudHandle {
+        let uri = source.uri().to_string();
+        let uuid = Self::generate_asset_uuid("GaussianPly", &uri, "");
+        let (handle, is_new) = self.gaussian_clouds.reserve_with_uuid(uuid);
+        if !is_new {
+            return handle;
+        }
+
+        let tx = self.loading.gaussian_channel.sender();
+        let source_str = uri.clone();
+
+        spawn_asset_task(async move {
+            let result = crate::load_gaussian_ply_from_source_async(uri).await;
+            let event = GaussianLoadEvent {
+                handle,
+                source: source_str,
+                result: result.map_err(|e| e.to_string()),
+            };
+            let _ = tx.send(event);
+        });
+
+        handle
+    }
+
+    /// Loads a compressed 3D Gaussian splatting cloud from a `.npz`,
+    /// returning a handle immediately.
+    ///
+    /// The underlying I/O and parse run on a background task and completed
+    /// loads are promoted by [`process_loading_events`](Self::process_loading_events).
+    /// Duplicate requests for the same URI return the same handle.
+    #[cfg(feature = "gaussian-npz")]
+    #[allow(clippy::needless_pass_by_value)]
+    pub fn load_gaussian_npz(&self, source: impl AssetSource) -> GaussianCloudHandle {
+        let uri = source.uri().to_string();
+        let uuid = Self::generate_asset_uuid("GaussianNpz", &uri, "");
+        let (handle, is_new) = self.gaussian_clouds.reserve_with_uuid(uuid);
+        if !is_new {
+            return handle;
+        }
+
+        let tx = self.loading.gaussian_channel.sender();
+        let source_str = uri.clone();
+
+        spawn_asset_task(async move {
+            let result = crate::load_gaussian_npz_from_source_async(uri).await;
+            let event = GaussianLoadEvent {
+                handle,
+                source: source_str,
+                result: result.map_err(|e| e.to_string()),
+            };
+            let _ = tx.send(event);
+        });
+
+        handle
+    }
+
     /// Loads a glTF/GLB model, returning a [`PrefabHandle`] immediately.
     ///
     /// The handle can be polled via [`AssetStorage::get`] on
@@ -528,6 +612,20 @@ impl AssetServer {
                 Err(ref msg) => {
                     log::error!("glTF load failed ({}): {msg}", event.source);
                     self.prefabs.mark_failed(event.handle, msg.clone());
+                }
+            }
+        }
+
+        #[cfg(feature = "3dgs")]
+        while let Ok(event) = self.loading.gaussian_channel.rx.try_recv() {
+            match event.result {
+                Ok(cloud) => {
+                    self.gaussian_clouds.insert_ready(event.handle, cloud);
+                    log::info!("Gaussian cloud loaded: {}", event.source);
+                }
+                Err(ref msg) => {
+                    log::error!("Gaussian cloud load failed ({}): {msg}", event.source);
+                    self.gaussian_clouds.mark_failed(event.handle, msg.clone());
                 }
             }
         }
@@ -666,6 +764,30 @@ impl AssetServer {
             .get(handle)
             .expect("Texture is immediately available after load_hdr_texture");
         self.wait_for_image(texture.image).await?;
+        Ok(handle)
+    }
+
+    /// Asynchronously loads a 3D Gaussian splatting cloud from a `.ply`
+    /// and waits for it to finish parsing.
+    #[cfg(feature = "3dgs")]
+    pub async fn load_gaussian_ply_async(
+        &self,
+        source: impl AssetSource,
+    ) -> Result<GaussianCloudHandle> {
+        let handle = self.load_gaussian_ply(source);
+        self.wait_for_gaussian_cloud(handle).await?;
+        Ok(handle)
+    }
+
+    /// Asynchronously loads a compressed 3D Gaussian splatting cloud from a `.npz`
+    /// and waits for it to finish parsing.
+    #[cfg(feature = "gaussian-npz")]
+    pub async fn load_gaussian_npz_async(
+        &self,
+        source: impl AssetSource,
+    ) -> Result<GaussianCloudHandle> {
+        let handle = self.load_gaussian_npz(source);
+        self.wait_for_gaussian_cloud(handle).await?;
         Ok(handle)
     }
 
@@ -1052,6 +1174,36 @@ impl AssetServer {
             #[cfg(target_arch = "wasm32")]
             {
                 // WASM doesn't have blocking sleep, so we use a short timeout to yield to the event loop.
+                let promise = js_sys::Promise::new(&mut |resolve, _| {
+                    web_sys::window()
+                        .unwrap()
+                        .set_timeout_with_callback_and_timeout_and_arguments_0(&resolve, 5)
+                        .unwrap();
+                });
+                wasm_bindgen_futures::JsFuture::from(promise).await.ok();
+            }
+        }
+    }
+
+    /// Polls the loading channel and waits until the [`GaussianCloud`] behind
+    /// `handle` transitions out of the `Loading` state.
+    #[cfg(feature = "3dgs")]
+    async fn wait_for_gaussian_cloud(&self, handle: GaussianCloudHandle) -> Result<()> {
+        loop {
+            self.process_loading_events();
+
+            if self.gaussian_clouds.is_loaded(handle) {
+                return Ok(());
+            }
+            if let Some(msg) = self.gaussian_clouds.get_error(handle) {
+                return Err(Error::Asset(AssetError::Format(msg)));
+            }
+
+            #[cfg(not(target_arch = "wasm32"))]
+            tokio::time::sleep(std::time::Duration::from_millis(2)).await;
+
+            #[cfg(target_arch = "wasm32")]
+            {
                 let promise = js_sys::Promise::new(&mut |resolve, _| {
                     web_sys::window()
                         .unwrap()

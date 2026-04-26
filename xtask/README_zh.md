@@ -62,6 +62,13 @@ cargo xtask build-app <app_id>
   cargo xtask build-gallery --features "some_feature"
   ```
 
+* **Wasm 优化控制**
+  您可以使用 `--optimize-wasm` 标志在 Release 构建中启用 `wasm-opt` 优化：
+   ```bash
+   # 使用 wasm-opt 优化构建产物
+   cargo xtask build-gallery --release --optimize-wasm
+   ```
+
 ## 构建流程简述
 
 当您执行构建任务时，脚本会自动执行以下步骤：

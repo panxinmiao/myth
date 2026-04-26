@@ -130,4 +130,21 @@ impl PyEngine {
             window.set_title(title);
         });
     }
+
+    // ---- Gaussian Splatting ----
+
+    /// Load a ``.ply`` file containing 3D Gaussian Splatting data.
+    ///
+    /// Returns a ``GaussianCloud`` object that can be added to a scene.
+    fn load_gaussian_ply(&self, path: &str) -> PyResult<crate::gaussian::PyGaussianCloud> {
+        crate::gaussian::load_gaussian_ply_impl(path)
+    }
+
+    /// Load a compressed ``.npz`` file containing 3D Gaussian Splatting data.
+    ///
+    /// Returns a ``GaussianCloud`` object that can be added to a scene.
+    #[cfg(feature = "gaussian-npz")]
+    fn load_gaussian_npz(&self, path: &str) -> PyResult<crate::gaussian::PyGaussianCloud> {
+        crate::gaussian::load_gaussian_npz_impl(path)
+    }
 }

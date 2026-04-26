@@ -15,6 +15,7 @@ mod app;
 mod camera;
 mod controls;
 mod engine_proxy;
+mod gaussian;
 mod geometry;
 mod input;
 mod light;
@@ -228,6 +229,9 @@ fn myth_binding(m: &Bound<'_, PyModule>) -> PyResult<()> {
 
     // Readback
     m.add_class::<readback::PyReadbackStream>()?;
+
+    // Gaussian Splatting
+    m.add_class::<gaussian::PyGaussianCloud>()?;
 
     Ok(())
 }

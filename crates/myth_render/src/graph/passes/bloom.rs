@@ -34,7 +34,6 @@
 //! ```
 
 use crate::HDR_TEXTURE_FORMAT;
-use crate::core::binding::BindGroupKey;
 use crate::core::gpu::{CommonSampler, Tracked};
 use crate::graph::composer::GraphBuilderContext;
 use crate::graph::core::{
@@ -825,28 +824,11 @@ struct BloomDownsampleNode<'a> {
 
 impl<'a> PassNode<'a> for BloomDownsampleNode<'a> {
     fn prepare(&mut self, ctx: &mut PrepareContext<'a>) {
-        let PrepareContext {
-            views,
-            global_bind_group_cache: cache,
-            device,
-            ..
-        } = ctx;
-        let device = *device;
-        let input_view = views.get_texture_view(self.input_tex);
-        let key = BindGroupKey::new(self.transient_layout.id()).with_resource(input_view.id());
-        let layout = &**self.transient_layout;
-
-        let bg = cache.get_or_create_bg(key, || {
-            device.create_bind_group(&wgpu::BindGroupDescriptor {
-                label: Some("Bloom DS G1"),
-                layout,
-                entries: &[wgpu::BindGroupEntry {
-                    binding: 0,
-                    resource: wgpu::BindingResource::TextureView(input_view),
-                }],
-            })
-        });
-        self.transient_bg = Some(bg);
+        self.transient_bg = Some(
+            crate::myth_bind_group!(ctx, self.transient_layout, Some("Bloom DS G1"), [
+                0 => self.input_tex,
+            ]),
+        );
     }
 
     fn execute(&self, ctx: &ExecuteContext, encoder: &mut wgpu::CommandEncoder) {
@@ -882,28 +864,11 @@ struct BloomUpsampleNode<'a> {
 
 impl<'a> PassNode<'a> for BloomUpsampleNode<'a> {
     fn prepare(&mut self, ctx: &mut PrepareContext<'a>) {
-        let PrepareContext {
-            views,
-            global_bind_group_cache: cache,
-            device,
-            ..
-        } = ctx;
-        let device = *device;
-        let coarser_view = views.get_texture_view(self.coarser_tex);
-        let key = BindGroupKey::new(self.transient_layout.id()).with_resource(coarser_view.id());
-        let layout = &**self.transient_layout;
-
-        let bg = cache.get_or_create_bg(key, || {
-            device.create_bind_group(&wgpu::BindGroupDescriptor {
-                label: Some("Bloom US G1"),
-                layout,
-                entries: &[wgpu::BindGroupEntry {
-                    binding: 0,
-                    resource: wgpu::BindingResource::TextureView(coarser_view),
-                }],
-            })
-        });
-        self.transient_bg = Some(bg);
+        self.transient_bg = Some(
+            crate::myth_bind_group!(ctx, self.transient_layout, Some("Bloom US G1"), [
+                0 => self.coarser_tex,
+            ]),
+        );
     }
 
     fn execute(&self, ctx: &ExecuteContext, encoder: &mut wgpu::CommandEncoder) {
@@ -940,37 +905,12 @@ struct BloomCompositeNode<'a> {
 
 impl<'a> PassNode<'a> for BloomCompositeNode<'a> {
     fn prepare(&mut self, ctx: &mut PrepareContext<'a>) {
-        let PrepareContext {
-            views,
-            global_bind_group_cache: cache,
-            device,
-            ..
-        } = ctx;
-        let device = *device;
-        let original_view = views.get_texture_view(self.original_tex);
-        let bloom_view = views.get_texture_view(self.bloom_tex);
-        let key = BindGroupKey::new(self.transient_layout.id())
-            .with_resource(original_view.id())
-            .with_resource(bloom_view.id());
-        let layout = &**self.transient_layout;
-
-        let bg = cache.get_or_create_bg(key, || {
-            device.create_bind_group(&wgpu::BindGroupDescriptor {
-                label: Some("Bloom Comp G1"),
-                layout,
-                entries: &[
-                    wgpu::BindGroupEntry {
-                        binding: 0,
-                        resource: wgpu::BindingResource::TextureView(original_view),
-                    },
-                    wgpu::BindGroupEntry {
-                        binding: 1,
-                        resource: wgpu::BindingResource::TextureView(bloom_view),
-                    },
-                ],
-            })
-        });
-        self.transient_bg = Some(bg);
+        self.transient_bg = Some(
+            crate::myth_bind_group!(ctx, self.transient_layout, Some("Bloom Comp G1"), [
+                0 => self.original_tex,
+                1 => self.bloom_tex,
+            ]),
+        );
     }
 
     fn execute(&self, ctx: &ExecuteContext, encoder: &mut wgpu::CommandEncoder) {

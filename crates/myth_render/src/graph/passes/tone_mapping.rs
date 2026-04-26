@@ -19,7 +19,6 @@
 
 use rustc_hash::FxHashMap;
 
-use crate::core::binding::BindGroupKey;
 use crate::core::gpu::{CommonSampler, ResourceState, Tracked};
 use crate::graph::composer::GraphBuilderContext;
 use crate::graph::core::{
@@ -463,29 +462,11 @@ struct ToneMapPassNode<'a> {
 
 impl<'a> PassNode<'a> for ToneMapPassNode<'a> {
     fn prepare(&mut self, ctx: &mut PrepareContext<'a>) {
-        let PrepareContext {
-            views,
-            global_bind_group_cache: cache,
-            device,
-            ..
-        } = ctx;
-        let device = *device;
-        let input_view = views.get_texture_view(self.input_tex);
-        let layout = self.transient_layout;
-
-        let key = BindGroupKey::new(layout.id()).with_resource(input_view.id());
-
-        let bg = cache.get_or_create_bg(key, || {
-            device.create_bind_group(&wgpu::BindGroupDescriptor {
-                label: Some("ToneMap Transient BG (G2)"),
-                layout,
-                entries: &[wgpu::BindGroupEntry {
-                    binding: 0,
-                    resource: wgpu::BindingResource::TextureView(input_view),
-                }],
-            })
-        });
-        self.transient_bg = Some(bg);
+        self.transient_bg = Some(
+            crate::myth_bind_group!(ctx, self.transient_layout, Some("ToneMap Transient BG (G2)"), [
+                0 => self.input_tex,
+            ]),
+        );
     }
 
     fn execute(&self, ctx: &ExecuteContext, encoder: &mut wgpu::CommandEncoder) {

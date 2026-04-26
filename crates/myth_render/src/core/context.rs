@@ -66,6 +66,19 @@ pub struct WgpuContext {
 }
 
 impl WgpuContext {
+    /// Preserve user-provided limits, but always request the adapter's full
+    /// compute workgroup storage budget so compute pipelines can specialize to
+    /// the real shared-memory ceiling of the active backend.
+    fn requested_limits_for_adapter(
+        init_config: &RendererInitConfig,
+        adapter: &wgpu::Adapter,
+    ) -> wgpu::Limits {
+        let mut required_limits = init_config.required_limits.clone();
+        required_limits.max_compute_workgroup_storage_size =
+            adapter.limits().max_compute_workgroup_storage_size;
+        required_limits
+    }
+
     pub async fn new<W>(
         window: W,
         init_config: &RendererInitConfig,
@@ -121,11 +134,13 @@ impl WgpuContext {
 
         log::debug!("Selected Surface Format: {surface_format:?}");
 
+        let required_limits = Self::requested_limits_for_adapter(init_config, &adapter);
+
         let (device, queue) = adapter
             .request_device(&wgpu::DeviceDescriptor {
                 label: None,
                 required_features: init_config.required_features,
-                required_limits: init_config.required_limits.clone(),
+                required_limits,
                 memory_hints: wgpu::MemoryHints::Performance,
                 ..Default::default()
             })
@@ -214,11 +229,13 @@ impl WgpuContext {
         log::debug!("Backend (headless): {:?}", info.backend);
         log::debug!("Device: {}", info.name);
 
+        let required_limits = Self::requested_limits_for_adapter(init_config, &adapter);
+
         let (device, queue) = adapter
             .request_device(&wgpu::DeviceDescriptor {
                 label: Some("Headless Device"),
                 required_features: init_config.required_features,
-                required_limits: init_config.required_limits.clone(),
+                required_limits,
                 memory_hints: wgpu::MemoryHints::Performance,
                 ..Default::default()
             })

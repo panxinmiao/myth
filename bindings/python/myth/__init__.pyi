@@ -498,6 +498,14 @@ class Engine:
         """
         ...
 
+    def load_gaussian_ply(self, path: str) -> GaussianCloud:
+        """Load a ``.ply`` file containing 3D Gaussian Splatting data."""
+        ...
+
+    def load_gaussian_npz(self, path: str) -> GaussianCloud:
+        """Load a compressed ``.npz`` file containing 3D Gaussian Splatting data."""
+        ...
+
     def set_title(self, title: str) -> None:
         """Set the window title (only works when using ``App``)."""
         ...
@@ -549,6 +557,13 @@ class Scene:
         """Add a light to the scene.
 
         Returns an Object3D node for the light (position it with ``.position``).
+        """
+        ...
+
+    def add_gaussian_cloud(self, name: str, cloud: GaussianCloud) -> Object3D:
+        """Add a Gaussian splatting point cloud to the scene.
+
+        Returns an Object3D handle for positioning the cloud.
         """
         ...
 
@@ -616,16 +631,17 @@ class Scene:
         """
         ...
 
-    def set_tone_mapping(self, mode: str, exposure: Optional[float] = None) -> None:
-        """Set tone mapping mode with optional exposure.
+    def set_tone_mapping(self, mode: str, exposure: Optional[float] = None, gamma: Optional[float] = None) -> None:
+        """Set tone mapping mode with optional exposure and gamma.
 
         This is a convenience combining ``set_tone_mapping_mode`` and
-        optional exposure.
+        optional exposure and gamma.
 
         Args:
             mode: One of ``'linear'``, ``'neutral'``, ``'reinhard'``,
                   ``'cineon'``, ``'aces'``, ``'agx'``, ``'agx_punchy'``.
-            exposure: Exposure value (reserved for future use).
+            exposure: Exposure value.
+            gamma: Gamma value.
         """
         ...
 
@@ -796,6 +812,8 @@ class MeshComponent:
     """Whether this mesh receives shadows."""
     render_order: int
     """Draw order override."""
+    morph_target_influences: Sequence[float]
+    """List of morph target influences (0..1)."""
 
 # ============================================================================
 # Object3D
@@ -1376,6 +1394,58 @@ class TextureHandle:
     """
 
     def __eq__(self, other: object) -> bool: ...
+
+class GaussianCloud:
+    """A loaded 3D Gaussian Splatting point cloud.
+
+    Obtain via ``engine.load_gaussian_ply()`` or ``engine.load_gaussian_npz()``.
+    Add it to a scene with ``scene.add_gaussian_cloud(name, cloud)``.
+    """
+
+    @property
+    def count(self) -> int:
+        """Number of Gaussian primitives in the cloud."""
+        ...
+
+    @property
+    def num_points(self) -> int:
+        """Alias for :attr:`count`, kept for compatibility."""
+        ...
+
+    @property
+    def sh_degree(self) -> int:
+        """Spherical-harmonics degree (0-3)."""
+        ...
+
+    @property
+    def aabb_min(self) -> list[float]:
+        """Axis-aligned bounding box minimum corner as ``[x, y, z]``."""
+        ...
+
+    @property
+    def aabb_max(self) -> list[float]:
+        """Axis-aligned bounding box maximum corner as ``[x, y, z]``."""
+        ...
+
+    @property
+    def center(self) -> list[float]:
+        """Point cloud centroid as ``[x, y, z]``."""
+        ...
+
+    @property
+    def scene_extent(self) -> float:
+        """Half-diagonal of the point cloud bounding box."""
+        ...
+
+    @property
+    def color_space(self) -> str:
+        """Source color space for Gaussian SH color coefficients: ``'srgb'`` or ``'linear'``."""
+        ...
+
+    @color_space.setter
+    def color_space(self, value: str) -> None: ...
+
+    def __repr__(self) -> str: ...
 
 # ============================================================================
 # Controls

@@ -140,6 +140,25 @@ impl PyScene {
     }
 
     // ----------------------------------------------------------------
+    // Gaussian Splatting
+    // ----------------------------------------------------------------
+
+    /// Add a Gaussian splatting point cloud to the scene.
+    ///
+    /// Args:
+    ///     name: Display name for the scene node.
+    ///     cloud: A ``GaussianCloud`` loaded via ``engine.load_gaussian_ply()``.
+    ///
+    /// Returns an ``Object3D`` handle for positioning the cloud.
+    fn add_gaussian_cloud(
+        &self,
+        name: &str,
+        cloud: &crate::gaussian::PyGaussianCloud,
+    ) -> PyResult<PyObject3D> {
+        crate::gaussian::add_gaussian_cloud_impl(name, cloud)
+    }
+
+    // ----------------------------------------------------------------
     // Hierarchy
     // ----------------------------------------------------------------
 
@@ -287,8 +306,8 @@ impl PyScene {
     /// Convenience: set tone mapping mode (and optionally exposure).
     ///
     /// Supported modes: "linear", "neutral", "reinhard", "cineon", "aces", "agx"
-    #[pyo3(signature = (mode, exposure=None))]
-    fn set_tone_mapping(&self, mode: &str, exposure: Option<f32>) -> PyResult<()> {
+    #[pyo3(signature = (mode, exposure=None, gamma=None))]
+    fn set_tone_mapping(&self, mode: &str, exposure: Option<f32>, gamma: Option<f32>) -> PyResult<()> {
         let tm = match mode.to_lowercase().as_str() {
             "linear" => ToneMappingMode::Linear,
             "neutral" => ToneMappingMode::Neutral,
@@ -305,6 +324,7 @@ impl PyScene {
         with_active_scene(|scene| {
             scene.tone_mapping.mode = tm;
             scene.tone_mapping.set_exposure(exposure.unwrap_or(1.0));
+            scene.tone_mapping.set_gamma(gamma.unwrap_or(1.0));
         })?;
         Ok(())
     }
@@ -313,7 +333,7 @@ impl PyScene {
     ///
     /// Supported modes: "linear", "neutral", "reinhard", "cineon", "aces", "agx"
     fn set_tone_mapping_mode(&self, mode: &str) -> PyResult<()> {
-        self.set_tone_mapping(mode, None)
+        self.set_tone_mapping(mode, None, None)
     }
 
     // ----------------------------------------------------------------
@@ -863,6 +883,32 @@ impl PyMeshComponent {
                 mesh.render_order = val;
             }
         })
+    }
+
+    #[setter]
+    fn set_morph_target_influences(&self, influences: Vec<f32>) -> PyResult<()> {
+        with_active_scene(|scene| {
+            scene.set_morph_weights(self.handle, influences.clone());
+            if let Some(mesh) = scene.get_mesh_mut(self.handle) {
+                mesh.set_morph_target_influences(&influences);
+            }
+        })
+    }
+
+    #[getter]
+    fn get_morph_target_influences(&self) -> PyResult<Vec<f32>> {
+        let result = with_active_scene(|scene| {
+            scene
+                .get_morph_weights(self.handle)
+                .cloned()
+                .or_else(|| {
+                    scene
+                        .get_mesh(self.handle)
+                        .map(|m| m.morph_target_influences().to_vec())
+                })
+                .unwrap_or_default()
+        })?;
+        Ok(result)
     }
 
     fn __repr__(&self) -> String {

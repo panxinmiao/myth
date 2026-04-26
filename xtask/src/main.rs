@@ -43,6 +43,7 @@ struct Options {
     command: CommandKind,
     profile: Profile,
     features: Option<String>,
+    optimize_wasm: bool,
 }
 
 #[derive(Debug, Default, Deserialize)]
@@ -233,6 +234,7 @@ fn main() -> Result<()> {
             options.profile,
             options.features.as_deref(),
             only.as_deref(),
+            options.optimize_wasm,
         ),
         CommandKind::BuildApp { selected } => build_apps(
             &workspace_root,
@@ -241,6 +243,7 @@ fn main() -> Result<()> {
             options.profile,
             options.features.as_deref(),
             Some(selected.as_str()),
+            options.optimize_wasm,
         ),
         CommandKind::BuildApps { only } => build_apps(
             &workspace_root,
@@ -249,6 +252,7 @@ fn main() -> Result<()> {
             options.profile,
             options.features.as_deref(),
             only.as_deref(),
+            options.optimize_wasm,
         ),
     }
 }
@@ -261,44 +265,49 @@ fn parse_args() -> Result<Options> {
 
     match command.as_str() {
         "build-gallery" => {
-            let (profile, only, features) = parse_build_flags(args.collect())?;
+            let (profile, only, features, optimize_wasm) = parse_build_flags(args.collect())?;
             Ok(Options {
                 command: CommandKind::BuildGallery { only },
                 profile,
                 features,
+                optimize_wasm,
             })
         }
         "build-app" => {
             let selected = args.next().context("build-app requires an app id")?;
-            let (profile, _, features) = parse_build_flags(args.collect())?;
+            let (profile, _, features, optimize_wasm) = parse_build_flags(args.collect())?;
             Ok(Options {
                 command: CommandKind::BuildApp { selected },
                 profile,
                 features,
+                optimize_wasm,
             })
         }
         "build-apps" => {
-            let (profile, only, features) = parse_build_flags(args.collect())?;
+            let (profile, only, features, optimize_wasm) = parse_build_flags(args.collect())?;
             Ok(Options {
                 command: CommandKind::BuildApps { only },
                 profile,
                 features,
+                optimize_wasm,
             })
         }
         other => bail!("unknown xtask command: {other}"),
     }
 }
 
-fn parse_build_flags(args: Vec<String>) -> Result<(Profile, Option<String>, Option<String>)> {
+fn parse_build_flags(args: Vec<String>) -> Result<(Profile, Option<String>, Option<String>, bool)> {
     let mut profile = Profile::Release;
     let mut only = None;
     let mut features = None;
+    let mut optimize_wasm = false;
     let mut index = 0;
 
     while index < args.len() {
         match args[index].as_str() {
             "--debug" => profile = Profile::Debug,
             "--release" => profile = Profile::Release,
+            "--optimize-wasm" => optimize_wasm = true,
             "--only" => {
                 let value = args
                     .get(index + 1)
@@ -321,7 +330,7 @@ fn parse_build_flags(args: Vec<String>) -> Result<(Profile, Option<String>, Opti
         index += 1;
     }
 
-    Ok((profile, only, features))
+    Ok((profile, only, features, optimize_wasm))
 }
 
 fn workspace_root() -> Result<PathBuf> {
@@ -339,6 +348,7 @@ fn build_gallery(
     profile: Profile,
     features: Option<&str>,
     only: Option<&str>,
+    optimize_wasm: bool,
 ) -> Result<()> {
     let repo_url = repository_url(metadata)?;
     let mut examples = collect_examples(workspace_root, metadata, config, &repo_url)?;
@@ -363,12 +373,26 @@ fn build_gallery(
 
     let wasm_root = prepare_clean_dir(&gallery_root.join(&config.wasm_dist_dir))?;
     for spec in examples.iter().filter(|spec| spec.web_supported) {
-        build_example_target(workspace_root, profile, features, spec, &wasm_root)?;
+        build_example_target(
+            workspace_root,
+            profile,
+            features,
+            spec,
+            &wasm_root,
+            optimize_wasm,
+        )?;
     }
 
     if only.is_none() {
         for app in apps.iter().filter(|spec| spec.web_supported) {
-            build_app_spec(workspace_root, profile, features, app, &dist_root)?;
+            build_app_spec(
+                workspace_root,
+                profile,
+                features,
+                app,
+                &dist_root,
+                optimize_wasm,
+            )?;
         }
     }
 
@@ -382,6 +406,7 @@ fn build_apps(
     profile: Profile,
     features: Option<&str>,
     selected: Option<&str>,
+    optimize_wasm: bool,
 ) -> Result<()> {
     let repo_url = repository_url(metadata)?;
     let mut apps = collect_demo_apps(workspace_root, metadata, config, &repo_url)?;
@@ -396,7 +421,14 @@ fn build_apps(
     sync_shared_assets(workspace_root, config, &dist_root)?;
 
     for app in apps.iter().filter(|spec| spec.web_supported) {
-        build_app_spec(workspace_root, profile, features, app, &dist_root)?;
+        build_app_spec(
+            workspace_root,
+            profile,
+            features,
+            app,
+            &dist_root,
+            optimize_wasm,
+        )?;
     }
 
     Ok(())
@@ -762,6 +794,7 @@ fn build_example_target(
     features: Option<&str>,
     spec: &ExampleSpec,
     wasm_root: &Path,
+    optimize_wasm_flag: bool,
 ) -> Result<()> {
     let mut cargo = Command::new("cargo");
     cargo
@@ -800,7 +833,7 @@ fn build_example_target(
         .join(format!("{}.wasm", spec.target_name));
 
     wasm_bindgen(&wasm_path, wasm_root)?;
-    optimize_wasm(profile, wasm_root, &spec.target_name)
+    optimize_wasm(profile, wasm_root, &spec.target_name, optimize_wasm_flag)
 }
 
 fn build_app_spec(
@@ -809,6 +842,7 @@ fn build_app_spec(
     features: Option<&str>,
     spec: &AppSpec,
     dist_root: &Path,
+    optimize_wasm_flag: bool,
 ) -> Result<()> {
     let mut cargo = Command::new("cargo");
     cargo
@@ -849,7 +883,7 @@ fn build_app_spec(
 
     let output_dir = prepare_clean_dir(&app_root.join("pkg"))?;
     wasm_bindgen(&wasm_path, &output_dir)?;
-    optimize_wasm(profile, &output_dir, &spec.package_name)
+    optimize_wasm(profile, &output_dir, &spec.package_name, optimize_wasm_flag)
 }
 
 fn wasm_bindgen(wasm_path: &Path, output_dir: &Path) -> Result<()> {
@@ -871,8 +905,13 @@ fn wasm_bindgen(wasm_path: &Path, output_dir: &Path) -> Result<()> {
     )
 }
 
-fn optimize_wasm(profile: Profile, output_dir: &Path, module_name: &str) -> Result<()> {
-    if profile != Profile::Release {
+fn optimize_wasm(
+    profile: Profile,
+    output_dir: &Path,
+    module_name: &str,
+    optimize: bool,
+) -> Result<()> {
+    if profile != Profile::Release || !optimize {
         return Ok(());
     }
 

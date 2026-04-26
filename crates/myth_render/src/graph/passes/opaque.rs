@@ -153,7 +153,7 @@ impl OpaqueFeature {
                     (specular_single, None)
                 }
             } else {
-                (TextureNodeId(0), None)
+                (TextureNodeId::from_index(0), None)
             };
 
             // ── Read dependencies ──────────────────────────────────────

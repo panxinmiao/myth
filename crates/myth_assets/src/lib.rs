@@ -18,12 +18,12 @@ pub mod skeleton_asset;
 pub mod storage;
 
 pub use myth_resources::{
-    GeometryHandle, ImageHandle, MaterialHandle, PrefabHandle, TextureHandle,
+    GaussianCloudHandle, GeometryHandle, ImageHandle, MaterialHandle, PrefabHandle, TextureHandle,
 };
 pub use server::AssetServer;
 
 pub use handle::{AssetTracker, StrongHandle, TrackedAsset, WeakHandle};
-pub use io::{AssetReader, AssetReaderVariant};
+pub use io::{AssetReader, AssetReaderVariant, AssetSource};
 #[cfg(feature = "gltf")]
 pub use loaders::GltfLoader;
 pub use manager::{SceneHandle, SceneManager};
@@ -43,6 +43,8 @@ use myth_core::{AssetError, Error, Result};
 use myth_resources::image::{Image, ImageDimension, PixelFormat};
 use myth_resources::texture::TextureSampler;
 use std::path::Path;
+#[cfg(feature = "3dgs")]
+use std::{borrow::Cow, io::Cursor};
 
 pub use myth_resources::ColorSpace;
 
@@ -178,4 +180,83 @@ pub fn load_lut_texture_from_file(path: impl AsRef<Path>) -> Result<(Image, Text
     };
 
     Ok((image, sampler, false))
+}
+
+#[cfg(any(feature = "3dgs", feature = "gaussian-npz"))]
+async fn read_gaussian_source_bytes(
+    source: impl io::AssetSource,
+    format_name: &str,
+) -> Result<(Vec<u8>, String)> {
+    let uri = source.uri().into_owned();
+    let filename = source
+        .filename()
+        .unwrap_or_else(|| Cow::Borrowed("unknown"))
+        .into_owned();
+    let reader = AssetReaderVariant::new(&source)?;
+    let bytes = reader.read_bytes(&filename).await.map_err(|e| {
+        Error::Asset(AssetError::Format(format!(
+            "Failed to read Gaussian {format_name} '{uri}': {e}"
+        )))
+    })?;
+    Ok((bytes, uri))
+}
+
+/// Loads a 3DGS `.ply` from a local path or HTTP URL using [`AssetReader`].
+#[cfg(feature = "3dgs")]
+pub async fn load_gaussian_ply_from_source_async(
+    source: impl io::AssetSource,
+) -> Result<myth_resources::gaussian_splat::GaussianCloud> {
+    let (bytes, uri) = read_gaussian_source_bytes(source, "PLY").await?;
+
+    #[cfg(not(target_arch = "wasm32"))]
+    let cloud = tokio::task::spawn_blocking(move || loaders::load_gaussian_ply(Cursor::new(bytes)))
+        .await
+        .map_err(|e| Error::Asset(AssetError::TaskJoin(e.to_string())))?;
+
+    #[cfg(target_arch = "wasm32")]
+    let cloud = loaders::load_gaussian_ply(Cursor::new(bytes));
+
+    cloud.map_err(|e| {
+        Error::Asset(AssetError::Format(format!(
+            "Failed to parse Gaussian PLY '{uri}': {e}"
+        )))
+    })
+}
+
+/// Native blocking wrapper around [`load_gaussian_ply_from_source_async`].
+#[cfg(all(feature = "3dgs", not(target_arch = "wasm32")))]
+pub fn load_gaussian_ply_from_source(
+    source: impl io::AssetSource,
+) -> Result<myth_resources::gaussian_splat::GaussianCloud> {
+    server::get_asset_runtime().block_on(load_gaussian_ply_from_source_async(source))
+}
+
+/// Loads a compressed 3DGS `.npz` from a local path or HTTP URL using [`AssetReader`].
+#[cfg(feature = "gaussian-npz")]
+pub async fn load_gaussian_npz_from_source_async(
+    source: impl io::AssetSource,
+) -> Result<myth_resources::gaussian_splat::GaussianCloud> {
+    let (bytes, uri) = read_gaussian_source_bytes(source, "NPZ").await?;
+
+    #[cfg(not(target_arch = "wasm32"))]
+    let cloud = tokio::task::spawn_blocking(move || loaders::load_gaussian_npz(Cursor::new(bytes)))
+        .await
+        .map_err(|e| Error::Asset(AssetError::TaskJoin(e.to_string())))?;
+
+    #[cfg(target_arch = "wasm32")]
+    let cloud = loaders::load_gaussian_npz(Cursor::new(bytes));
+
+    cloud.map_err(|e| {
+        Error::Asset(AssetError::Format(format!(
+            "Failed to parse Gaussian NPZ '{uri}': {e}"
+        )))
+    })
+}
+
+/// Native blocking wrapper around [`load_gaussian_npz_from_source_async`].
+#[cfg(all(feature = "gaussian-npz", not(target_arch = "wasm32")))]
+pub fn load_gaussian_npz_from_source(
+    source: impl io::AssetSource,
+) -> Result<myth_resources::gaussian_splat::GaussianCloud> {
+    server::get_asset_runtime().block_on(load_gaussian_npz_from_source_async(source))
 }

@@ -276,8 +276,8 @@ pub struct DynamicModelUniforms {
 
 /// Global render state uniforms updated once per frame.
 ///
-/// Contains camera matrices, jitter parameters, and timing data used by
-/// all rendering passes.
+/// Contains camera matrices, screen-space parameters, jitter data, and
+/// timing values shared across render and compute passes.
 #[gpu_struct(crate_path = "crate")]
 pub struct RenderStateUniforms {
     #[default(Mat4::IDENTITY)]
@@ -304,6 +304,11 @@ pub struct RenderStateUniforms {
     pub camera_position: Vec3,
     #[default(0.1)]
     pub camera_near: f32,
+
+    #[default(Vec2::ZERO)]
+    pub viewport: Vec2,
+    #[default(Vec2::ZERO)]
+    pub focal: Vec2,
 
     pub jitter: Vec2,
     pub prev_jitter: Vec2,

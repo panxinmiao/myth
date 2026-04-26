@@ -56,7 +56,8 @@
 //! | `gltf-meshopt` | no | Meshopt decompression for glTF |
 //! | `debug_view` | no | Render graph debug view targets |
 //! | `rdg_inspector` | no | Render graph inspector |
-//!
+//! | `3dgs` | no | 3D Gaussian Splatting support |
+//! | `gaussian-npz` | no | NPZ loader for 3D Gaussian Splatting (requires `3dgs`) |
 
 // ============================================================================
 // Sub-crate re-exports (facade modules matching the old monolith paths)
@@ -200,6 +201,8 @@ pub use myth_scene::{
 };
 
 // Resources
+#[cfg(feature = "3dgs")]
+pub use myth_resources::gaussian_splat::GaussianCloud;
 pub use myth_resources::primitives::{
     PlaneOptions, SphereOptions, create_box, create_plane, create_sphere,
 };
@@ -211,8 +214,23 @@ pub use myth_resources::{
 };
 
 // Assets
+#[cfg(all(feature = "gaussian-npz", not(target_arch = "wasm32")))]
+pub use myth_assets::load_gaussian_npz_from_source;
+#[cfg(feature = "gaussian-npz")]
+pub use myth_assets::load_gaussian_npz_from_source_async;
+#[cfg(all(feature = "3dgs", not(target_arch = "wasm32")))]
+pub use myth_assets::load_gaussian_ply_from_source;
+#[cfg(feature = "3dgs")]
+pub use myth_assets::load_gaussian_ply_from_source_async;
+#[cfg(feature = "gaussian-npz")]
+pub use myth_assets::loaders::npz::load_gaussian_npz;
+#[cfg(feature = "3dgs")]
+pub use myth_assets::loaders::ply::load_gaussian_ply;
 pub use myth_assets::{AssetServer, GeometryHandle, ImageHandle, MaterialHandle, TextureHandle};
-pub use myth_assets::{ColorSpace, GeometryQuery, ResolveGeometry, ResolveMaterial, SceneExt};
+pub use myth_assets::{
+    AssetSource, ColorSpace, GaussianCloudHandle, GeometryQuery, ResolveGeometry, ResolveMaterial,
+    SceneExt,
+};
 
 // Animation
 pub use myth_animation::{
