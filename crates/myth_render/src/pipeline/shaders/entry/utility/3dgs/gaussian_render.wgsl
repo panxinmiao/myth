@@ -10,6 +10,13 @@ struct VertexOutput {
     @builtin(position) position: vec4<f32>,
     @location(0) local_pos: vec2<f32>,
     @location(1) color: vec4<f32>,
+    @location(2) world_normal: vec3<f32>,
+};
+
+struct FragmentOutput {
+    @location(0) albedo: vec4<f32>,
+    @location(1) normal: vec4<f32>,
+    @location(2) depth: vec4<f32>,
 };
 
 struct SplatGeometry {
@@ -22,8 +29,18 @@ struct SplatAppearance {
     depth: f32,
     color_0: u32,
     color_1: u32,
-    _pad: u32,
+    normal_octa: u32,
 };
+
+fn oct_decode(encoded: u32) -> vec3<f32> {
+    let oct = unpack2x16snorm(encoded);
+    var normal = vec3<f32>(oct.x, oct.y, 1.0 - abs(oct.x) - abs(oct.y));
+    if normal.z < 0.0 {
+        let folded = (1.0 - abs(normal.yx)) * sign(normal.xy + vec2<f32>(1e-8));
+        normal = vec3<f32>(folded.x, folded.y, normal.z);
+    }
+    return normalize(normal);
+}
 
 @group(0) @binding(0)
 var<storage, read> splat_geometry: array<SplatGeometry>;
@@ -53,11 +70,12 @@ fn vs_main(@builtin(vertex_index) vertex_idx: u32, @builtin(instance_index) inst
     out.position = vec4<f32>(center_ndc + delta_ndc, splat_attr.depth, 1.0);
     out.local_pos = local_pos;
     out.color = vec4<f32>(color_rg, color_ba);
+    out.world_normal = oct_decode(splat_attr.normal_octa);
     return out;
 }
 
 @fragment
-fn fs_main(in: VertexOutput) -> @location(0) vec4<f32> {
+fn fs_main(in: VertexOutput) -> FragmentOutput {
     let radius_sq = dot(in.local_pos, in.local_pos);
     if radius_sq > 2 * CUTOFF {
         discard;
@@ -68,5 +86,9 @@ fn fs_main(in: VertexOutput) -> @location(0) vec4<f32> {
         discard;
     }
 
-    return vec4<f32>(in.color.rgb, 1.0) * alpha;
+    var out: FragmentOutput;
+    out.albedo = vec4<f32>(in.color.rgb, 1.0) * alpha;
+    out.normal = vec4<f32>(in.world_normal * alpha, alpha);
+    out.depth = vec4<f32>(in.position.z * alpha, 0.0, 0.0, alpha);
+    return out;
 }

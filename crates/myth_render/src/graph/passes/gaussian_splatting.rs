@@ -17,6 +17,7 @@
 use std::sync::Arc;
 
 use glam::{Mat4, Vec3, Vec3A};
+use half::f16;
 
 use crate::HDR_TEXTURE_FORMAT;
 use crate::core::gpu::{CommonSampler, Tracked};
@@ -43,12 +44,17 @@ const SORT_MAX_BLOCK_ROWS: usize = 15;
 
 const SPLAT_VERTEX_COUNT: u32 = 4;
 const SORT_DISPATCH_INDIRECT_OFFSET: u64 = std::mem::size_of::<[u32; 3]>() as u64;
-const GS_ACCUMULATION_FORMAT: wgpu::TextureFormat = wgpu::TextureFormat::Rgba16Float;
+const GS_GBUFFER_ALBEDO_FORMAT: wgpu::TextureFormat = wgpu::TextureFormat::Rgba16Float;
+const GS_GBUFFER_NORMAL_FORMAT: wgpu::TextureFormat = wgpu::TextureFormat::Rgba16Float;
+const GS_GBUFFER_DEPTH_FORMAT: wgpu::TextureFormat = wgpu::TextureFormat::Rgba16Float;
+const GS_LIT_TARGET_FORMAT: wgpu::TextureFormat = wgpu::TextureFormat::Rgba16Float;
 
 #[repr(C)]
 #[derive(Clone, Copy, bytemuck::Pod, bytemuck::Zeroable)]
-struct GpuCompositeSettings {
+struct GpuDeferredSettings {
     flags: [u32; 4],
+    material_params: [f32; 4],
+    lighting_params: [f32; 4],
 }
 
 #[repr(C)]
@@ -94,6 +100,7 @@ struct GpuGaussianCore {
     z: f32,
     opacity: u32,
     sh_idx: u32,
+    normal_octa: u32,
 }
 
 #[repr(C)]
@@ -116,7 +123,7 @@ struct GpuSplatAppearance {
     depth: f32,
     color_rg: u32,
     color_ba: u32,
-    _pad: u32,
+    normal_octa: u32,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -128,6 +135,11 @@ struct GaussianRenderPipelineKey {
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 struct GaussianCompositePipelineKey {
     msaa_samples: u32,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+struct GaussianDeferredPipelineKey {
+    global_layout_id: u64,
 }
 
 #[derive(Clone, Copy, Debug)]
@@ -216,6 +228,134 @@ fn normalize_sort_subgroup_size(reported: u32) -> u32 {
     }
 }
 
+fn unpack2x16float(packed: u32) -> (f32, f32) {
+    let lo = f16::from_bits((packed & 0xFFFF) as u16).to_f32();
+    let hi = f16::from_bits((packed >> 16) as u16).to_f32();
+    (lo, hi)
+}
+
+fn gaussian_covariance_basis(cov: [u32; 3]) -> [[f32; 3]; 3] {
+    let (c00, c01) = unpack2x16float(cov[0]);
+    let (c02, c11) = unpack2x16float(cov[1]);
+    let (c12, c22) = unpack2x16float(cov[2]);
+
+    [
+        [c00, -c01, -c02],
+        [-c01, c11, c12],
+        [-c02, c12, c22],
+    ]
+}
+
+fn jacobi_smallest_eigenvector(mut matrix: [[f32; 3]; 3]) -> Vec3 {
+    let mut eigenvectors = [[1.0_f32, 0.0, 0.0], [0.0, 1.0, 0.0], [0.0, 0.0, 1.0]];
+
+    for _ in 0..8 {
+        let mut p = 0_usize;
+        let mut q = 1_usize;
+        let mut max_off_diag = matrix[0][1].abs();
+
+        for (row, col) in [(0_usize, 2_usize), (1_usize, 2_usize)] {
+            let candidate = matrix[row][col].abs();
+            if candidate > max_off_diag {
+                max_off_diag = candidate;
+                p = row;
+                q = col;
+            }
+        }
+
+        if max_off_diag <= 1e-6 {
+            break;
+        }
+
+        let theta = (matrix[q][q] - matrix[p][p]) / (2.0 * matrix[p][q]);
+        let tangent = if theta >= 0.0 {
+            1.0 / (theta + (1.0 + theta * theta).sqrt())
+        } else {
+            -1.0 / (-theta + (1.0 + theta * theta).sqrt())
+        };
+        let cosine = 1.0 / (1.0 + tangent * tangent).sqrt();
+        let sine = tangent * cosine;
+
+        let app = matrix[p][p];
+        let aqq = matrix[q][q];
+        let apq = matrix[p][q];
+
+        matrix[p][p] = app - tangent * apq;
+        matrix[q][q] = aqq + tangent * apq;
+        matrix[p][q] = 0.0;
+        matrix[q][p] = 0.0;
+
+        for r in 0..3 {
+            if r == p || r == q {
+                continue;
+            }
+
+            let arp = matrix[r][p];
+            let arq = matrix[r][q];
+            matrix[r][p] = cosine * arp - sine * arq;
+            matrix[p][r] = matrix[r][p];
+            matrix[r][q] = cosine * arq + sine * arp;
+            matrix[q][r] = matrix[r][q];
+        }
+
+        for row in &mut eigenvectors {
+            let vrp = row[p];
+            let vrq = row[q];
+            row[p] = cosine * vrp - sine * vrq;
+            row[q] = cosine * vrq + sine * vrp;
+        }
+    }
+
+    let (smallest_index, _) = matrix
+        .iter()
+        .enumerate()
+        .min_by(|(_, left), (_, right)| left[0].partial_cmp(&right[0]).unwrap_or(std::cmp::Ordering::Equal))
+        .map(|(index, diagonal)| (index, diagonal[index]))
+        .unwrap_or((2, matrix[2][2]));
+
+    let local_normal = Vec3::new(
+        eigenvectors[0][smallest_index],
+        eigenvectors[1][smallest_index],
+        eigenvectors[2][smallest_index],
+    );
+
+    if local_normal.length_squared() > 1e-12 {
+        local_normal.normalize()
+    } else {
+        Vec3::Z
+    }
+}
+
+fn encode_octahedral_normal(normal: Vec3) -> u32 {
+    let normalized = if normal.length_squared() > 1e-12 {
+        normal.normalize()
+    } else {
+        Vec3::Z
+    };
+    let inv_l1 = 1.0 / (normalized.x.abs() + normalized.y.abs() + normalized.z.abs()).max(1e-8);
+    let mut oct = normalized.truncate() * inv_l1;
+
+    if normalized.z < 0.0 {
+        let x = oct.x;
+        let y = oct.y;
+        oct.x = (1.0 - y.abs()) * if x >= 0.0 { 1.0 } else { -1.0 };
+        oct.y = (1.0 - x.abs()) * if y >= 0.0 { 1.0 } else { -1.0 };
+    }
+
+    let pack_snorm16 = |value: f32| -> u16 {
+        let clamped = value.clamp(-1.0, 1.0);
+        let scaled = (clamped * 32767.0).round() as i32;
+        scaled.clamp(i16::MIN as i32, i16::MAX as i32) as i16 as u16
+    };
+
+    u32::from(pack_snorm16(oct.x)) | (u32::from(pack_snorm16(oct.y)) << 16)
+}
+
+fn extract_gaussian_normal(cov: [u32; 3]) -> u32 {
+    let covariance = gaussian_covariance_basis(cov);
+    encode_octahedral_normal(jacobi_smallest_eigenvector(covariance))
+}
+
 fn build_sort_shader_options(sort_config: GaussianSortConfig) -> ShaderCompilationOptions {
     let subgroup_size = sort_config.subgroup_size;
 
@@ -293,8 +433,10 @@ pub struct GaussianSplattingFeature {
     preprocess_global_layout_id: Option<u64>,
     sort_config: Option<GaussianSortConfig>,
     sort_pipelines: Option<GaussianSortPipelines>,
-    render_pipeline: Option<wgpu::RenderPipeline>,
-    render_pipeline_key: Option<GaussianRenderPipelineKey>,
+    gbuffer_pipeline: Option<wgpu::RenderPipeline>,
+    gbuffer_pipeline_key: Option<GaussianRenderPipelineKey>,
+    deferred_pipeline: Option<wgpu::RenderPipeline>,
+    deferred_pipeline_key: Option<GaussianDeferredPipelineKey>,
     composite_pipeline: Option<wgpu::RenderPipeline>,
     composite_pipeline_key: Option<GaussianCompositePipelineKey>,
 
@@ -302,9 +444,10 @@ pub struct GaussianSplattingFeature {
     preprocess_layout_g2: Option<Tracked<wgpu::BindGroupLayout>>,
     preprocess_layout_g3: Option<Tracked<wgpu::BindGroupLayout>>,
     sort_layout: Option<Tracked<wgpu::BindGroupLayout>>,
-    render_layout: Option<Tracked<wgpu::BindGroupLayout>>,
+    gbuffer_layout: Option<Tracked<wgpu::BindGroupLayout>>,
+    deferred_layout: Option<Tracked<wgpu::BindGroupLayout>>,
     composite_layout: Option<Tracked<wgpu::BindGroupLayout>>,
-    composite_settings_buf: Option<Tracked<wgpu::Buffer>>,
+    deferred_settings_buf: Option<Tracked<wgpu::Buffer>>,
 
     clouds: Vec<(GaussianCloudHandle, u64, CloudGpuData)>,
     sorted_order: Vec<usize>,
@@ -327,17 +470,20 @@ impl GaussianSplattingFeature {
             preprocess_global_layout_id: None,
             sort_config: None,
             sort_pipelines: None,
-            render_pipeline: None,
-            render_pipeline_key: None,
+            gbuffer_pipeline: None,
+            gbuffer_pipeline_key: None,
+            deferred_pipeline: None,
+            deferred_pipeline_key: None,
             composite_pipeline: None,
             composite_pipeline_key: None,
             preprocess_layout_g1: None,
             preprocess_layout_g2: None,
             preprocess_layout_g3: None,
             sort_layout: None,
-            render_layout: None,
+            gbuffer_layout: None,
+            deferred_layout: None,
             composite_layout: None,
-            composite_settings_buf: None,
+            deferred_settings_buf: None,
             clouds: Vec::new(),
             sorted_order: Vec::new(),
             active: false,
@@ -360,11 +506,11 @@ impl GaussianSplattingFeature {
         self.ensure_layouts(ctx.device);
         self.ensure_pipelines(ctx);
 
-        if self.composite_settings_buf.is_none() {
-            self.composite_settings_buf = Some(Tracked::new(ctx.device.create_buffer(
+        if self.deferred_settings_buf.is_none() {
+            self.deferred_settings_buf = Some(Tracked::new(ctx.device.create_buffer(
                 &wgpu::BufferDescriptor {
-                    label: Some("GS Composite Settings"),
-                    size: std::mem::size_of::<GpuCompositeSettings>() as u64,
+                    label: Some("GS Deferred Settings"),
+                    size: std::mem::size_of::<GpuDeferredSettings>() as u64,
                     usage: wgpu::BufferUsages::UNIFORM | wgpu::BufferUsages::COPY_DST,
                     mapped_at_creation: false,
                 },
@@ -383,15 +529,17 @@ impl GaussianSplattingFeature {
             self.mixed_color_space_warned = true;
         }
         self.composite_input_is_srgb = matches!(first_color_space, ColorSpace::Srgb);
-        let composite_settings = GpuCompositeSettings {
+        let deferred_settings = GpuDeferredSettings {
             flags: [u32::from(self.composite_input_is_srgb), 0, 0, 0],
+            material_params: [0.34, 0.02, 0.04, 1.0],
+            lighting_params: [1.0, 1.0, 0.02, 0.0],
         };
         ctx.queue.write_buffer(
-            self.composite_settings_buf
+            self.deferred_settings_buf
                 .as_ref()
-                .expect("GS composite settings buffer missing"),
+                .expect("GS deferred settings buffer missing"),
             0,
-            bytemuck::bytes_of(&composite_settings),
+            bytemuck::bytes_of(&deferred_settings),
         );
 
         let active_handles: Vec<GaussianCloudHandle> =
@@ -500,6 +648,7 @@ impl GaussianSplattingFeature {
 
         let cs = wgpu::ShaderStages::COMPUTE;
         let vs = wgpu::ShaderStages::VERTEX;
+        let fs = wgpu::ShaderStages::FRAGMENT;
 
         self.preprocess_layout_g1 = Some(Tracked::new(device.create_bind_group_layout(
             &wgpu::BindGroupLayoutDescriptor {
@@ -547,13 +696,58 @@ impl GaussianSplattingFeature {
             },
         )));
 
-        self.render_layout = Some(Tracked::new(device.create_bind_group_layout(
+        self.gbuffer_layout = Some(Tracked::new(device.create_bind_group_layout(
             &wgpu::BindGroupLayoutDescriptor {
-                label: Some("GS Render"),
+                label: Some("GS GBuffer"),
                 entries: &[
                     storage_ro_entry(0, vs),
                     storage_ro_entry(1, vs),
                     storage_ro_entry(2, vs),
+                ],
+            },
+        )));
+
+        self.deferred_layout = Some(Tracked::new(device.create_bind_group_layout(
+            &wgpu::BindGroupLayoutDescriptor {
+                label: Some("GS Deferred"),
+                entries: &[
+                    wgpu::BindGroupLayoutEntry {
+                        binding: 0,
+                        visibility: fs,
+                        ty: wgpu::BindingType::Texture {
+                            sample_type: wgpu::TextureSampleType::Float { filterable: true },
+                            view_dimension: wgpu::TextureViewDimension::D2,
+                            multisampled: false,
+                        },
+                        count: None,
+                    },
+                    wgpu::BindGroupLayoutEntry {
+                        binding: 1,
+                        visibility: fs,
+                        ty: wgpu::BindingType::Texture {
+                            sample_type: wgpu::TextureSampleType::Float { filterable: true },
+                            view_dimension: wgpu::TextureViewDimension::D2,
+                            multisampled: false,
+                        },
+                        count: None,
+                    },
+                    wgpu::BindGroupLayoutEntry {
+                        binding: 2,
+                        visibility: fs,
+                        ty: wgpu::BindingType::Texture {
+                            sample_type: wgpu::TextureSampleType::Float { filterable: true },
+                            view_dimension: wgpu::TextureViewDimension::D2,
+                            multisampled: false,
+                        },
+                        count: None,
+                    },
+                    wgpu::BindGroupLayoutEntry {
+                        binding: 3,
+                        visibility: fs,
+                        ty: wgpu::BindingType::Sampler(wgpu::SamplerBindingType::Filtering),
+                        count: None,
+                    },
+                    uniform_entry(4, fs),
                 ],
             },
         )));
@@ -578,7 +772,6 @@ impl GaussianSplattingFeature {
                         ty: wgpu::BindingType::Sampler(wgpu::SamplerBindingType::Filtering),
                         count: None,
                     },
-                    uniform_entry(2, wgpu::ShaderStages::FRAGMENT),
                 ],
             },
         )));
@@ -742,7 +935,7 @@ impl GaussianSplattingFeature {
             msaa_samples: ctx.wgpu_ctx.msaa_samples,
         };
 
-        if self.render_pipeline.is_none() || self.render_pipeline_key != Some(render_key) {
+        if self.gbuffer_pipeline.is_none() || self.gbuffer_pipeline_key != Some(render_key) {
             let shader_options = ShaderCompilationOptions::default();
             let (module, _) = ctx.shader_manager.get_or_compile(
                 device,
@@ -751,14 +944,27 @@ impl GaussianSplattingFeature {
             );
 
             let layout = device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
-                label: Some("GS Render Pipeline Layout"),
-                bind_group_layouts: &[Some(self.render_layout.as_ref().unwrap())],
+                label: Some("GS GBuffer Pipeline Layout"),
+                bind_group_layouts: &[Some(self.gbuffer_layout.as_ref().unwrap())],
                 immediate_size: 0,
             });
 
-            self.render_pipeline = Some(device.create_render_pipeline(
+            let blend_state = wgpu::BlendState {
+                color: wgpu::BlendComponent {
+                    src_factor: wgpu::BlendFactor::OneMinusDstAlpha,
+                    dst_factor: wgpu::BlendFactor::One,
+                    operation: wgpu::BlendOperation::Add,
+                },
+                alpha: wgpu::BlendComponent {
+                    src_factor: wgpu::BlendFactor::OneMinusDstAlpha,
+                    dst_factor: wgpu::BlendFactor::One,
+                    operation: wgpu::BlendOperation::Add,
+                },
+            };
+
+            self.gbuffer_pipeline = Some(device.create_render_pipeline(
                 &wgpu::RenderPipelineDescriptor {
-                    label: Some("GS Render Pipeline"),
+                    label: Some("GS GBuffer Pipeline"),
                     layout: Some(&layout),
                     vertex: wgpu::VertexState {
                         module,
@@ -769,22 +975,23 @@ impl GaussianSplattingFeature {
                     fragment: Some(wgpu::FragmentState {
                         module,
                         entry_point: Some("fs_main"),
-                        targets: &[Some(wgpu::ColorTargetState {
-                            format: GS_ACCUMULATION_FORMAT,
-                            blend: Some(wgpu::BlendState {
-                                color: wgpu::BlendComponent {
-                                    src_factor: wgpu::BlendFactor::OneMinusDstAlpha,
-                                    dst_factor: wgpu::BlendFactor::One,
-                                    operation: wgpu::BlendOperation::Add,
-                                },
-                                alpha: wgpu::BlendComponent {
-                                    src_factor: wgpu::BlendFactor::OneMinusDstAlpha,
-                                    dst_factor: wgpu::BlendFactor::One,
-                                    operation: wgpu::BlendOperation::Add,
-                                },
+                        targets: &[
+                            Some(wgpu::ColorTargetState {
+                                format: GS_GBUFFER_ALBEDO_FORMAT,
+                                blend: Some(blend_state),
+                                write_mask: wgpu::ColorWrites::ALL,
                             }),
-                            write_mask: wgpu::ColorWrites::ALL,
-                        })],
+                            Some(wgpu::ColorTargetState {
+                                format: GS_GBUFFER_NORMAL_FORMAT,
+                                blend: Some(blend_state),
+                                write_mask: wgpu::ColorWrites::ALL,
+                            }),
+                            Some(wgpu::ColorTargetState {
+                                format: GS_GBUFFER_DEPTH_FORMAT,
+                                blend: Some(blend_state),
+                                write_mask: wgpu::ColorWrites::ALL,
+                            }),
+                        ],
                         compilation_options: wgpu::PipelineCompilationOptions::default(),
                     }),
                     primitive: wgpu::PrimitiveState {
@@ -813,7 +1020,68 @@ impl GaussianSplattingFeature {
                 },
             ));
 
-            self.render_pipeline_key = Some(render_key);
+            self.gbuffer_pipeline_key = Some(render_key);
+        }
+
+        let deferred_key = GaussianDeferredPipelineKey {
+            global_layout_id: gpu_world.layout_id,
+        };
+
+        if self.deferred_pipeline.is_none() || self.deferred_pipeline_key != Some(deferred_key) {
+            let mut shader_options = ShaderCompilationOptions::default();
+            shader_options.inject_code("binding_code", &gpu_world.binding_wgsl);
+            let (module, _) = ctx.shader_manager.get_or_compile(
+                device,
+                ShaderSource::File("entry/utility/3dgs/gaussian_deferred"),
+                &shader_options,
+            );
+
+            let layout = device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
+                label: Some("GS Deferred Pipeline Layout"),
+                bind_group_layouts: &[
+                    Some(&gpu_world.layout),
+                    Some(self.deferred_layout.as_ref().unwrap()),
+                ],
+                immediate_size: 0,
+            });
+
+            self.deferred_pipeline = Some(device.create_render_pipeline(
+                &wgpu::RenderPipelineDescriptor {
+                    label: Some("GS Deferred Pipeline"),
+                    layout: Some(&layout),
+                    vertex: wgpu::VertexState {
+                        module,
+                        entry_point: Some("vs_main"),
+                        buffers: &[],
+                        compilation_options: wgpu::PipelineCompilationOptions::default(),
+                    },
+                    fragment: Some(wgpu::FragmentState {
+                        module,
+                        entry_point: Some("fs_main"),
+                        targets: &[Some(wgpu::ColorTargetState {
+                            format: GS_LIT_TARGET_FORMAT,
+                            blend: Some(wgpu::BlendState::REPLACE),
+                            write_mask: wgpu::ColorWrites::ALL,
+                        })],
+                        compilation_options: wgpu::PipelineCompilationOptions::default(),
+                    }),
+                    primitive: wgpu::PrimitiveState {
+                        topology: wgpu::PrimitiveTopology::TriangleList,
+                        strip_index_format: None,
+                        front_face: wgpu::FrontFace::Ccw,
+                        cull_mode: None,
+                        polygon_mode: wgpu::PolygonMode::Fill,
+                        unclipped_depth: false,
+                        conservative: false,
+                    },
+                    depth_stencil: None,
+                    multisample: wgpu::MultisampleState::default(),
+                    multiview_mask: None,
+                    cache: None,
+                },
+            ));
+
+            self.deferred_pipeline_key = Some(deferred_key);
         }
 
         let composite_key = GaussianCompositePipelineKey {
@@ -824,7 +1092,7 @@ impl GaussianSplattingFeature {
             let shader_options = ShaderCompilationOptions::default();
             let (module, _) = ctx.shader_manager.get_or_compile(
                 device,
-                ShaderSource::File("entry/utility/3dgs/gs_composite"),
+                ShaderSource::File("entry/utility/3dgs/gs_lit_composite"),
                 &shader_options,
             );
 
@@ -915,6 +1183,7 @@ impl GaussianSplattingFeature {
                 z: gaussian.z,
                 opacity: gaussian.opacity,
                 sh_idx: gaussian.sh_idx,
+                normal_octa: extract_gaussian_normal(gaussian.cov),
             });
             gaussian_covariances.push(GpuGaussianCovariance { cov: gaussian.cov });
         }
@@ -1007,7 +1276,8 @@ impl GaussianSplattingFeature {
 
         let preprocess_pipeline = self.preprocess_pipeline.as_ref();
         let sort_pipelines = self.sort_pipelines.as_ref();
-        let render_pipeline = self.render_pipeline.as_ref();
+        let gbuffer_pipeline = self.gbuffer_pipeline.as_ref();
+        let deferred_pipeline = self.deferred_pipeline.as_ref();
 
         let preprocess_layout_g1 = self
             .preprocess_layout_g1
@@ -1022,19 +1292,23 @@ impl GaussianSplattingFeature {
             .as_ref()
             .expect("GS preprocess layout G3 missing");
         let sort_layout = self.sort_layout.as_ref().expect("GS sort layout missing");
-        let render_layout = self
-            .render_layout
+        let gbuffer_layout = self
+            .gbuffer_layout
             .as_ref()
-            .expect("GS render layout missing");
+            .expect("GS gbuffer layout missing");
+        let deferred_layout = self
+            .deferred_layout
+            .as_ref()
+            .expect("GS deferred layout missing");
         let composite_pipeline = self.composite_pipeline.as_ref();
         let composite_layout = self
             .composite_layout
             .as_ref()
             .expect("GS composite layout missing");
-        let composite_settings_buf = self
-            .composite_settings_buf
+        let deferred_settings_buf = self
+            .deferred_settings_buf
             .as_ref()
-            .expect("GS composite settings buffer missing");
+            .expect("GS deferred settings buffer missing");
 
         let cloud_buffers = ctx.graph.add_pass("GS_Compute", |builder| {
             let mut graph_buffers = Vec::with_capacity(self.sorted_order.len());
@@ -1207,7 +1481,7 @@ impl GaussianSplattingFeature {
             )
         });
 
-        let gs_accumulation = ctx.graph.add_pass("GS_Render", |builder| {
+        let (gs_albedo, gs_normal, gs_depth) = ctx.graph.add_pass("GS_GBuffer", |builder| {
             for &cloud in cloud_buffers {
                 builder.read_buffer(cloud.splat_geom_buf);
                 builder.read_buffer(cloud.splat_attr_buf);
@@ -1217,19 +1491,43 @@ impl GaussianSplattingFeature {
 
             let _depth_in = builder.read_texture(active_depth);
 
-            let accumulation_desc = TextureDesc::new_2d(
-                ctx.frame_config.width,
-                ctx.frame_config.height,
-                GS_ACCUMULATION_FORMAT,
-                wgpu::TextureUsages::RENDER_ATTACHMENT
-                    | wgpu::TextureUsages::TEXTURE_BINDING
-                    | wgpu::TextureUsages::COPY_SRC,
+            let albedo_resolved = builder.create_texture(
+                "GS_Albedo",
+                TextureDesc::new_2d(
+                    ctx.frame_config.width,
+                    ctx.frame_config.height,
+                    GS_GBUFFER_ALBEDO_FORMAT,
+                    wgpu::TextureUsages::RENDER_ATTACHMENT
+                        | wgpu::TextureUsages::TEXTURE_BINDING
+                        | wgpu::TextureUsages::COPY_SRC,
+                ),
             );
-            let accumulation_resolved =
-                builder.create_texture("GS_Accumulation", accumulation_desc);
-            let accumulation_target = if ctx.frame_config.msaa_samples > 1 {
+            let normal_resolved = builder.create_texture(
+                "GS_Normal",
+                TextureDesc::new_2d(
+                    ctx.frame_config.width,
+                    ctx.frame_config.height,
+                    GS_GBUFFER_NORMAL_FORMAT,
+                    wgpu::TextureUsages::RENDER_ATTACHMENT
+                        | wgpu::TextureUsages::TEXTURE_BINDING
+                        | wgpu::TextureUsages::COPY_SRC,
+                ),
+            );
+            let depth_resolved = builder.create_texture(
+                "GS_Depth",
+                TextureDesc::new_2d(
+                    ctx.frame_config.width,
+                    ctx.frame_config.height,
+                    GS_GBUFFER_DEPTH_FORMAT,
+                    wgpu::TextureUsages::RENDER_ATTACHMENT
+                        | wgpu::TextureUsages::TEXTURE_BINDING
+                        | wgpu::TextureUsages::COPY_SRC,
+                ),
+            );
+
+            let albedo_target = if ctx.frame_config.msaa_samples > 1 {
                 builder.create_texture(
-                    "GS_Accumulation_MSAA",
+                    "GS_Albedo_MSAA",
                     TextureDesc::new(
                         ctx.frame_config.width,
                         ctx.frame_config.height,
@@ -1237,12 +1535,46 @@ impl GaussianSplattingFeature {
                         1,
                         ctx.frame_config.msaa_samples,
                         wgpu::TextureDimension::D2,
-                        GS_ACCUMULATION_FORMAT,
+                        GS_GBUFFER_ALBEDO_FORMAT,
                         wgpu::TextureUsages::RENDER_ATTACHMENT,
                     ),
                 )
             } else {
-                accumulation_resolved
+                albedo_resolved
+            };
+            let normal_target = if ctx.frame_config.msaa_samples > 1 {
+                builder.create_texture(
+                    "GS_Normal_MSAA",
+                    TextureDesc::new(
+                        ctx.frame_config.width,
+                        ctx.frame_config.height,
+                        1,
+                        1,
+                        ctx.frame_config.msaa_samples,
+                        wgpu::TextureDimension::D2,
+                        GS_GBUFFER_NORMAL_FORMAT,
+                        wgpu::TextureUsages::RENDER_ATTACHMENT,
+                    ),
+                )
+            } else {
+                normal_resolved
+            };
+            let depth_target = if ctx.frame_config.msaa_samples > 1 {
+                builder.create_texture(
+                    "GS_Depth_MSAA",
+                    TextureDesc::new(
+                        ctx.frame_config.width,
+                        ctx.frame_config.height,
+                        1,
+                        1,
+                        ctx.frame_config.msaa_samples,
+                        wgpu::TextureDimension::D2,
+                        GS_GBUFFER_DEPTH_FORMAT,
+                        wgpu::TextureUsages::RENDER_ATTACHMENT,
+                    ),
+                )
+            } else {
+                depth_resolved
             };
 
             let mut render_states = Vec::with_capacity(cloud_buffers.len());
@@ -1256,36 +1588,72 @@ impl GaussianSplattingFeature {
 
             (
                 GaussianRenderPassNode {
-                    render_pipeline,
-                    render_layout,
+                    render_pipeline: gbuffer_pipeline,
+                    render_layout: gbuffer_layout,
                     clouds: render_states,
-                    color_target: accumulation_target,
-                    resolve_target: (ctx.frame_config.msaa_samples > 1)
-                        .then_some(accumulation_resolved),
-                    depth_target: active_depth,
+                    albedo_target,
+                    albedo_resolve_target: (ctx.frame_config.msaa_samples > 1)
+                        .then_some(albedo_resolved),
+                    normal_target,
+                    normal_resolve_target: (ctx.frame_config.msaa_samples > 1)
+                        .then_some(normal_resolved),
+                    depth_color_target: depth_target,
+                    depth_color_resolve_target: (ctx.frame_config.msaa_samples > 1)
+                        .then_some(depth_resolved),
+                    depth_test_target: active_depth,
                 },
-                accumulation_resolved,
+                (albedo_resolved, normal_resolved, depth_resolved),
+            )
+        });
+
+        let gs_lit = ctx.graph.add_pass("GS_DeferredLighting", |builder| {
+            builder.read_texture(gs_albedo);
+            builder.read_texture(gs_normal);
+            builder.read_texture(gs_depth);
+
+            let deferred_settings = builder.read_external_buffer(
+                "GS_Deferred_Settings",
+                BufferDesc::new(
+                    std::mem::size_of::<GpuDeferredSettings>() as u64,
+                    wgpu::BufferUsages::UNIFORM | wgpu::BufferUsages::COPY_DST,
+                ),
+                deferred_settings_buf,
+            );
+
+            let lit_target = builder.create_texture(
+                "GS_Lit_Target",
+                TextureDesc::new_2d(
+                    ctx.frame_config.width,
+                    ctx.frame_config.height,
+                    GS_LIT_TARGET_FORMAT,
+                    wgpu::TextureUsages::RENDER_ATTACHMENT | wgpu::TextureUsages::TEXTURE_BINDING,
+                ),
+            );
+
+            (
+                GaussianDeferredLightingPassNode {
+                    deferred_pipeline,
+                    deferred_layout,
+                    albedo_tex: gs_albedo,
+                    normal_tex: gs_normal,
+                    depth_tex: gs_depth,
+                    deferred_settings_buf: deferred_settings,
+                    color_target: lit_target,
+                    deferred_bg: None,
+                },
+                lit_target,
             )
         });
 
         ctx.graph.add_pass("GS_Composite", |builder| {
-            builder.read_texture(gs_accumulation);
-            let composite_settings = builder.read_external_buffer(
-                "GS_Composite_Settings",
-                BufferDesc::new(
-                    std::mem::size_of::<GpuCompositeSettings>() as u64,
-                    wgpu::BufferUsages::UNIFORM | wgpu::BufferUsages::COPY_DST,
-                ),
-                composite_settings_buf,
-            );
+            builder.read_texture(gs_lit);
             let color_out = builder.mutate_texture(active_color, "GS_Composite_Color");
 
             (
                 GaussianCompositePassNode {
                     composite_pipeline,
                     composite_layout,
-                    accumulation_tex: gs_accumulation,
-                    composite_settings_buf: composite_settings,
+                    lit_tex: gs_lit,
                     color_target: color_out,
                     composite_bg: None,
                 },
@@ -1486,9 +1854,13 @@ struct GaussianRenderPassNode<'a> {
     render_pipeline: Option<&'a wgpu::RenderPipeline>,
     render_layout: &'a Tracked<wgpu::BindGroupLayout>,
     clouds: &'a mut [CloudRenderState<'a>],
-    color_target: TextureNodeId,
-    resolve_target: Option<TextureNodeId>,
-    depth_target: TextureNodeId,
+    albedo_target: TextureNodeId,
+    albedo_resolve_target: Option<TextureNodeId>,
+    normal_target: TextureNodeId,
+    normal_resolve_target: Option<TextureNodeId>,
+    depth_color_target: TextureNodeId,
+    depth_color_resolve_target: Option<TextureNodeId>,
+    depth_test_target: TextureNodeId,
 }
 
 impl<'a> PassNode<'a> for GaussianRenderPassNode<'a> {
@@ -1507,18 +1879,36 @@ impl<'a> PassNode<'a> for GaussianRenderPassNode<'a> {
     fn execute(&self, ctx: &ExecuteContext, encoder: &mut wgpu::CommandEncoder) {
         let render_pipeline = self.render_pipeline.expect("GS render pipeline missing");
 
-        let color_attachment = ctx
+        let albedo_attachment = ctx
             .get_color_attachment(
-                self.color_target,
+                self.albedo_target,
                 RenderTargetOps::Clear(wgpu::Color::TRANSPARENT),
-                self.resolve_target,
+                self.albedo_resolve_target,
             )
-            .expect("GS color target missing");
-        let depth_attachment = ctx.get_depth_stencil_attachment(self.depth_target, 0.0);
+            .expect("GS albedo target missing");
+        let normal_attachment = ctx
+            .get_color_attachment(
+                self.normal_target,
+                RenderTargetOps::Clear(wgpu::Color::TRANSPARENT),
+                self.normal_resolve_target,
+            )
+            .expect("GS normal target missing");
+        let depth_color_attachment = ctx
+            .get_color_attachment(
+                self.depth_color_target,
+                RenderTargetOps::Clear(wgpu::Color::TRANSPARENT),
+                self.depth_color_resolve_target,
+            )
+            .expect("GS depth color target missing");
+        let depth_attachment = ctx.get_depth_stencil_attachment(self.depth_test_target, 0.0);
 
         let mut rpass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
-            label: Some("GS Render"),
-            color_attachments: &[Some(color_attachment)],
+            label: Some("GS GBuffer"),
+            color_attachments: &[
+                Some(albedo_attachment),
+                Some(normal_attachment),
+                Some(depth_color_attachment),
+            ],
             depth_stencil_attachment: depth_attachment,
             timestamp_writes: None,
             occlusion_query_set: None,
@@ -1534,11 +1924,63 @@ impl<'a> PassNode<'a> for GaussianRenderPassNode<'a> {
     }
 }
 
+struct GaussianDeferredLightingPassNode<'a> {
+    deferred_pipeline: Option<&'a wgpu::RenderPipeline>,
+    deferred_layout: &'a Tracked<wgpu::BindGroupLayout>,
+    albedo_tex: TextureNodeId,
+    normal_tex: TextureNodeId,
+    depth_tex: TextureNodeId,
+    deferred_settings_buf: BufferNodeId,
+    color_target: TextureNodeId,
+    deferred_bg: Option<&'a wgpu::BindGroup>,
+}
+
+impl<'a> PassNode<'a> for GaussianDeferredLightingPassNode<'a> {
+    fn prepare(&mut self, ctx: &mut PrepareContext<'a>) {
+        self.deferred_bg = Some(
+            ctx.build_bind_group(self.deferred_layout, Some("GS Deferred BG"))
+                .bind_texture(0, self.albedo_tex)
+                .bind_texture(1, self.normal_tex)
+                .bind_texture(2, self.depth_tex)
+                .bind_common_sampler(3, CommonSampler::NearestClamp)
+                .bind_buffer(4, self.deferred_settings_buf)
+                .build(),
+        );
+    }
+
+    fn execute(&self, ctx: &ExecuteContext, encoder: &mut wgpu::CommandEncoder) {
+        let deferred_pipeline = self
+            .deferred_pipeline
+            .expect("GS deferred pipeline missing");
+        let global_bind_group = ctx.baked_lists.global_bind_group;
+        let color_attachment = ctx
+            .get_color_attachment(
+                self.color_target,
+                RenderTargetOps::Clear(wgpu::Color::TRANSPARENT),
+                None,
+            )
+            .expect("GS deferred color target missing");
+
+        let mut rpass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
+            label: Some("GS Deferred Lighting"),
+            color_attachments: &[Some(color_attachment)],
+            depth_stencil_attachment: None,
+            timestamp_writes: None,
+            occlusion_query_set: None,
+            multiview_mask: None,
+        });
+
+        rpass.set_pipeline(deferred_pipeline);
+        rpass.set_bind_group(0, global_bind_group, &[]);
+        rpass.set_bind_group(1, self.deferred_bg.expect("GS deferred BG missing"), &[]);
+        rpass.draw(0..3, 0..1);
+    }
+}
+
 struct GaussianCompositePassNode<'a> {
     composite_pipeline: Option<&'a wgpu::RenderPipeline>,
     composite_layout: &'a Tracked<wgpu::BindGroupLayout>,
-    accumulation_tex: TextureNodeId,
-    composite_settings_buf: BufferNodeId,
+    lit_tex: TextureNodeId,
     color_target: TextureNodeId,
     composite_bg: Option<&'a wgpu::BindGroup>,
 }
@@ -1547,9 +1989,8 @@ impl<'a> PassNode<'a> for GaussianCompositePassNode<'a> {
     fn prepare(&mut self, ctx: &mut PrepareContext<'a>) {
         self.composite_bg = Some(
             ctx.build_bind_group(self.composite_layout, Some("GS Composite BG"))
-                .bind_texture(0, self.accumulation_tex)
+                .bind_texture(0, self.lit_tex)
                 .bind_common_sampler(1, CommonSampler::NearestClamp)
-                .bind_buffer(2, self.composite_settings_buf)
                 .build(),
         );
     }

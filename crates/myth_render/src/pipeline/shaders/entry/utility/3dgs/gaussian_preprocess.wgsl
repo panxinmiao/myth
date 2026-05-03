@@ -33,6 +33,7 @@ struct GaussianCore {
     z: f32,
     opacity: u32,
     sh_idx: u32,
+    normal_octa: u32,
 };
 
 struct GaussianCovariance {
@@ -49,7 +50,7 @@ struct SplatAppearance {
     depth: f32,
     color_0: u32,
     color_1: u32,
-    _pad: u32,
+    normal_octa: u32,
 };
 
 struct SortInfos {
@@ -164,6 +165,25 @@ fn safe_normalize3(v: vec3<f32>) -> vec3<f32> {
     return vec3<f32>(0.0, 0.0, 1.0);
 }
 
+fn oct_decode(encoded: u32) -> vec3<f32> {
+    let oct = unpack2x16snorm(encoded);
+    var normal = vec3<f32>(oct.x, oct.y, 1.0 - abs(oct.x) - abs(oct.y));
+    if normal.z < 0.0 {
+        let folded = (1.0 - abs(normal.yx)) * sign(normal.xy + vec2<f32>(1e-8));
+        normal = vec3<f32>(folded.x, folded.y, normal.z);
+    }
+    return safe_normalize3(normal);
+}
+
+fn oct_encode(normal: vec3<f32>) -> u32 {
+    let inv_l1 = 1.0 / max(abs(normal.x) + abs(normal.y) + abs(normal.z), 1e-8);
+    var oct = normal.xy * inv_l1;
+    if normal.z < 0.0 {
+        oct = (1.0 - abs(oct.yx)) * sign(oct.xy + vec2<f32>(1e-8));
+    }
+    return pack2x16snorm(clamp(oct, vec2<f32>(-1.0), vec2<f32>(1.0)));
+}
+
 @compute @workgroup_size(256, 1, 1)
 fn main(@builtin(global_invocation_id) gid: vec3<u32>) {
     let idx = gid.x;
@@ -256,6 +276,13 @@ fn main(@builtin(global_invocation_id) gid: vec3<u32>) {
     let dir_local = safe_normalize3(
         (render_settings.model_inv_matrix * vec4<f32>(dir_world, 0.0)).xyz
     );
+    let model_inv_linear = mat3x3<f32>(
+        render_settings.model_inv_matrix[0].xyz,
+        render_settings.model_inv_matrix[1].xyz,
+        render_settings.model_inv_matrix[2].xyz
+    );
+    let local_normal = oct_decode(vertex.normal_octa);
+    let world_normal = safe_normalize3(transpose(model_inv_linear) * local_normal);
     let sh_idx = min(vertex.sh_idx, max(arrayLength(&sh_coefs), 1u) - 1u);
 
     let dir_colmap = vec3<f32>(dir_local.x, -dir_local.y, -dir_local.z);
@@ -274,7 +301,7 @@ fn main(@builtin(global_invocation_id) gid: vec3<u32>) {
         center_depth,
         pack2x16float(color.rg),
         pack2x16float(color.ba),
-        0u,
+        oct_encode(world_normal),
     );
 
     // Radix sort is ascending, so invert reverse-Z depth to place near splats first.

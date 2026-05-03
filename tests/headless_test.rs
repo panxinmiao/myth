@@ -9,6 +9,15 @@
 use myth::prelude::*;
 use myth::render::core::ReadbackStream;
 
+#[cfg(feature = "3dgs")]
+use half::f16;
+#[cfg(feature = "3dgs")]
+use myth::GaussianCloud;
+#[cfg(feature = "3dgs")]
+use myth::assets::ColorSpace;
+#[cfg(feature = "3dgs")]
+use myth::resources::gaussian_splat::{GaussianSHCoefficients, GaussianSplat};
+
 // Integration tests for synchronous headless readback.
 //
 // Renders 10 frames in headless mode. Each frame is read back via the
@@ -208,6 +217,109 @@ fn assert_images_differ(a: &[u8], b: &[u8], label: &str) {
     assert_eq!(a.len(), b.len());
     let differs = a.iter().zip(b.iter()).any(|(x, y)| x != y);
     assert!(differs, "{label}: images are identical but should differ");
+}
+
+#[cfg(feature = "3dgs")]
+fn pack2x16float(a: f32, b: f32) -> u32 {
+    let lo = f16::from_f32(a).to_bits();
+    let hi = f16::from_f32(b).to_bits();
+    u32::from(lo) | (u32::from(hi) << 16)
+}
+
+#[cfg(feature = "3dgs")]
+fn build_test_gaussian_cloud() -> GaussianCloud {
+    let target_color = Vec3::new(0.88, 0.74, 0.66);
+    let sh_dc = (target_color - Vec3::splat(0.5)) / 0.2820948;
+
+    let mut sh_data = [0_u32; 24];
+    sh_data[0] = pack2x16float(sh_dc.x, sh_dc.y);
+    sh_data[1] = pack2x16float(sh_dc.z, 0.0);
+
+    let covariance = [
+        pack2x16float(0.45 * 0.45, 0.0),
+        pack2x16float(0.0, 0.45 * 0.45),
+        pack2x16float(0.0, 0.035 * 0.035),
+    ];
+
+    let mut gaussians = Vec::new();
+    for y in -1..=1 {
+        for x in -1..=1 {
+            gaussians.push(GaussianSplat {
+                x: x as f32 * 0.28,
+                y: y as f32 * 0.28,
+                z: 0.0,
+                opacity: pack2x16float(0.92, 0.0),
+                sh_idx: 0,
+                cov: covariance,
+            });
+        }
+    }
+
+    GaussianCloud {
+        gaussians,
+        sh_coefficients: vec![GaussianSHCoefficients { data: sh_data }],
+        sh_degree: 0,
+        num_points: 9,
+        aabb_min: Vec3::new(-0.7, -0.7, -0.1),
+        aabb_max: Vec3::new(0.7, 0.7, 0.1),
+        center: Vec3::ZERO,
+        mip_splatting: false,
+        kernel_size: 0.0,
+        color_space: ColorSpace::Linear,
+        opacity_compensation: 1.0,
+    }
+}
+
+#[cfg(feature = "3dgs")]
+fn render_lit_gaussian(light_position: Vec3) -> Vec<u8> {
+    let mut engine = Engine::new(
+        RendererInitConfig::default(),
+        RendererSettings {
+            path: RenderPath::HighFidelity,
+            ..Default::default()
+        },
+    );
+    pollster::block_on(engine.init_headless(160, 160, None)).expect("headless init failed");
+
+    let scene = engine.scene_manager.create_active();
+    scene
+        .background
+        .set_mode(BackgroundMode::color_with_alpha(0.0, 0.0, 0.0, 1.0));
+
+    let cloud_handle = engine.assets.gaussian_clouds.add(build_test_gaussian_cloud());
+    let cloud_node = scene.add_gaussian_cloud("lit_gaussian", cloud_handle);
+    scene
+        .node(&cloud_node)
+        .set_rotation_euler(0.0, std::f32::consts::FRAC_PI_4, 0.0);
+
+    let cam = scene.add_camera(Camera::new_perspective(40.0, 1.0, 0.1));
+    scene
+        .node(&cam)
+        .set_position(0.0, 0.1, 3.6)
+        .look_at(Vec3::ZERO);
+    scene.active_camera = Some(cam);
+
+    let light = scene.add_light(Light::new_point(Vec3::new(1.0, 0.96, 0.9), 40.0, 12.0));
+    scene
+        .node(&light)
+        .set_position(light_position.x, light_position.y, light_position.z);
+
+    render_and_capture(&mut engine, 3)
+}
+
+#[cfg(feature = "3dgs")]
+#[test]
+fn gaussian_splatting_deferred_lighting_responds_to_light_position() {
+    let left = render_lit_gaussian(Vec3::new(-2.4, 0.5, 2.2));
+    let right = render_lit_gaussian(Vec3::new(2.4, 0.5, 2.2));
+
+    assert_not_black(&left, "gaussian_splatting_left_lit");
+    assert_not_black(&right, "gaussian_splatting_right_lit");
+    assert_images_differ(
+        &left,
+        &right,
+        "gaussian_splatting_deferred_lighting_responds_to_light_position",
+    );
 }
 
 // ── Physical Material Tests ──────────────────────────────────────────────

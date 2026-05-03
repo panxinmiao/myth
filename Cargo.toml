@@ -232,6 +232,10 @@ harness = false
 name = "gaussian_splatting"
 required-features = ["3dgs", "gaussian-npz"]
 
+[[example]]
+name = "gaussian_splatting_lit"
+required-features = ["3dgs", "gaussian-npz"]
+
 [features]
 default = ["winit", "gltf", "http"]
 winit = ["myth_app/winit"]
