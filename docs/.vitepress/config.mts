@@ -1,6 +1,11 @@
 import { defineConfig } from 'vitepress'
 import { withMermaid } from 'vitepress-plugin-mermaid'
 
+const isGithub = process.env.GITHUB_ACTIONS === 'true'
+
+const zhBase = isGithub ? '/zh' : ''
+const enBase = isGithub ? '' : '/en'
+
 // Shared, language-agnostic configuration
 const GITHUB_REPO = 'https://github.com/panxinmiao/myth'
 
@@ -12,42 +17,42 @@ const BASE = process.env.DOCS_BASE ?? '/'
 // `target: '_self'` forces a full-page navigation out of the VitePress SPA.
 const GALLERY_LINK = `${BASE}gallery/`
 
-// ── Chinese (root) sidebar ──────────────────────────────────────────────
+// ── Chinese sidebar ──────────────────────────────────────────────
 function sidebarZh() {
   return [
     {
       text: '基础指南',
       collapsed: false,
       items: [
-        { text: '简介与愿景', link: '/guide/introduction' },
-        { text: '核心特性总览', link: '/guide/features' },
-        { text: '快速开始', link: '/guide/quick-start' },
-        { text: '场景与节点系统', link: '/guide/scene-graph' },
-        { text: '资产、glTF 与动画', link: '/guide/assets-animation' },
-        { text: 'Python 绑定', link: '/guide/python' }
+        { text: '简介与愿景', link: `${zhBase}/guide/introduction` },
+        { text: '核心特性总览', link: `${zhBase}/guide/features` },
+        { text: '快速开始', link: `${zhBase}/guide/quick-start` },
+        { text: '场景与节点系统', link: `${zhBase}/guide/scene-graph` },
+        { text: '资产、glTF 与动画', link: `${zhBase}/guide/assets-animation` },
+        { text: 'Python 绑定', link: `${zhBase}/guide/python` }
       ]
     },
     {
       text: '引擎架构',
       collapsed: false,
       items: [
-        { text: '渲染路径与帧合成', link: '/architecture/rendering-pipeline' },
-        { text: 'Render Graph 渲染图', link: '/architecture/render-graph' },
-        { text: '异步资源与加载管线', link: '/architecture/asset-pipeline' },
-        { text: '高性能材质系统', link: '/architecture/material-system' }
+        { text: '渲染路径与帧合成', link: `${zhBase}/architecture/rendering-pipeline` },
+        { text: 'Render Graph 渲染图', link: `${zhBase}/architecture/render-graph` },
+        { text: '异步资源与加载管线', link: `${zhBase}/architecture/asset-pipeline` },
+        { text: '高性能材质系统', link: `${zhBase}/architecture/material-system` }
       ]
     },
     {
       text: '进阶渲染特性',
       collapsed: false,
       items: [
-        { text: 'PBR 物理材质', link: '/advanced/pbr-materials' },
-        { text: 'GPU-Driven 与聚类光照', link: '/advanced/clustered-shading' },
-        { text: '后处理与屏幕空间特效', link: '/advanced/post-processing' },
-        { text: '程序化天空与大气', link: '/advanced/procedural-sky' },
-        { text: '3DGS 高斯溅射融合渲染', link: '/advanced/3dgs-integration' },
-        { text: '自定义 Shader 与后处理', link: '/advanced/custom-shader' },
-        { text: '离屏与无头渲染', link: '/advanced/headless-rendering' }
+        { text: 'PBR 物理材质', link: `${zhBase}/advanced/pbr-materials` },
+        { text: 'GPU-Driven 与聚类光照', link: `${zhBase}/advanced/clustered-shading` },
+        { text: '后处理与屏幕空间特效', link: `${zhBase}/advanced/post-processing` },
+        { text: '程序化天空与大气', link: `${zhBase}/advanced/procedural-sky` },
+        { text: '3DGS 高斯溅射融合渲染', link: `${zhBase}/advanced/3dgs-integration` },
+        { text: '自定义 Shader 与后处理', link: `${zhBase}/advanced/custom-shader` },
+        { text: '离屏与无头渲染', link: `${zhBase}/advanced/headless-rendering` }
       ]
     }
   ]
@@ -60,8 +65,8 @@ function sidebarArticlesZh() {
       text: '技术文章',
       collapsed: false,
       items: [
-        { text: '文章列表', link: '/articles/' },
-        { text: '构建基于 SSA 的声明式渲染图', link: '/articles/render-graph-design' }
+        { text: '文章列表', link: `${zhBase}/articles/` },
+        { text: '构建基于 SSA 的声明式渲染图', link: `${zhBase}/articles/render-graph-design` }
       ]
     }
   ]
@@ -74,35 +79,35 @@ function sidebarEn() {
       text: 'Guide',
       collapsed: false,
       items: [
-        { text: 'Introduction & Vision', link: '/en/guide/introduction' },
-        { text: 'Feature Overview', link: '/en/guide/features' },
-        { text: 'Quick Start', link: '/en/guide/quick-start' },
-        { text: 'Scene & Node System', link: '/en/guide/scene-graph' },
-        { text: 'Assets, glTF & Animation', link: '/en/guide/assets-animation' },
-        { text: 'Python Bindings', link: '/en/guide/python' }
+        { text: 'Introduction & Vision', link: `${enBase}/guide/introduction` },
+        { text: 'Feature Overview', link: `${enBase}/guide/features` },
+        { text: 'Quick Start', link: `${enBase}/guide/quick-start` },
+        { text: 'Scene & Node System', link: `${enBase}/guide/scene-graph` },
+        { text: 'Assets, glTF & Animation', link: `${enBase}/guide/assets-animation` },
+        { text: 'Python Bindings', link: `${enBase}/guide/python` }
       ]
     },
     {
       text: 'Architecture',
       collapsed: false,
       items: [
-        { text: 'Render Paths & Frame Composer', link: '/en/architecture/rendering-pipeline' },
-        { text: 'Render Graph', link: '/en/architecture/render-graph' },
-        { text: 'Async Asset Pipeline', link: '/en/architecture/asset-pipeline' },
-        { text: 'Material System', link: '/en/architecture/material-system' }
+        { text: 'Render Paths & Frame Composer', link: `${enBase}/architecture/rendering-pipeline` },
+        { text: 'Render Graph', link: `${enBase}/architecture/render-graph` },
+        { text: 'Async Asset Pipeline', link: `${enBase}/architecture/asset-pipeline` },
+        { text: 'Material System', link: `${enBase}/architecture/material-system` }
       ]
     },
     {
       text: 'Advanced Rendering',
       collapsed: false,
       items: [
-        { text: 'PBR Materials', link: '/en/advanced/pbr-materials' },
-        { text: 'GPU-Driven Clustered Lighting', link: '/en/advanced/clustered-shading' },
-        { text: 'Post-Processing & Screen-Space FX', link: '/en/advanced/post-processing' },
-        { text: 'Procedural Sky & Atmosphere', link: '/en/advanced/procedural-sky' },
-        { text: '3D Gaussian Splatting', link: '/en/advanced/3dgs-integration' },
-        { text: 'Custom Shaders & Post FX', link: '/en/advanced/custom-shader' },
-        { text: 'Headless & Offscreen Rendering', link: '/en/advanced/headless-rendering' }
+        { text: 'PBR Materials', link: `${enBase}/advanced/pbr-materials` },
+        { text: 'GPU-Driven Clustered Lighting', link: `${enBase}/advanced/clustered-shading` },
+        { text: 'Post-Processing & Screen-Space FX', link: `${enBase}/advanced/post-processing` },
+        { text: 'Procedural Sky & Atmosphere', link: `${enBase}/advanced/procedural-sky` },
+        { text: '3D Gaussian Splatting', link: `${enBase}/advanced/3dgs-integration` },
+        { text: 'Custom Shaders & Post FX', link: `${enBase}/advanced/custom-shader` },
+        { text: 'Headless & Offscreen Rendering', link: `${enBase}/advanced/headless-rendering` }
       ]
     }
   ]
@@ -115,13 +120,87 @@ function sidebarArticlesEn() {
       text: 'Articles',
       collapsed: false,
       items: [
-        { text: 'All Articles', link: '/en/articles/' },
-        { text: 'Building an SSA-based Declarative Render Graph', link: '/en/articles/render-graph-design' }
+        { text: 'All Articles', link: `${enBase}/articles/` },
+        { text: 'Building an SSA-based Declarative Render Graph', link: `${enBase}/articles/render-graph-design` }
       ]
     }
   ]
 }
 
+function getZhThemeConfig() {
+  return {
+    nav: [
+      { text: '指南', link: `${zhBase}/guide/introduction`, activeMatch: `${zhBase}/guide/` },
+      { text: '架构', link: `${zhBase}/architecture/rendering-pipeline`, activeMatch: `${zhBase}/architecture/` },
+      { text: '进阶', link: `${zhBase}/advanced/pbr-materials`, activeMatch: `${zhBase}/advanced/` },
+      { text: '文章', link: `${zhBase}/articles/`, activeMatch: `${zhBase}/articles/` },
+      { text: 'Gallery', link: GALLERY_LINK, target: '_self' },
+      {
+        text: '更多',
+        items: [
+          { text: 'Examples 示例', link: `${GITHUB_REPO}/tree/main/examples` },
+          { text: 'Python 绑定', link: `${GITHUB_REPO}/tree/main/bindings/python` },
+          { text: 'Change Log', link: `${GITHUB_REPO}/tree/main/CHANGELOG.md` },
+        ]
+      }
+    ],
+    sidebar: {
+      [`${zhBase}/articles/`]: sidebarArticlesZh(),
+      [`${zhBase}/`]: sidebarZh()
+    },
+    outline: { label: '本页大纲', level: [2, 3] as [number, number] },
+    docFooter: { prev: '上一页', next: '下一页' },
+    lastUpdatedText: '最后更新于',
+    returnToTopLabel: '回到顶部',
+    sidebarMenuLabel: '菜单',
+    darkModeSwitchLabel: '主题',
+    lightModeSwitchTitle: '切换到浅色模式',
+    darkModeSwitchTitle: '切换到深色模式',
+    editLink: {
+      pattern: `${GITHUB_REPO}/edit/main/docs/:path`,
+      text: '在 GitHub 上编辑此页'
+    },
+    footer: {
+      message: '基于 MIT / Apache-2.0 双协议发布',
+      copyright: 'Copyright © 2026-present Pan Xinmiao'
+    }
+  }
+}
+
+function getEnThemeConfig() {
+  return {
+    nav: [
+      { text: 'Guide', link: `${enBase}/guide/introduction`, activeMatch: `${enBase}/guide/` },
+      { text: 'Architecture', link: `${enBase}/architecture/rendering-pipeline`, activeMatch: `${enBase}/architecture/` },
+      { text: 'Advanced', link: `${enBase}/advanced/pbr-materials`, activeMatch: `${enBase}/advanced/` },
+      { text: 'Articles', link: `${enBase}/articles/`, activeMatch: `${enBase}/articles/` },
+      { text: 'Gallery', link: GALLERY_LINK, target: '_self' },
+      {
+        text: 'More',
+        items: [
+          { text: 'Examples', link: `${GITHUB_REPO}/tree/main/examples` },
+          { text: 'Python Bindings', link: `${GITHUB_REPO}/tree/main/bindings/python` },
+          { text: 'Change Log', link: `${GITHUB_REPO}/tree/main/CHANGELOG.md` },
+        ]
+      }
+    ],
+    sidebar: {
+      [`${enBase}/articles/`]: sidebarArticlesEn(),
+      [`${enBase}/`]: sidebarEn()
+    },
+    outline: { label: 'On this page', level: [2, 3] as [number, number] },
+    editLink: {
+      pattern: `${GITHUB_REPO}/edit/main/docs/:path`,
+      text: 'Edit this page on GitHub'
+    },
+    footer: {
+      message: 'Released under the MIT / Apache-2.0 dual license',
+      copyright: 'Copyright © 2026-present Pan Xinmiao'
+    }
+  }
+}
+
+// ── 导出 VitePress 配置 ──────────────────────────────────────────────────
 export default withMermaid(
   defineConfig({
     title: 'Myth Engine',
@@ -133,15 +212,8 @@ export default withMermaid(
     lastUpdated: true,
     cleanUrls: true,
     ignoreDeadLinks: true,
-    // Build the docs site into the shared workspace `dist/`, where the Gallery
-    // is nested under `dist/gallery/` (see [workspace.metadata.gallery]).
     outDir: '../dist',
 
-    // The Gallery is a separately-built static sub-app living at
-    // `dist/gallery/`. By default Vite wipes the whole `outDir` before each
-    // build, which would delete that (slow-to-rebuild) gallery. Disabling
-    // `emptyOutDir` makes the docs build overwrite only its own output and
-    // leave `dist/gallery/` (and anything else) untouched.
     vite: {
       build: {
         emptyOutDir: false
@@ -152,89 +224,44 @@ export default withMermaid(
       ['meta', { name: 'theme-color', content: '#4a6f9f' }]
     ],
 
+    rewrites: isGithub
+      ? {
+          'en/:rest*': ':rest*',
+          ':rest*': 'zh/:rest*'
+        }
+      : undefined,
+
     themeConfig: {
-      // logo: '/images/logo.svg',
       socialLinks: [{ icon: 'github', link: GITHUB_REPO }],
       search: { provider: 'local' }
     },
 
-    locales: {
-      root: {
-        label: '简体中文',
-        lang: 'zh-CN',
-        themeConfig: {
-          nav: [
-            { text: '指南', link: '/guide/introduction', activeMatch: '/guide/' },
-            { text: '架构', link: '/architecture/rendering-pipeline', activeMatch: '/architecture/' },
-            { text: '进阶', link: '/advanced/pbr-materials', activeMatch: '/advanced/' },
-            { text: '文章', link: '/articles/', activeMatch: '/articles/' },
-            { text: 'Gallery', link: '/gallery/', target: '_self' },
-            {
-              text: '更多',
-              items: [
-                { text: 'Examples 示例', link: `${GITHUB_REPO}/tree/main/examples` },
-                { text: 'Python 绑定', link: `${GITHUB_REPO}/tree/main/bindings/python` },
-                { text: 'Change Log', link: `${GITHUB_REPO}/tree/main/CHANGELOG.md` },
-              ]
-            }
-          ],
-          sidebar: {
-            '/articles/': sidebarArticlesZh(),
-            '/': sidebarZh()
+    locales: isGithub
+      ? {
+          root: {
+            label: 'English',
+            lang: 'en-US',
+            themeConfig: getEnThemeConfig()
           },
-          outline: { label: '本页大纲', level: [2, 3] },
-          docFooter: { prev: '上一页', next: '下一页' },
-          lastUpdatedText: '最后更新于',
-          returnToTopLabel: '回到顶部',
-          sidebarMenuLabel: '菜单',
-          darkModeSwitchLabel: '主题',
-          lightModeSwitchTitle: '切换到浅色模式',
-          darkModeSwitchTitle: '切换到深色模式',
-          editLink: {
-            pattern: `${GITHUB_REPO}/edit/main/docs/:path`,
-            text: '在 GitHub 上编辑此页'
-          },
-          footer: {
-            message: '基于 MIT / Apache-2.0 双协议发布',
-            copyright: 'Copyright © 2026-present Pan Xinmiao'
+          zh: {
+            label: '简体中文',
+            lang: 'zh-CN',
+            link: '/zh/',
+            themeConfig: getZhThemeConfig()
           }
         }
-      },
-      en: {
-        label: 'English',
-        lang: 'en-US',
-        link: '/en/',
-        themeConfig: {
-          nav: [
-            { text: 'Guide', link: '/en/guide/introduction', activeMatch: '/en/guide/' },
-            { text: 'Architecture', link: '/en/architecture/rendering-pipeline', activeMatch: '/en/architecture/' },
-            { text: 'Advanced', link: '/en/advanced/pbr-materials', activeMatch: '/en/advanced/' },
-            { text: 'Articles', link: '/en/articles/', activeMatch: '/en/articles/' },
-            { text: 'Gallery', link: '/gallery/', target: '_self' },
-            {
-              text: 'More',
-              items: [
-                { text: 'Examples', link: `${GITHUB_REPO}/tree/main/examples` },
-                { text: 'Python Bindings', link: `${GITHUB_REPO}/tree/main/bindings/python` },
-                { text: 'Change Log', link: `${GITHUB_REPO}/tree/main/CHANGELOG.md` },
-              ]
-            }
-          ],
-          sidebar: {
-            '/en/articles/': sidebarArticlesEn(),
-            '/en/': sidebarEn()
+      : {
+          root: {
+            label: '简体中文',
+            lang: 'zh-CN',
+            themeConfig: getZhThemeConfig()
           },
-          outline: { label: 'On this page', level: [2, 3] },
-          editLink: {
-            pattern: `${GITHUB_REPO}/edit/main/docs/:path`,
-            text: 'Edit this page on GitHub'
-          },
-          footer: {
-            message: 'Released under the MIT / Apache-2.0 dual license',
-            copyright: 'Copyright © 2026-present Pan Xinmiao'
+          en: {
+            label: 'English',
+            lang: 'en-US',
+            link: '/en/',
+            themeConfig: getEnThemeConfig()
           }
         }
-      }
-    }
   })
 )
