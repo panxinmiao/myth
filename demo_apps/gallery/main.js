@@ -1,5 +1,7 @@
 const GALLERY_CHANNEL = "myth-gallery";
 const DESKTOP_QUERY = "(min-width: 900px)";
+const WEBGPU_BROWSER_SUPPORT_URL = "https://caniuse.com/webgpu";
+const WEBGPU_IMPLEMENTATION_STATUS_URL = "https://github.com/gpuweb/gpuweb/wiki/Implementation-Status";
 const page = document.body.dataset.page;
 
 if (page === "gallery") {
@@ -26,14 +28,18 @@ async function initGallery() {
     const navMenu = document.getElementById("nav-menu");
     const frame = document.getElementById("viewer-frame");
     const nativeOverlay = document.getElementById("native-overlay");
+    const nativeBadge = nativeOverlay.querySelector(".native-badge");
     const nativeTitle = document.getElementById("native-title");
     const nativeCopy = document.getElementById("native-copy");
+    const nativeActions = document.getElementById("native-actions");
     const actionBar = document.getElementById("action-bar");
     const btnSource = document.getElementById("btn-source");
     const btnStandalone = document.getElementById("btn-standalone");
     const hintPanel = document.getElementById("hint-panel");
     const hintLines = document.getElementById("hint-lines");
     const runtimeStatusBar = document.getElementById("runtime-status-bar");
+    let selectionVersion = 0;
+    let webGpuSupportPromise = null;
 
     // Render navigation
     navMenu.innerHTML = manifest
@@ -170,6 +176,8 @@ async function initGallery() {
     }
 
     function selectEntry(entry, pushHistory) {
+        const currentSelection = ++selectionVersion;
+
         // Update active state in nav
         navMenu.querySelectorAll(".example-item").forEach((el) => {
             el.classList.toggle("is-active", el.dataset.id === entry.id);
@@ -190,6 +198,7 @@ async function initGallery() {
 
         // Handle native-only entries
         if (!entry.web_supported) {
+            nativeBadge.textContent = "NATIVE ONLY";
             nativeOverlay.classList.remove("hidden");
             nativeTitle.textContent = entry.name;
             nativeCopy.textContent =
@@ -197,12 +206,10 @@ async function initGallery() {
             frame.src = "about:blank";
 
             actionBar.classList.add("hidden");
+            hideNativeActions();
             hideHintPanel();
             return;
         }
-
-        nativeOverlay.classList.add("hidden");
-        actionBar.classList.remove("hidden");
 
         if (entry.source_url) {
             btnSource.href = entry.source_url;
@@ -218,11 +225,54 @@ async function initGallery() {
                 : `./viewer.html?example=${encodeURIComponent(entry.id)}`;
 
         btnStandalone.href = targetUrl;
-
         frame.src = "about:blank";
-        requestAnimationFrame(() => {
-            frame.src = targetUrl;
+
+        showRuntimeStatus("Checking WebGPU support...");
+        getWebGpuSupport().then((support) => {
+            if (currentSelection !== selectionVersion) {
+                return;
+            }
+
+            if (!support.ok) {
+                hideRuntimeStatus();
+                showWebGpuRequiredOverlay(entry, support);
+                return;
+            }
+
+            nativeOverlay.classList.add("hidden");
+            actionBar.classList.remove("hidden");
+            hideRuntimeStatus();
+
+            requestAnimationFrame(() => {
+                if (currentSelection === selectionVersion) {
+                    frame.src = targetUrl;
+                }
+            });
         });
+    }
+
+    function getWebGpuSupport() {
+        webGpuSupportPromise ??= checkWebGpuSupport();
+        return webGpuSupportPromise;
+    }
+
+    function showWebGpuRequiredOverlay(entry, support) {
+        nativeBadge.textContent = "WEBGPU REQUIRED";
+        nativeOverlay.classList.remove("hidden");
+        nativeTitle.textContent = entry.name;
+        nativeCopy.textContent =
+            `This gallery example needs WebGPU, but this browser cannot provide it. ${webGpuReasonText(support.reason)} ` +
+            "Try a browser with WebGPU support, enable hardware acceleration, and serve the gallery from HTTPS or localhost.";
+        nativeActions.innerHTML = renderActionLinks(webGpuSupportActions(), "native-action");
+        nativeActions.classList.remove("hidden");
+        frame.src = "about:blank";
+        actionBar.classList.add("hidden");
+        hideHintPanel();
+    }
+
+    function hideNativeActions() {
+        nativeActions.classList.add("hidden");
+        nativeActions.innerHTML = "";
     }
 }
 
@@ -239,6 +289,11 @@ async function initViewer() {
     const statusEl = document.getElementById("loading-status");
     const progressBar = document.getElementById("loading-progress-bar");
     const elapsedEl = document.getElementById("loading-elapsed");
+    const messagePanel = document.getElementById("loading-message");
+    const messageTitle = document.getElementById("loading-message-title");
+    const messageBody = document.getElementById("loading-message-body");
+    const messageList = document.getElementById("loading-message-list");
+    const messageActions = document.getElementById("loading-actions");
 
     let displayedProgress = 0;
     let readyHandled = false;
@@ -311,6 +366,12 @@ async function initViewer() {
     window.addEventListener("myth-scene-ready", handleSceneReady, { once: true });
     window.addEventListener("myth-status-update", handleRuntimeStatus);
 
+    function detachRuntimeListeners() {
+        window.removeEventListener("myth-loading-progress", handleLoadingProgress);
+        window.removeEventListener("myth-scene-ready", handleSceneReady);
+        window.removeEventListener("myth-status-update", handleRuntimeStatus);
+    }
+
     updateProgress("Resolving manifest...", 5);
     sendToGallery({
         state: "mounted",
@@ -327,16 +388,38 @@ async function initViewer() {
     activeEntry = entry ?? null;
 
     if (!entry || !entry.web_supported || entry.type !== "iframe") {
-        window.removeEventListener("myth-loading-progress", handleLoadingProgress);
-        window.removeEventListener("myth-scene-ready", handleSceneReady);
-        window.removeEventListener("myth-status-update", handleRuntimeStatus);
+        detachRuntimeListeners();
         clearInterval(elapsedTimer);
         updateProgress("Entry not available", 100, { force: true });
+        showBlockingMessage({
+            tone: "warning",
+            title: "Entry not available",
+            body: "This gallery entry is missing from the manifest or cannot run inside the shared web viewer.",
+            tips: ["Choose another gallery item or open the native example from the source project."],
+        });
         sendToGallery({
             state: "error",
             label: "Unavailable",
             detail: "传入的示例标识不在当前清单中或不支持网页运行。",
             exampleId,
+        });
+        return;
+    }
+
+    updateProgress("Checking WebGPU support...", 20);
+    const webGpuSupport = await checkWebGpuSupport();
+    if (!webGpuSupport.ok) {
+        detachRuntimeListeners();
+        clearInterval(elapsedTimer);
+        elapsedEl.textContent = formatDuration(performance.now() - bootStart);
+        updateProgress("WebGPU unavailable", 100, { force: true });
+        showWebGpuUnavailableMessage(webGpuSupport);
+        sendToGallery({
+            state: "error",
+            label: "WebGPU Unavailable",
+            detail: webGpuSupport.detail,
+            exampleId: entry.id,
+            route: `?example=${entry.id}`,
         });
         return;
     }
@@ -371,15 +454,28 @@ async function initViewer() {
             });
         }
     } catch (error) {
-        window.removeEventListener("myth-loading-progress", handleLoadingProgress);
-        window.removeEventListener("myth-scene-ready", handleSceneReady);
-        window.removeEventListener("myth-status-update", handleRuntimeStatus);
+        detachRuntimeListeners();
         clearInterval(elapsedTimer);
         elapsedEl.textContent = formatDuration(performance.now() - bootStart);
-        updateProgress("Boot failed", 100, { force: true });
+        const likelyWebGpuError = isLikelyWebGpuError(error);
+        updateProgress(likelyWebGpuError ? "WebGPU unavailable" : "Boot failed", 100, { force: true });
+        if (likelyWebGpuError) {
+            showWebGpuUnavailableMessage({
+                ok: false,
+                reason: "runtime-error",
+                detail: error instanceof Error ? error.message : String(error),
+            });
+        } else {
+            showBlockingMessage({
+                tone: "error",
+                title: "Example failed to start",
+                body: "The runtime stopped before the scene could start.",
+                tips: [error instanceof Error ? error.message : String(error)],
+            });
+        }
         sendToGallery({
             state: "error",
-            label: "Boot Failed",
+            label: likelyWebGpuError ? "WebGPU Unavailable" : "Boot Failed",
             detail: error instanceof Error ? error.message : String(error),
             exampleId: entry.id,
             route: `?example=${entry.id}`,
@@ -398,6 +494,38 @@ async function initViewer() {
         displayedProgress = force ? clamped : Math.max(displayedProgress, clamped);
         progressBar.style.width = `${displayedProgress}%`;
     }
+
+    function showWebGpuUnavailableMessage(support) {
+        const reason = webGpuReasonText(support.reason);
+        showBlockingMessage({
+            tone: "warning",
+            title: "WebGPU is not available",
+            body: `This example needs WebGPU, but this browser could not provide it. ${reason}`,
+            tips: [
+                "Open the gallery in a browser with WebGPU support.",
+                "Enable hardware acceleration, then restart the browser.",
+                "Use HTTPS or localhost when serving the gallery.",
+            ],
+            actions: webGpuSupportActions(),
+        });
+    }
+
+    function showBlockingMessage({ tone = "warning", title, body, tips = [], actions = [] }) {
+        overlay.classList.remove("fade-out", "is-warning", "is-error");
+        overlay.classList.add("is-blocked", tone === "error" ? "is-error" : "is-warning");
+
+        messageTitle.textContent = title;
+        messageBody.textContent = body;
+        messageList.innerHTML = tips
+            .filter((tip) => typeof tip === "string" && tip.trim())
+            .map((tip) => `<li>${escapeHtml(tip)}</li>`)
+            .join("");
+        messageList.classList.toggle("hidden", messageList.children.length === 0);
+
+        messageActions.innerHTML = renderActionLinks(actions, "loading-action");
+        messageActions.classList.toggle("hidden", actions.length === 0);
+        messagePanel.classList.remove("hidden");
+    }
 }
 
 /* =========================================
@@ -415,6 +543,95 @@ async function fetchManifest(url) {
         throw new Error(`Failed to load manifest: ${response.status}`);
     }
     return response.json();
+}
+
+async function checkWebGpuSupport() {
+    if (isWebGpuSupportForcedOff()) {
+        return {
+            ok: false,
+            reason: "forced-off",
+            detail: "WebGPU support was disabled by the gallery test query parameter.",
+        };
+    }
+
+    if (!("gpu" in navigator) || !navigator.gpu) {
+        return {
+            ok: false,
+            reason: "missing-api",
+            detail: "navigator.gpu is not available.",
+        };
+    }
+
+    try {
+        const adapter = await navigator.gpu.requestAdapter();
+        if (!adapter) {
+            return {
+                ok: false,
+                reason: "no-adapter",
+                detail: "navigator.gpu.requestAdapter() returned no adapter.",
+            };
+        }
+    } catch (error) {
+        return {
+            ok: false,
+            reason: "adapter-error",
+            detail: error instanceof Error ? error.message : String(error),
+        };
+    }
+
+    return { ok: true };
+}
+
+function webGpuReasonText(reason) {
+    switch (reason) {
+        case "forced-off":
+            return "The gallery is running with a WebGPU test override.";
+        case "missing-api":
+            return "The WebGPU API is missing.";
+        case "no-adapter":
+            return "No compatible GPU adapter was found.";
+        case "adapter-error":
+            return "The browser rejected the adapter request.";
+        default:
+            return "The runtime reported a WebGPU startup error.";
+    }
+}
+
+function webGpuSupportActions() {
+    return [
+        {
+            label: "Browser support",
+            href: WEBGPU_BROWSER_SUPPORT_URL,
+        },
+        {
+            label: "Implementation status",
+            href: WEBGPU_IMPLEMENTATION_STATUS_URL,
+        },
+    ];
+}
+
+function renderActionLinks(actions, className) {
+    return actions
+        .map((action) => {
+            const label = escapeHtml(action.label);
+            const href = escapeHtml(action.href);
+            return `<a class="${className}" href="${href}" target="_blank" rel="noreferrer">${label}</a>`;
+        })
+        .join("");
+}
+
+function isWebGpuSupportForcedOff() {
+    const params = new URLSearchParams(window.location.search);
+    return (
+        params.has("force_no_webgpu") ||
+        params.has("mock_no_webgpu") ||
+        params.get("webgpu") === "0"
+    );
+}
+
+function isLikelyWebGpuError(error) {
+    const message = error instanceof Error ? error.message : String(error);
+    return /webgpu|gpu|adapter|requestadapter|requestdevice|wgpu/i.test(message);
 }
 
 function entryFromUrl(entries) {

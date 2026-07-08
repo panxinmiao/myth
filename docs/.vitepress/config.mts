@@ -211,10 +211,13 @@ export default withMermaid(
     base: BASE,
     lastUpdated: true,
     cleanUrls: true,
-    ignoreDeadLinks: true,
+    ignoreDeadLinks: !isGithub,
     outDir: '../dist',
 
     vite: {
+      define: {
+        __MYTH_GITHUB_PAGES__: JSON.stringify(isGithub)
+      },
       build: {
         emptyOutDir: false
       }
@@ -225,10 +228,7 @@ export default withMermaid(
     ],
 
     rewrites: isGithub
-      ? {
-          'en/:rest*': ':rest*',
-          ':rest*': 'zh/:rest*'
-        }
+      ? (id: string) => (id.startsWith('en/') ? id.slice(3) : `zh/${id}`)
       : undefined,
 
     themeConfig: {

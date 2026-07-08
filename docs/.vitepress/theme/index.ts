@@ -9,16 +9,28 @@ export default {
   enhanceApp({ router }: { router: any }) {
     if (!inBrowser) return
 
-    const locales = ['en']
-    const defaultLocale = 'zh'
+    const isGithubPages = __MYTH_GITHUB_PAGES__
+    const defaultLocale = isGithubPages ? 'en' : 'zh'
+    const localePath = (locale: 'en' | 'zh') => {
+      if (isGithubPages) return locale === 'en' ? '/' : '/zh/'
+      return locale === 'en' ? '/en/' : '/'
+    }
+
+    const routeLocale = (path: string) => {
+      if (isGithubPages) return path === '/zh/' || path.startsWith('/zh/') ? 'zh' : 'en'
+      return path === '/en/' || path.startsWith('/en/') ? 'en' : 'zh'
+    }
 
     const initializeLocaleRoute = () => {
       const path = router.route.path
-      
+
       if (path !== '/' && path !== '/index.html') return
 
       const savedLocale = localStorage.getItem('user-locale')
       let targetLocale = savedLocale
+      if (targetLocale !== 'en' && targetLocale !== 'zh') {
+        targetLocale = null
+      }
 
       if (!targetLocale) {
         const browserLang = navigator.language || (navigator as any).userLanguage || ''
@@ -29,19 +41,17 @@ export default {
         }
       }
 
-      if (targetLocale === 'en' && path === '/') {
-        router.go('/en/')
+      const targetPath = localePath(targetLocale as 'en' | 'zh')
+      const currentPath = path === '/index.html' ? '/' : path
+      if (targetPath !== currentPath) {
+        router.go(targetPath)
       }
     }
 
     initializeLocaleRoute()
 
     router.onAfterRouteChanged = (to: string) => {
-      if (to.startsWith('/en/')) {
-        localStorage.setItem('user-locale', 'en')
-      } else if (to === '/' || to.startsWith('/guide/') || to.startsWith('/architecture/')) {
-        localStorage.setItem('user-locale', 'zh')
-      }
+      localStorage.setItem('user-locale', routeLocale(to))
     }
   },
   Layout() {
