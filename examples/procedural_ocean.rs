@@ -9,7 +9,8 @@ use std::any::Any;
 
 use myth::prelude::*;
 use myth::renderer::graph::core::{GraphBlackboard, HookStage};
-use myth_dev_utils::{FpsCounter, OceanRenderer, UiPass, UiPassNode, egui};
+use myth_dev_utils::{FpsCounter, OceanRenderer};
+use myth_egui::{UiPass, UiPassNode, egui};
 use winit::event::WindowEvent;
 
 struct ProceduralOceanDemo {

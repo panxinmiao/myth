@@ -37,7 +37,8 @@ use myth::assets::SharedPrefab;
 use myth::prelude::*;
 use myth::renderer::core::{BindingResource, ResourceBuilder};
 use myth::resources::texture::TextureSource;
-use myth_dev_utils::{FpsCounter, UiPass, UiPassNode};
+use myth_dev_utils::FpsCounter;
+use myth_egui::{UiPass, UiPassNode};
 
 // winit types needed for on_event downcasting (advanced egui integration)
 use winit::event::WindowEvent;

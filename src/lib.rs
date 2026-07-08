@@ -54,6 +54,7 @@
 //! | `gltf` | **yes** | glTF 2.0 model loading |
 //! | `http` | **yes** | HTTP asset loading |
 //! | `gltf-meshopt` | no | Meshopt decompression for glTF |
+//! | `egui` | no | Optional Myth-native egui integration |
 //! | `debug_view` | no | Render graph debug view targets |
 //! | `rdg_inspector` | no | Render graph inspector |
 //! | `3dgs` | no | 3D Gaussian Splatting support |
@@ -87,6 +88,10 @@ pub use myth_render as renderer;
 /// Application framework – engine, handlers, windowing.
 #[cfg(feature = "winit")]
 pub use myth_app as app;
+
+/// Optional egui integration.
+#[cfg(feature = "egui")]
+pub use myth_egui as egui;
 
 /// Engine core without windowing (always available even without `winit`).
 pub mod engine {
@@ -176,6 +181,10 @@ pub mod prelude {
 
     // Utilities
     pub use myth_app::OrbitControls;
+
+    // Optional egui integration
+    #[cfg(feature = "egui")]
+    pub use myth_egui::{UiPass, UiPassNode};
 
     // Renderer
     pub use myth_render::graph::FrameComposer;

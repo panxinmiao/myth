@@ -381,4 +381,9 @@ impl ResourceManager {
     pub fn get_image(&self, image_handle: ImageHandle) -> Option<&GpuImage> {
         self.gpu_images.get(image_handle)
     }
+
+    #[inline]
+    pub fn get_sampler_by_index(&self, index: usize) -> Option<&wgpu::Sampler> {
+        self.sampler_registry.get_sampler_by_index(index)
+    }
 }

@@ -6,6 +6,7 @@
 resolver = "2"
 members = [
     "crates/myth_core",
+    "crates/myth_egui",
     "crates/myth_dev_utils",
     "crates/myth_macros",
     "crates/myth_resources",
@@ -43,6 +44,7 @@ categories = ["game-development", "graphics", "rendering::engine"]
 # Internal crates
 myth           = { package = "myth-engine", path = ".", version = "0.3.0" }
 myth_core      = { path = "crates/myth_core", version = "0.3.0" }
+myth_egui      = { path = "crates/myth_egui", version = "0.3.0" }
 myth_dev_utils = { path = "crates/myth_dev_utils", version = "0.3.0" }
 myth_macros    = { path = "crates/myth_macros", version = "0.3.0" }
 myth_resources = { path = "crates/myth_resources", version = "0.3.0" }
@@ -53,7 +55,7 @@ myth_render    = { path = "crates/myth_render", version = "0.3.0", default-featu
 myth_app       = { path = "crates/myth_app", version = "0.3.0" }
 
 # Graphics and Math
-wgpu = { version = "29.0.3", features = ["wgsl"] }
+wgpu = { version = "29.0.4", features = ["wgsl"] }
 glam = { version = "0.32.1", features = ["bytemuck", "scalar-math"] }
 bumpalo = "3.20.2"
 bytemuck = { version = "1.25", features = ["derive", "min_const_generics"] }
@@ -125,10 +127,10 @@ rfd = "0.17.2"
 criterion = { version = "0.8.2", default-features = false, features = ["html_reports"] }
 wasm-bindgen-test = "0.3.71"
 
-# Egui (dev-dependencies)
+# Egui
 egui = "0.34.2"
-egui-wgpu = "0.34.2"
 egui-winit = { version = "0.34.2", default-features = false }
+epaint = { version = "0.34.2", features = ["bytemuck"] }
 
 # Shared lint configuration
 [workspace.lints.rust]
@@ -188,6 +190,7 @@ myth_scene     = { workspace = true }
 myth_assets    = { workspace = true }
 myth_render    = { workspace = true }
 myth_app       = { workspace = true }
+myth_egui      = { workspace = true, optional = true }
 
 glam = { workspace = true }
 log  = { workspace = true }
@@ -196,6 +199,7 @@ log  = { workspace = true }
 anyhow = { workspace = true }
 env_logger = { workspace = true }
 image = { workspace = true }
+myth_egui = { workspace = true }
 myth_dev_utils = { workspace = true }
 pollster = { workspace = true }
 rfd = { workspace = true }
@@ -250,6 +254,7 @@ gltf = ["myth_assets/gltf"]
 gaussian-npz = ["3dgs", "myth_assets/gaussian-npz"]
 gaussian-spz = ["3dgs", "myth_assets/gaussian-spz"]
 rdg_inspector = ["myth_render/rdg_inspector"]
+egui = ["dep:myth_egui"]
 debug_view = ["myth_render/debug_view", "myth_scene/debug_view"]
 gltf-meshopt = ["gltf", "myth_assets/gltf-meshopt"]
 http = ["myth_assets/http"]

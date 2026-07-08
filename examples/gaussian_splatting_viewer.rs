@@ -15,7 +15,8 @@ use std::sync::mpsc::{Receiver, Sender, channel};
 
 use myth::GaussianCloudHandle;
 use myth::prelude::*;
-use myth_dev_utils::{FpsCounter, UiPass, UiPassNode, egui};
+use myth_dev_utils::FpsCounter;
+use myth_egui::{UiPass, UiPassNode, egui};
 use winit::event::WindowEvent;
 
 const ASSET_PATH: &str = match option_env!("MYTH_ASSET_PATH") {

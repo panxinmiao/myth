@@ -1,6 +1,8 @@
 [package]
-name = "myth_dev_utils"
-description = "Internal developer-facing utilities for Myth examples and apps."
+name = "myth_egui"
+description = "Myth-native egui integration without depending on egui-wgpu."
+keywords.workspace = true
+categories.workspace = true
 version.workspace = true
 rust-version.workspace = true
 edition.workspace = true
@@ -8,32 +10,25 @@ authors.workspace = true
 license.workspace = true
 repository.workspace = true
 homepage.workspace = true
-publish = false
 
 [dependencies]
-myth_app = { workspace = true }
-myth_core = { workspace = true }
 myth_assets = { workspace = true }
 myth_render = { workspace = true }
-myth_scene = { workspace = true }
-bytemuck = { workspace = true }
-glam = { workspace = true }
 
+bytemuck = { workspace = true }
 egui = { workspace = true }
-half = { workspace = true }
+epaint = { workspace = true }
+log = { workspace = true }
+rustc-hash = { workspace = true }
 winit = { workspace = true }
 
 [target.'cfg(not(target_arch = "wasm32"))'.dependencies]
+egui-winit = { workspace = true }
 wgpu = { workspace = true }
 
-
 [target.'cfg(target_arch = "wasm32")'.dependencies]
+egui-winit = { workspace = true, default-features = false, features = ["links"] }
 wgpu = { workspace = true, features = ["webgpu", "fragile-send-sync-non-atomic-wasm"] }
-web-time = { workspace = true }
 
 [lints]
 workspace = true
-
-[[bin]]
-name = "lut_baker"
-path = "src/lut_baker.rs"

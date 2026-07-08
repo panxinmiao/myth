@@ -7,19 +7,16 @@
 pub mod fps_counter;
 pub mod ocean;
 pub mod time;
-pub mod ui_pass;
 
-pub use egui;
 pub use fps_counter::FpsCounter;
 pub use ocean::{
     OceanCameraSource, OceanLightSource, OceanPreset, OceanQuality, OceanRenderer, OceanSettings,
 };
 pub use time::Timer;
-pub use ui_pass::{UiPass, UiPassNode};
 
 pub mod prelude {
     pub use crate::{
         FpsCounter, OceanCameraSource, OceanLightSource, OceanPreset, OceanQuality, OceanRenderer,
-        OceanSettings, Timer, UiPass, UiPassNode,
+        OceanSettings, Timer,
     };
 }

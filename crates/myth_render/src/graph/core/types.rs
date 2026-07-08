@@ -159,7 +159,11 @@ impl RenderTargetOps {
         match self {
             Self::Clear(c) => wgpu::LoadOp::Clear(c),
             Self::Load => wgpu::LoadOp::Load,
-            Self::DontCare => wgpu::LoadOp::DontCare(wgpu::LoadOpDontCare::default()),
+            Self::DontCare => {
+                // SAFETY: `RenderTargetOps::DontCare` is an explicit caller opt-in
+                // for attachments whose prior contents are irrelevant.
+                wgpu::LoadOp::DontCare(unsafe { wgpu::LoadOpDontCare::enabled() })
+            }
         }
     }
 }

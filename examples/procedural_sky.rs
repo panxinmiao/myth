@@ -8,7 +8,8 @@
 use std::any::Any;
 
 use myth::prelude::*;
-use myth_dev_utils::*;
+use myth_dev_utils::FpsCounter;
+use myth_egui::{UiPass, UiPassNode, egui};
 use myth_resources::Key;
 use winit::event::WindowEvent;
 

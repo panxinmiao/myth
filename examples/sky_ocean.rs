@@ -9,10 +9,8 @@ use std::any::Any;
 
 use myth::prelude::*;
 use myth::renderer::graph::core::{GraphBlackboard, HookStage};
-use myth_dev_utils::{
-    FpsCounter, OceanCameraSource, OceanLightSource, OceanPreset, OceanRenderer, UiPass,
-    UiPassNode, egui,
-};
+use myth_dev_utils::{FpsCounter, OceanCameraSource, OceanLightSource, OceanPreset, OceanRenderer};
+use myth_egui::{UiPass, UiPassNode, egui};
 use winit::event::WindowEvent;
 
 const ASSET_PATH: &str = match option_env!("MYTH_ASSET_PATH") {

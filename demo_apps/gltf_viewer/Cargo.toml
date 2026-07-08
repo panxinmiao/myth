@@ -22,6 +22,7 @@ path = "main.rs"
 
 [dependencies]
 myth = { workspace = true, features = ["gltf-meshopt", "rdg_inspector"] }
+myth_egui = { workspace = true }
 myth_dev_utils = { workspace = true }
 
 egui = { workspace = true }

@@ -10,7 +10,8 @@ use std::f32::consts::FRAC_PI_2;
 
 use myth::prelude::*;
 use myth::renderer::graph::core::{GraphBlackboard, HookStage};
-use myth_dev_utils::{FpsCounter, OceanPreset, OceanRenderer, UiPass, UiPassNode, egui};
+use myth_dev_utils::{FpsCounter, OceanPreset, OceanRenderer};
+use myth_egui::{UiPass, UiPassNode, egui};
 use winit::event::WindowEvent;
 
 struct OceanCompositeSceneDemo {
