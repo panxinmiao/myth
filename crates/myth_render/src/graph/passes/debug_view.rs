@@ -310,12 +310,12 @@ impl DebugViewFeature {
 
         // ── Static bind group (Group 0) — rebuild on buffer identity change
         if let Some(handle) = self.uniforms.gpu_handle()
-            && let Some(gpu_buf) = ctx.resource_manager.gpu_buffers.get(handle)
+            && let Some(gpu_buf) = ctx.resource_manager.get_gpu_buffer(handle)
             && (self.static_bg.is_none() || self.last_uniforms_buffer_id != gpu_buf.id)
         {
             let sampler = ctx
                 .resource_manager
-                .sampler_registry
+                .sampler_registry()
                 .get_common(CommonSampler::NearestClamp);
             let layout = self.static_layout.as_ref().unwrap();
 

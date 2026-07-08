@@ -339,17 +339,17 @@ impl SsaoFeature {
         }
 
         ctx.resource_manager.ensure_buffer(ssao_uniforms);
-        self.blue_noise_view = Some(ctx.resource_manager.system_textures.blue_noise.clone());
+        self.blue_noise_view = Some(ctx.resource_manager.system_textures().blue_noise.clone());
         self.blue_noise_sampler = Some(
             ctx.resource_manager
-                .system_textures
+                .system_textures()
                 .blue_noise_sampler
                 .clone(),
         );
 
         // Build Group 2 static BG (uniforms only) — rebuild on buffer identity change.
         if let Some(handle) = ssao_uniforms.gpu_handle()
-            && let Some(g) = ctx.resource_manager.gpu_buffers.get(handle)
+            && let Some(g) = ctx.resource_manager.get_gpu_buffer(handle)
             && (self.uniforms_static_bg.is_none() || self.last_uniforms_buffer_id != g.id)
         {
             let layout = self.raw_uniforms_layout.as_ref().unwrap();

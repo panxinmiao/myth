@@ -798,18 +798,17 @@ impl SsgiFeature {
 
         ctx.resource_manager.ensure_buffer(ssgi_uniforms);
 
-        self.black_cube_view = Some(ctx.resource_manager.system_textures.black_cube.clone());
-        self.blue_noise_view = Some(ctx.resource_manager.system_textures.blue_noise.clone());
+        self.black_cube_view = Some(ctx.resource_manager.system_textures().black_cube.clone());
+        self.blue_noise_view = Some(ctx.resource_manager.system_textures().blue_noise.clone());
         self.blue_noise_sampler = Some(
             ctx.resource_manager
-                .system_textures
+                .system_textures()
                 .blue_noise_sampler
                 .clone(),
         );
         self.uniforms_buffer = ssgi_uniforms.gpu_handle().and_then(|handle| {
             ctx.resource_manager
-                .gpu_buffers
-                .get(handle)
+                .get_gpu_buffer(handle)
                 .map(|gpu| Tracked::with_id(gpu.buffer.clone(), gpu.id))
         });
     }

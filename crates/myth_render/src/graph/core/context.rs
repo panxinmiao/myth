@@ -562,7 +562,7 @@ impl ExtractContext<'_> {
             None,
             self.global_bind_group_cache,
             self.device,
-            &self.resource_manager.sampler_registry,
+            self.resource_manager.sampler_registry(),
             layout,
             label,
         )

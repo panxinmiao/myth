@@ -178,15 +178,13 @@ impl EquirectToCubeFeature {
                 .layout_and_sampler(source_type)
                 .expect("procedural atmosphere should not reach source conversion");
 
-            let (sampler_id, _) = match source_type {
+            let sampler_id = match source_type {
                 CubeSourceType::Equirectangular => ctx
                     .resource_manager
-                    .sampler_registry
-                    .get_custom(ctx.device, &EQUIRECT_SAMPLER_KEY),
+                    .get_or_create_sampler(EQUIRECT_SAMPLER_KEY),
                 CubeSourceType::Cubemap => ctx
                     .resource_manager
-                    .sampler_registry
-                    .get_custom(ctx.device, &CUBEMAP_SAMPLER_KEY),
+                    .get_or_create_sampler(CUBEMAP_SAMPLER_KEY),
                 CubeSourceType::Procedural => unreachable!(),
             };
 
@@ -217,21 +215,20 @@ impl EquirectToCubeFeature {
         source: &TextureSource,
     ) -> Option<ResolvedSourceView<'a>> {
         match source {
-            TextureSource::Asset(handle) => resource_manager
-                .texture_bindings
-                .get(*handle)
-                .and_then(|binding| {
-                    resource_manager
-                        .gpu_images
-                        .get(binding.image_handle)
-                        .map(|img| ResolvedSourceView {
-                            view: &img.default_view,
-                            view_id: binding.view_id,
+            TextureSource::Asset(handle) => {
+                resource_manager
+                    .get_texture_binding(*handle)
+                    .and_then(|binding| {
+                        resource_manager.get_image(binding.image_handle).map(|img| {
+                            ResolvedSourceView {
+                                view: &img.default_view,
+                                view_id: binding.view_id,
+                            }
                         })
-                }),
+                    })
+            }
             TextureSource::Attachment(id, _) => resource_manager
-                .internal_resources
-                .get(id)
+                .get_internal_texture(*id)
                 .map(|view| ResolvedSourceView { view, view_id: *id }),
         }
     }

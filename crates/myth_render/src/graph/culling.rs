@@ -355,11 +355,11 @@ fn prepare_main_camera_commands(
                         object_bind_group.layout_id,
                         if use_clustered_shading {
                             resource_manager
-                                .system_textures
+                                .system_textures()
                                 .screen_layout_clustered
                                 .id()
                         } else {
-                            resource_manager.system_textures.screen_layout.id()
+                            resource_manager.system_textures().screen_layout.id()
                         },
                     ],
                     topology: geometry.topology,
@@ -396,9 +396,9 @@ fn prepare_main_camera_commands(
                     object_bind_group,
                     gpu_world,
                     if use_clustered_shading {
-                        &resource_manager.system_textures.screen_layout_clustered
+                        &resource_manager.system_textures().screen_layout_clustered
                     } else {
-                        &resource_manager.system_textures.screen_layout
+                        &resource_manager.system_textures().screen_layout
                     },
                 );
 

@@ -214,7 +214,7 @@ impl ResourceManager {
     ) -> (GpuBufferHandle, EnsureResult) {
         // ── Fast path: CpuBuffer already knows its slot ────────────
         if let Some(handle) = cpu_buffer.gpu_handle() {
-            if let Some(gpu_buf) = self.gpu_buffers.get_mut(handle) {
+            if let Some(gpu_buf) = self.resources.gpu_buffers.get_mut(handle) {
                 let buffer_ref = cpu_buffer.handle();
                 let mut was_recreated = false;
 
@@ -240,8 +240,8 @@ impl ResourceManager {
         let (handle, result) = Self::write_buffer_internal(
             &self.device,
             &self.queue,
-            &mut self.gpu_buffers,
-            &mut self.buffer_index,
+            &mut self.resources.gpu_buffers,
+            &mut self.resources.buffer_index,
             self.frame_index,
             &buffer_ref,
             data,
@@ -262,8 +262,8 @@ impl ResourceManager {
         Self::write_buffer_internal(
             &self.device,
             &self.queue,
-            &mut self.gpu_buffers,
-            &mut self.buffer_index,
+            &mut self.resources.gpu_buffers,
+            &mut self.resources.buffer_index,
             self.frame_index,
             buffer_ref,
             data,
@@ -309,13 +309,13 @@ impl ResourceManager {
         data: &[u8],
         label: &str,
     ) -> EnsureResult {
-        if let Some(&handle) = self.buffer_index.get(&slot_id) {
-            if let Some(gpu_buf) = self.gpu_buffers.get_mut(handle) {
+        if let Some(&handle) = self.resources.buffer_index.get(&slot_id) {
+            if let Some(gpu_buf) = self.resources.gpu_buffers.get_mut(handle) {
                 let was_recreated = gpu_buf.write_to_gpu(&self.device, &self.queue, data);
                 gpu_buf.last_used_frame = self.frame_index;
                 return EnsureResult::new(gpu_buf.id, was_recreated);
             }
-            self.buffer_index.remove(&slot_id);
+            self.resources.buffer_index.remove(&slot_id);
         }
 
         let mut buf = GpuBuffer::new(
@@ -326,8 +326,8 @@ impl ResourceManager {
         );
         buf.last_used_frame = self.frame_index;
         let phys_id = buf.id;
-        let handle = self.gpu_buffers.insert(buf);
-        self.buffer_index.insert(slot_id, handle);
+        let handle = self.resources.gpu_buffers.insert(buf);
+        self.resources.buffer_index.insert(slot_id, handle);
         EnsureResult::created(phys_id)
     }
 
@@ -341,8 +341,15 @@ impl ResourceManager {
     /// slower than a direct `gpu_buffers.get(handle)`.
     #[inline]
     pub fn get_gpu_buffer_by_cpu_id(&self, cpu_id: u64) -> Option<&GpuBuffer> {
-        self.buffer_index
+        self.resources
+            .buffer_index
             .get(&cpu_id)
-            .and_then(|&h| self.gpu_buffers.get(h))
+            .and_then(|&h| self.resources.gpu_buffers.get(h))
+    }
+
+    /// Look up a [`GpuBuffer`] by its GPU arena handle.
+    #[inline]
+    pub(crate) fn get_gpu_buffer(&self, handle: GpuBufferHandle) -> Option<&GpuBuffer> {
+        self.resources.gpu_buffers.get(handle)
     }
 }

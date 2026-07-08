@@ -436,7 +436,7 @@ impl BloomFeature {
     ) {
         let sampler = ctx
             .resource_manager
-            .sampler_registry
+            .sampler_registry()
             .get_common(CommonSampler::LinearClamp);
         let ds_layout = self.ds_static_layout.as_ref().unwrap();
 
@@ -480,7 +480,7 @@ impl BloomFeature {
 
         // ─── Upsample static BG (rebuild on buffer identity change) ──
         if let Some(handle) = upsample_uniform.gpu_handle()
-            && let Some(g) = ctx.resource_manager.gpu_buffers.get(handle)
+            && let Some(g) = ctx.resource_manager.get_gpu_buffer(handle)
             && (self.upsample_static_bg.is_none() || self.last_upsample_buffer_id != g.id)
         {
             let us_layout = self.us_static_layout.as_ref().unwrap();
@@ -504,7 +504,7 @@ impl BloomFeature {
 
         // ─── Composite static BG (rebuild on buffer identity change) ──
         if let Some(handle) = composite_uniform.gpu_handle()
-            && let Some(g) = ctx.resource_manager.gpu_buffers.get(handle)
+            && let Some(g) = ctx.resource_manager.get_gpu_buffer(handle)
             && (self.composite_static_bg.is_none() || self.last_composite_buffer_id != g.id)
         {
             let comp_layout = self.comp_static_layout.as_ref().unwrap();

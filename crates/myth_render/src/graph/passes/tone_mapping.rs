@@ -277,7 +277,7 @@ impl ToneMappingFeature {
 
         let (buf_handle, _) = ctx.resource_manager.ensure_buffer(uniforms);
 
-        let gpu_buf = ctx.resource_manager.gpu_buffers.get(buf_handle);
+        let gpu_buf = ctx.resource_manager.get_gpu_buffer(buf_handle);
 
         let Some(gpu_buf) = gpu_buf else { return };
         let buf_id = gpu_buf.id;
@@ -310,10 +310,11 @@ impl ToneMappingFeature {
         if needs_rebuild {
             let sampler = ctx
                 .resource_manager
-                .sampler_registry
+                .sampler_registry()
                 .get_common(CommonSampler::LinearClamp);
-            let blue_noise_view = &ctx.resource_manager.system_textures.blue_noise;
-            let blue_noise_sampler = &ctx.resource_manager.system_textures.blue_noise_sampler;
+            let system_textures = ctx.resource_manager.system_textures();
+            let blue_noise_view = &system_textures.blue_noise;
+            let blue_noise_sampler = &system_textures.blue_noise_sampler;
             let layout = self.current_static_layout(has_lut);
 
             let mut entries = vec![

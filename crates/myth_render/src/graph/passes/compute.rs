@@ -81,7 +81,7 @@ impl BrdfLutFeature {
     }
 
     pub fn extract_and_prepare(&mut self, ctx: &mut ExtractContext) {
-        if !ctx.resource_manager.needs_brdf_compute {
+        if !ctx.resource_manager.needs_brdf_compute() {
             self.active = false;
             return;
         }
@@ -90,8 +90,7 @@ impl BrdfLutFeature {
 
         let texture = ctx
             .resource_manager
-            .brdf_lut_texture
-            .as_ref()
+            .brdf_lut_texture()
             .expect("BRDF LUT texture must exist before compute");
 
         let view = texture.create_view(&wgpu::TextureViewDescriptor::default());
@@ -105,7 +104,7 @@ impl BrdfLutFeature {
         }));
 
         self.active = true;
-        ctx.resource_manager.needs_brdf_compute = false;
+        ctx.resource_manager.mark_brdf_lut_computed();
     }
 
     pub fn add_to_graph<'a>(&'a self, ctx: &mut GraphBuilderContext<'a, '_>) {

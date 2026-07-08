@@ -48,7 +48,7 @@ impl ResourceManager {
         let geometry = assets.geometries.get(handle)?;
 
         // Fast path: check if any update is needed
-        if let Some(gpu_geo) = self.gpu_geometries.get_mut(handle)
+        if let Some(gpu_geo) = self.resources.gpu_geometries.get_mut(handle)
             && geometry.structure_version() == gpu_geo.version
             && geometry.data_version() == gpu_geo.last_data_version
         {
@@ -82,7 +82,7 @@ impl ResourceManager {
         }
 
         // Check if GpuGeometry needs to be rebuilt
-        let needs_rebuild = if let Some(gpu_geo) = self.gpu_geometries.get(handle) {
+        let needs_rebuild = if let Some(gpu_geo) = self.resources.gpu_geometries.get(handle) {
             geometry.structure_version() > gpu_geo.version
                 || any_buffer_recreated
                 || gpu_geo.vertex_buffer_ids != new_vertex_ids
@@ -94,12 +94,12 @@ impl ResourceManager {
             self.create_gpu_geometry(&geometry, handle);
         } else {
             // Only update the data version
-            if let Some(gpu_geo) = self.gpu_geometries.get_mut(handle) {
+            if let Some(gpu_geo) = self.resources.gpu_geometries.get_mut(handle) {
                 gpu_geo.last_data_version = geometry.data_version();
             }
         }
 
-        if let Some(gpu_geo) = self.gpu_geometries.get_mut(handle) {
+        if let Some(gpu_geo) = self.resources.gpu_geometries.get_mut(handle) {
             gpu_geo.last_used_frame = self.frame_index;
             Some(GeometryPrepareResult {
                 vertex_buffer_ids: gpu_geo.vertex_buffer_ids.clone(),
@@ -165,22 +165,22 @@ impl ResourceManager {
             last_used_frame: self.frame_index,
         };
 
-        self.gpu_geometries.insert(handle, gpu_geo);
+        self.resources.gpu_geometries.insert(handle, gpu_geo);
     }
 
     pub fn get_geometry(&self, handle: GeometryHandle) -> Option<&GpuGeometry> {
-        self.gpu_geometries.get(handle)
+        self.resources.gpu_geometries.get(handle)
     }
 
     pub fn get_or_create_vertex_layout_id(&mut self, layout: &GeneratedVertexLayout) -> u64 {
         let signature = layout.to_signature();
 
-        if let Some(&id) = self.vertex_layout_cache.get(&signature) {
+        if let Some(&id) = self.bind_groups.vertex_layout_cache.get(&signature) {
             return id;
         }
 
         let id = generate_gpu_resource_id();
-        self.vertex_layout_cache.insert(signature, id);
+        self.bind_groups.vertex_layout_cache.insert(signature, id);
         id
     }
 }

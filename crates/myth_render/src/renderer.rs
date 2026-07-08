@@ -853,7 +853,6 @@ impl Renderer {
             if old.anisotropy_clamp != self.settings.anisotropy_clamp {
                 state
                     .resource_manager
-                    .sampler_registry
                     .set_global_anisotropy(self.settings.anisotropy_clamp);
                 log::info!(
                     "Anisotropy clamp changed to {}",

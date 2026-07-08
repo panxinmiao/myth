@@ -100,6 +100,105 @@ pub struct BindGroupContext {
 }
 
 // ============================================================================
+// ResourceManager state components
+// ============================================================================
+
+/// GPU-side asset arenas and reverse indices.
+///
+/// This is the part of [`ResourceManager`] that mirrors CPU asset handles to
+/// persistent GPU allocations. Keeping it separate lets callers borrow asset
+/// storage independently from bind-group and environment state.
+pub(crate) struct GpuResourceStore {
+    pub gpu_geometries: SecondaryMap<GeometryHandle, GpuGeometry>,
+    pub gpu_materials: SecondaryMap<MaterialHandle, GpuMaterial>,
+    pub gpu_images: SecondaryMap<ImageHandle, GpuImage>,
+
+    /// Mapping from `TextureHandle` to (`ImageId`, `SamplerId`)
+    pub texture_bindings: SecondaryMap<TextureHandle, TextureBinding>,
+
+    /// All GPU buffers stored in a contiguous arena for O(1) handle-based access.
+    pub gpu_buffers: slotmap::SlotMap<GpuBufferHandle, GpuBuffer>,
+    /// Reverse index: CPU-side buffer ID -> SlotMap handle.
+    pub buffer_index: FxHashMap<u64, GpuBufferHandle>,
+}
+
+impl GpuResourceStore {
+    #[must_use]
+    fn new(
+        gpu_buffers: slotmap::SlotMap<GpuBufferHandle, GpuBuffer>,
+        buffer_index: FxHashMap<u64, GpuBufferHandle>,
+    ) -> Self {
+        Self {
+            gpu_geometries: SecondaryMap::new(),
+            gpu_materials: SecondaryMap::new(),
+            gpu_images: SecondaryMap::new(),
+            texture_bindings: SecondaryMap::new(),
+            gpu_buffers,
+            buffer_index,
+        }
+    }
+}
+
+/// Persistent bind-group, layout, and shader-interface caches.
+#[derive(Default)]
+pub(crate) struct BindGroupStore {
+    pub global_states: FxHashMap<u64, GpuGlobalState>,
+    pub layout_cache: FxHashMap<Vec<wgpu::BindGroupLayoutEntry>, (wgpu::BindGroupLayout, u64)>,
+    pub vertex_layout_cache: FxHashMap<VertexLayoutSignature, u64>,
+    pub object_bind_group_cache: FxHashMap<ObjectBindGroupKey, BindGroupContext>,
+    pub bind_group_id_lookup: FxHashMap<u64, BindGroupContext>,
+}
+
+/// Internally generated texture views such as render targets and utility LUTs.
+#[derive(Default)]
+pub(crate) struct InternalTextureRegistry {
+    /// Key: Resource ID (u64), value: `wgpu::TextureView`.
+    pub resources: FxHashMap<u64, wgpu::TextureView>,
+    /// Mapping from stable internal names to resource IDs.
+    pub name_lookup: FxHashMap<String, u64>,
+}
+
+impl InternalTextureRegistry {
+    pub fn register_direct(&mut self, id: u64, view: wgpu::TextureView) {
+        self.resources.insert(id, view);
+    }
+
+    pub fn register_by_name(&mut self, name: &str, view: wgpu::TextureView) -> u64 {
+        let id = *self
+            .name_lookup
+            .entry(name.to_string())
+            .or_insert_with(generate_gpu_resource_id);
+        self.register_direct(id, view);
+        id
+    }
+
+    pub fn register(&mut self, view: wgpu::TextureView) -> u64 {
+        let id = generate_gpu_resource_id();
+        self.resources.insert(id, view);
+        id
+    }
+
+    #[inline]
+    #[must_use]
+    pub fn get(&self, id: u64) -> Option<&wgpu::TextureView> {
+        self.resources.get(&id)
+    }
+
+    pub fn remove(&mut self, id: u64) {
+        self.resources.remove(&id);
+    }
+}
+
+/// Scene environment and global IBL utility resources.
+#[derive(Default)]
+pub(crate) struct EnvironmentStore {
+    pub scene_gpu_environments: FxHashMap<u32, GpuEnvironment>,
+    pub brdf_lut_texture: Option<wgpu::Texture>,
+    pub brdf_lut_view_id: Option<u64>,
+    pub needs_brdf_compute: bool,
+}
+
+// ============================================================================
 // Resource Manager main structure
 // ============================================================================
 
@@ -108,27 +207,12 @@ pub struct ResourceManager {
     pub(crate) queue: wgpu::Queue,
     pub(crate) frame_index: u64,
 
-    pub(crate) gpu_geometries: SecondaryMap<GeometryHandle, GpuGeometry>,
-    pub(crate) gpu_materials: SecondaryMap<MaterialHandle, GpuMaterial>,
-    pub(crate) gpu_images: SecondaryMap<ImageHandle, GpuImage>,
-
-    pub(crate) global_states: FxHashMap<u64, GpuGlobalState>,
-
-    /// Mapping from `TextureHandle` to (`ImageId`, `SamplerId`)
-    pub(crate) texture_bindings: SecondaryMap<TextureHandle, TextureBinding>,
-
-    /// All GPU buffers stored in a contiguous arena for O(1) handle-based access.
-    pub(crate) gpu_buffers: slotmap::SlotMap<GpuBufferHandle, GpuBuffer>,
-    /// Reverse index: CPU-side buffer ID → SlotMap handle.
-    pub(crate) buffer_index: FxHashMap<u64, GpuBufferHandle>,
+    pub(crate) resources: GpuResourceStore,
+    pub(crate) bind_groups: BindGroupStore,
+    pub(crate) environments: EnvironmentStore,
+    pub(crate) internal_textures: InternalTextureRegistry,
 
     pub(crate) sampler_registry: SamplerRegistry,
-
-    pub(crate) layout_cache:
-        FxHashMap<Vec<wgpu::BindGroupLayoutEntry>, (wgpu::BindGroupLayout, u64)>,
-
-    /// Vertex layout cache: Signature -> ID
-    pub vertex_layout_cache: FxHashMap<VertexLayoutSignature, u64>,
 
     // pub(crate) dummy_image: GpuImage,
     // pub(crate) dummy_env_image: GpuImage,
@@ -136,24 +220,6 @@ pub struct ResourceManager {
 
     // === Model Buffer Allocator ===
     pub(crate) model_allocator: ModelBufferAllocator,
-
-    // === Object BindGroup cache ===
-    pub(crate) object_bind_group_cache: FxHashMap<ObjectBindGroupKey, BindGroupContext>,
-    pub(crate) bind_group_id_lookup: FxHashMap<u64, BindGroupContext>,
-
-    // === Scene Environment Cache ===
-    pub(crate) scene_gpu_environments: FxHashMap<u32, GpuEnvironment>,
-    pub(crate) brdf_lut_texture: Option<wgpu::Texture>,
-    pub(crate) brdf_lut_view_id: Option<u64>,
-    pub(crate) needs_brdf_compute: bool,
-
-    /// Stores internally generated texture views (Render Targets / Attachments)
-    /// Key: Resource ID (u64)
-    /// Value: `wgpu::TextureView`
-    pub(crate) internal_resources: FxHashMap<u64, wgpu::TextureView>,
-
-    /// Mapping from internal texture names to IDs, ensuring ID stability across frames
-    pub(crate) internal_name_lookup: FxHashMap<String, u64>,
 
     /// Global system fallback textures and Group 3 bind-group infrastructure.
     ///
@@ -183,26 +249,13 @@ impl ResourceManager {
             device,
             queue,
             frame_index: 0,
-            gpu_geometries: SecondaryMap::new(),
-            gpu_materials: SecondaryMap::new(),
-            gpu_images: SecondaryMap::new(),
+            resources: GpuResourceStore::new(gpu_buffers, buffer_index),
+            bind_groups: BindGroupStore::default(),
+            environments: EnvironmentStore::default(),
+            internal_textures: InternalTextureRegistry::default(),
             sampler_registry,
-            texture_bindings: SecondaryMap::new(),
-            global_states: FxHashMap::default(),
-            gpu_buffers,
-            buffer_index,
-            layout_cache: FxHashMap::default(),
-            vertex_layout_cache: FxHashMap::default(),
             mipmap_generator,
             model_allocator,
-            object_bind_group_cache: FxHashMap::default(),
-            bind_group_id_lookup: FxHashMap::default(),
-            scene_gpu_environments: FxHashMap::default(),
-            brdf_lut_texture: None,
-            brdf_lut_view_id: None,
-            needs_brdf_compute: false,
-            internal_resources: FxHashMap::default(),
-            internal_name_lookup: FxHashMap::default(),
             system_textures,
         }
     }
@@ -216,18 +269,42 @@ impl ResourceManager {
         self.frame_index
     }
 
+    #[inline]
+    #[must_use]
+    pub fn sampler_registry(&self) -> &SamplerRegistry {
+        &self.sampler_registry
+    }
+
+    #[inline]
+    pub fn set_global_anisotropy(&mut self, anisotropy_clamp: u16) {
+        self.sampler_registry
+            .set_global_anisotropy(anisotropy_clamp);
+    }
+
+    #[inline]
+    #[must_use]
+    pub fn system_textures(&self) -> &SystemTextures {
+        &self.system_textures
+    }
+
+    #[inline]
+    #[must_use]
+    pub fn mipmap_generator(&self) -> &MipmapGenerator {
+        &self.mipmap_generator
+    }
+
     pub fn flush_model_buffers(&mut self) {
         let resized = self.model_allocator.flush_to_buffer(
             &self.device,
             &self.queue,
-            &mut self.gpu_buffers,
-            &mut self.buffer_index,
+            &mut self.resources.gpu_buffers,
+            &mut self.resources.buffer_index,
             self.frame_index,
         );
 
         if resized {
-            self.object_bind_group_cache.clear();
-            self.bind_group_id_lookup.clear();
+            self.bind_groups.object_bind_group_cache.clear();
+            self.bind_groups.bind_group_id_lookup.clear();
             log::info!("Model buffer resized. Object BindGroup caches cleared.");
         }
     }
@@ -250,7 +327,9 @@ impl ResourceManager {
     /// Quickly retrieve `BindGroup` data by cached ID
     #[inline]
     pub fn get_cached_bind_group(&self, cached_bind_group_id: u64) -> Option<&BindGroupContext> {
-        self.bind_group_id_lookup.get(&cached_bind_group_id)
+        self.bind_groups
+            .bind_group_id_lookup
+            .get(&cached_bind_group_id)
     }
 
     pub fn prune(&mut self, ttl_frames: u64) {
@@ -260,6 +339,7 @@ impl ResourceManager {
         let cutoff = self.frame_index - ttl_frames;
 
         let stale_scene_envs: Vec<u32> = self
+            .environments
             .scene_gpu_environments
             .iter()
             .filter_map(|(scene_id, gpu_env)| {
@@ -268,26 +348,35 @@ impl ResourceManager {
             .collect();
 
         for scene_id in stale_scene_envs {
-            if let Some(gpu_env) = self.scene_gpu_environments.remove(&scene_id) {
-                self.internal_resources.remove(&gpu_env.base_cube_view.id());
-                self.internal_resources.remove(&gpu_env.pmrem_view.id());
+            if let Some(gpu_env) = self.environments.scene_gpu_environments.remove(&scene_id) {
+                self.internal_textures.remove(gpu_env.base_cube_view.id());
+                self.internal_textures.remove(gpu_env.pmrem_view.id());
             }
         }
 
-        self.gpu_geometries
+        self.resources
+            .gpu_geometries
             .retain(|_, v| v.last_used_frame >= cutoff);
-        self.gpu_materials
+        self.resources
+            .gpu_materials
             .retain(|_, v| v.last_used_frame >= cutoff);
         // Sampler cache uses a global cache; no per-Texture cleanup needed
-        self.gpu_buffers.retain(|_, v| v.last_used_frame >= cutoff);
+        self.resources
+            .gpu_buffers
+            .retain(|_, v| v.last_used_frame >= cutoff);
         // Keep buffer_index in sync with the arena.
-        self.buffer_index
-            .retain(|_, h| self.gpu_buffers.contains_key(*h));
-        self.gpu_images.retain(|_, v| v.last_used_frame >= cutoff);
-        self.global_states
+        self.resources
+            .buffer_index
+            .retain(|_, h| self.resources.gpu_buffers.contains_key(*h));
+        self.resources
+            .gpu_images
+            .retain(|_, v| v.last_used_frame >= cutoff);
+        self.bind_groups
+            .global_states
             .retain(|_, v| v.last_used_frame >= cutoff);
         // texture_bindings are cleaned up following gpu_images
-        self.texture_bindings
-            .retain(|_, b| self.gpu_images.contains_key(b.image_handle));
+        self.resources
+            .texture_bindings
+            .retain(|_, b| self.resources.gpu_images.contains_key(b.image_handle));
     }
 }

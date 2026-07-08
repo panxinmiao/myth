@@ -513,17 +513,16 @@ impl SsrFeature {
 
         ctx.resource_manager.ensure_buffer(ssr_uniforms);
 
-        self.blue_noise_view = Some(ctx.resource_manager.system_textures.blue_noise.clone());
+        self.blue_noise_view = Some(ctx.resource_manager.system_textures().blue_noise.clone());
         self.blue_noise_sampler = Some(
             ctx.resource_manager
-                .system_textures
+                .system_textures()
                 .blue_noise_sampler
                 .clone(),
         );
         self.uniforms_buffer = ssr_uniforms.gpu_handle().and_then(|handle| {
             ctx.resource_manager
-                .gpu_buffers
-                .get(handle)
+                .get_gpu_buffer(handle)
                 .map(|gpu| Tracked::with_id(gpu.buffer.clone(), gpu.id))
         });
     }

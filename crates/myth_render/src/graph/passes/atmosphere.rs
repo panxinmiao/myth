@@ -93,9 +93,10 @@ struct ResolvedAtmosphereMoonTexture {
 
 impl ResolvedAtmosphereMoonTexture {
     fn fallback(ctx: &ExtractContext) -> Self {
+        let system_textures = ctx.resource_manager.system_textures();
         Self {
-            view: (*ctx.resource_manager.system_textures.white_2d).clone(),
-            resource_id: ctx.resource_manager.system_textures.white_2d.id(),
+            view: (*system_textures.white_2d).clone(),
+            resource_id: system_textures.white_2d.id(),
             enabled: false,
         }
     }
@@ -703,8 +704,8 @@ impl AtmosphereFeature {
                     return None;
                 }
 
-                let binding = ctx.resource_manager.texture_bindings.get(*handle)?;
-                let image = ctx.resource_manager.gpu_images.get(binding.image_handle)?;
+                let binding = ctx.resource_manager.get_texture_binding(*handle)?;
+                let image = ctx.resource_manager.get_image(binding.image_handle)?;
                 let kind =
                     AtmosphereStarboxKind::from_view_dimension(image.default_view_dimension)?;
                 Some(ResolvedAtmosphereStarbox {
@@ -715,7 +716,7 @@ impl AtmosphereFeature {
             }
             TextureSource::Attachment(id, dimension) => {
                 let kind = AtmosphereStarboxKind::from_view_dimension(*dimension)?;
-                let view = ctx.resource_manager.internal_resources.get(id)?.clone();
+                let view = ctx.resource_manager.get_internal_texture(*id)?.clone();
                 Some(ResolvedAtmosphereStarbox {
                     view,
                     resource_id: *id,
@@ -736,8 +737,8 @@ impl AtmosphereFeature {
                     return None;
                 }
 
-                let binding = ctx.resource_manager.texture_bindings.get(*handle)?;
-                let image = ctx.resource_manager.gpu_images.get(binding.image_handle)?;
+                let binding = ctx.resource_manager.get_texture_binding(*handle)?;
+                let image = ctx.resource_manager.get_image(binding.image_handle)?;
                 if image.default_view_dimension != wgpu::TextureViewDimension::D2 {
                     return None;
                 }
@@ -753,7 +754,7 @@ impl AtmosphereFeature {
                     return None;
                 }
 
-                let view = ctx.resource_manager.internal_resources.get(id)?.clone();
+                let view = ctx.resource_manager.get_internal_texture(*id)?.clone();
                 Some(ResolvedAtmosphereMoonTexture {
                     view,
                     resource_id: *id,

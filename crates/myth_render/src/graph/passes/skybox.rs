@@ -573,8 +573,8 @@ impl SkyboxFeature {
     ) -> Option<ResolvedTextureView<'a>> {
         match source {
             TextureSource::Asset(handle) => {
-                let binding = resource_manager.texture_bindings.get(*handle)?;
-                let img = resource_manager.gpu_images.get(binding.image_handle)?;
+                let binding = resource_manager.get_texture_binding(*handle)?;
+                let img = resource_manager.get_image(binding.image_handle)?;
                 Some(ResolvedTextureView {
                     view: &img.default_view,
                     view_dimension: img.default_view_dimension,
@@ -583,8 +583,7 @@ impl SkyboxFeature {
             }
             TextureSource::Attachment(id, dim) => {
                 resource_manager
-                    .internal_resources
-                    .get(id)
+                    .get_internal_texture(*id)
                     .map(|view| ResolvedTextureView {
                         view,
                         view_dimension: *dim,
@@ -647,8 +646,8 @@ impl SkyboxFeature {
                 })
             })
             .unwrap_or(ProceduralMoonView {
-                view: &resource_manager.system_textures.white_2d,
-                resource_key: resource_manager.system_textures.white_2d.id(),
+                view: &resource_manager.system_textures().white_2d,
+                resource_key: resource_manager.system_textures().white_2d.id(),
                 enabled: false,
             })
     }
@@ -719,9 +718,7 @@ impl SkyboxFeature {
         // before we resolve the texture view below.
         let sampler_id = ctx
             .resource_manager
-            .sampler_registry
-            .get_custom(ctx.device, &SKYBOX_SAMPLER_KEY)
-            .0;
+            .get_or_create_sampler(SKYBOX_SAMPLER_KEY);
 
         // Resolve texture view
         let texture_view = match background_mode {
@@ -804,7 +801,7 @@ impl SkyboxFeature {
             let params_buffer = {
                 let params_gpu = bg_uniforms
                     .gpu_handle()
-                    .and_then(|h| ctx.resource_manager.gpu_buffers.get(h))
+                    .and_then(|h| ctx.resource_manager.get_gpu_buffer(h))
                     .expect("Skybox params GPU buffer must exist");
                 params_gpu.buffer.clone()
             };
@@ -824,7 +821,7 @@ impl SkyboxFeature {
             let params_buffer = {
                 let params_gpu = bg_uniforms
                     .gpu_handle()
-                    .and_then(|h| ctx.resource_manager.gpu_buffers.get(h))
+                    .and_then(|h| ctx.resource_manager.get_gpu_buffer(h))
                     .expect("Skybox params GPU buffer must exist");
                 params_gpu.buffer.clone()
             };
@@ -832,11 +829,11 @@ impl SkyboxFeature {
             // Clone the system blue-noise view/sampler into owned locals so they
             // can be bound without holding a borrow of `ctx` across the mutable
             // `build_bind_group` call.
-            let blue_noise_view = ctx.resource_manager.system_textures.blue_noise.clone();
+            let blue_noise_view = ctx.resource_manager.system_textures().blue_noise.clone();
             let blue_noise_view_id = blue_noise_view.id();
             let blue_noise_sampler = ctx
                 .resource_manager
-                .system_textures
+                .system_textures()
                 .blue_noise_sampler
                 .clone();
             let blue_noise_sampler_id = blue_noise_sampler.id();

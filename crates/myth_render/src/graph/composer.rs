@@ -576,7 +576,7 @@ impl<'a> FrameComposer<'a> {
 
             // ── 2c. Wire Compute + Shadow Passes ───────────────────────────
             graph_ctx.with_group("Compute", |c| {
-                if self.ctx.resource_manager.needs_brdf_compute {
+                if self.ctx.resource_manager.needs_brdf_compute() {
                     self.ctx.brdf_pass.add_to_graph(c);
                 }
 
@@ -1201,9 +1201,9 @@ impl<'a> FrameComposer<'a> {
                 device: &self.ctx.wgpu_ctx.device,
                 queue: &self.ctx.wgpu_ctx.queue,
                 pipeline_cache: self.ctx.pipeline_cache,
-                sampler_registry: &self.ctx.resource_manager.sampler_registry,
+                sampler_registry: self.ctx.resource_manager.sampler_registry(),
                 global_bind_group_cache: self.ctx.global_bind_group_cache,
-                system_textures: &self.ctx.resource_manager.system_textures,
+                system_textures: self.ctx.resource_manager.system_textures(),
             };
 
             for &pass_idx in &graph.storage.execution_queue {
@@ -1243,7 +1243,7 @@ impl<'a> FrameComposer<'a> {
                 queue: &self.ctx.wgpu_ctx.queue,
                 pipeline_cache: self.ctx.pipeline_cache,
                 global_bind_group_cache: self.ctx.global_bind_group_cache,
-                mipmap_generator: &self.ctx.resource_manager.mipmap_generator,
+                mipmap_generator: self.ctx.resource_manager.mipmap_generator(),
                 baked_lists: &baked_lists,
                 wgpu_ctx: &*self.ctx.wgpu_ctx,
                 current_timeline_index: 0,

@@ -215,7 +215,7 @@ impl ResourceManager {
     ) -> u64 {
         let mut needs_recreate = false;
 
-        if let Some(gpu_img) = self.gpu_images.get(image_handle) {
+        if let Some(gpu_img) = self.resources.gpu_images.get(image_handle) {
             if gpu_img.mip_level_count < required_mip_count
                 || !gpu_img.usage.contains(required_usage)
             {
@@ -226,7 +226,7 @@ impl ResourceManager {
         }
 
         if needs_recreate {
-            self.gpu_images.remove(image_handle);
+            self.resources.gpu_images.remove(image_handle);
             let mut gpu_img = GpuImage::new(
                 &self.device,
                 &self.queue,
@@ -239,9 +239,9 @@ impl ResourceManager {
             gpu_img.version = image_version;
             gpu_img.last_used_frame = self.frame_index;
             let new_id = gpu_img.id;
-            self.gpu_images.insert(image_handle, gpu_img);
+            self.resources.gpu_images.insert(image_handle, gpu_img);
             new_id
-        } else if let Some(gpu_img) = self.gpu_images.get_mut(image_handle) {
+        } else if let Some(gpu_img) = self.resources.gpu_images.get_mut(image_handle) {
             gpu_img.update(
                 &self.device,
                 &self.queue,
@@ -287,8 +287,8 @@ impl ResourceManager {
         }
 
         // ── Fast path: skip if nothing changed (no RwLock / Arc / hash) ──
-        if let Some(binding) = self.texture_bindings.get(handle)
-            && let Some(gpu_img) = self.gpu_images.get_mut(image_handle)
+        if let Some(binding) = self.resources.texture_bindings.get(handle)
+            && let Some(gpu_img) = self.resources.gpu_images.get_mut(image_handle)
         {
             // Lightweight version check — single RwLock read, no Arc::clone
             if let Some(img_ver) = assets.images.get_version(image_handle) {
@@ -341,7 +341,7 @@ impl ResourceManager {
         );
 
         if texture_asset.generate_mipmaps
-            && let Some(gpu_img) = self.gpu_images.get_mut(image_handle)
+            && let Some(gpu_img) = self.resources.gpu_images.get_mut(image_handle)
             && !gpu_img.mipmaps_generated
         {
             let mut encoder = self
@@ -361,7 +361,7 @@ impl ResourceManager {
             sampler_id,
             texture_version: u64::from(image_version),
         };
-        self.texture_bindings.insert(handle, binding);
+        self.resources.texture_bindings.insert(handle, binding);
 
         ResourceState::Ready
     }
@@ -374,12 +374,12 @@ impl ResourceManager {
 
     #[inline]
     pub fn get_texture_binding(&self, handle: TextureHandle) -> Option<&TextureBinding> {
-        self.texture_bindings.get(handle)
+        self.resources.texture_bindings.get(handle)
     }
 
     #[inline]
     pub fn get_image(&self, image_handle: ImageHandle) -> Option<&GpuImage> {
-        self.gpu_images.get(image_handle)
+        self.resources.gpu_images.get(image_handle)
     }
 
     #[inline]
