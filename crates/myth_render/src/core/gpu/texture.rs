@@ -4,12 +4,15 @@
 //! - `GpuImage`: Physical texture resource, containing `wgpu::Texture` and default view
 //! - `GpuSampler`: Sampler state, globally cached for reuse
 //! - `TextureBinding`: Maps `TextureHandle` to (`ImageId`, `ViewId`, `SamplerId`)
+use std::sync::Arc;
+use std::sync::atomic::{AtomicU64, Ordering};
+
 use crate::core::gpu::generate_gpu_resource_id;
 use myth_assets::{AssetServer, ImageHandle, TextureHandle};
 use myth_resources::image::Image;
 use myth_resources::texture::TextureSampler;
 
-use super::ResourceManager;
+use super::{MipmapRequest, ResourceManager};
 
 /// Texture resource mapping
 ///
@@ -49,7 +52,7 @@ pub struct GpuImage {
     pub usage: wgpu::TextureUsages,
     pub version: u32,
     pub generation_id: u64,
-    pub mipmaps_generated: bool,
+    completed_mipmap_generation: Arc<AtomicU64>,
     pub last_used_frame: u64,
 }
 
@@ -97,7 +100,12 @@ impl GpuImage {
             ..Default::default()
         });
 
-        let mipmaps_generated = mip_level_count <= 1;
+        let generation_id = generate_gpu_resource_id();
+        let completed_mipmap_generation = Arc::new(AtomicU64::new(if mip_level_count <= 1 {
+            generation_id
+        } else {
+            0
+        }));
         Self {
             id: generate_gpu_resource_id(),
             texture,
@@ -108,10 +116,41 @@ impl GpuImage {
             mip_level_count,
             usage,
             version: 0,
-            generation_id: 0,
-            mipmaps_generated,
+            generation_id,
+            completed_mipmap_generation,
             last_used_frame: 0,
         }
+    }
+
+    #[inline]
+    #[must_use]
+    pub(crate) fn mipmaps_generated(&self) -> bool {
+        self.mip_level_count <= 1
+            || self.completed_mipmap_generation.load(Ordering::Acquire) == self.generation_id
+    }
+
+    #[inline]
+    fn invalidate_mipmaps(&mut self) {
+        if self.mip_level_count <= 1 {
+            return;
+        }
+        self.generation_id = generate_gpu_resource_id();
+        self.completed_mipmap_generation.store(0, Ordering::Release);
+    }
+
+    #[must_use]
+    pub(crate) fn mipmap_request(&self) -> Option<MipmapRequest> {
+        if self.mipmaps_generated() {
+            return None;
+        }
+
+        Some(MipmapRequest::new(
+            self.texture.clone(),
+            self.id,
+            self.generation_id,
+            self.format,
+            self.completed_mipmap_generation.clone(),
+        ))
     }
 
     /// Check if the image data has changed and re-upload if needed.
@@ -159,7 +198,7 @@ impl GpuImage {
             );
             self.version = image_version;
             if self.mip_level_count > 1 {
-                self.mipmaps_generated = false;
+                self.invalidate_mipmaps();
             }
         }
     }
@@ -301,7 +340,14 @@ impl ResourceManager {
                     .is_some_and(|idx| idx == binding.sampler_id);
 
                 if version_match && image_match && sampler_match {
+                    let mipmap_request = texture_asset
+                        .generate_mipmaps
+                        .then(|| gpu_img.mipmap_request())
+                        .flatten();
                     gpu_img.last_used_frame = self.frame_index;
+                    if let Some(request) = mipmap_request {
+                        self.resources.queue_mipmap_request(request);
+                    }
                     return ResourceState::Ready;
                 }
             }
@@ -340,19 +386,15 @@ impl ResourceManager {
             usage,
         );
 
-        if texture_asset.generate_mipmaps
-            && let Some(gpu_img) = self.resources.gpu_images.get_mut(image_handle)
-            && !gpu_img.mipmaps_generated
-        {
-            let mut encoder = self
-                .device
-                .create_command_encoder(&wgpu::CommandEncoderDescriptor {
-                    label: Some("Mipmap Gen"),
-                });
-            self.mipmap_generator
-                .generate(&self.device, &mut encoder, &gpu_img.texture);
-            self.queue.submit(Some(encoder.finish()));
-            gpu_img.mipmaps_generated = true;
+        if texture_asset.generate_mipmaps {
+            let mipmap_request = self
+                .resources
+                .gpu_images
+                .get(image_handle)
+                .and_then(GpuImage::mipmap_request);
+            if let Some(request) = mipmap_request {
+                self.resources.queue_mipmap_request(request);
+            }
         }
 
         let binding = TextureBinding {

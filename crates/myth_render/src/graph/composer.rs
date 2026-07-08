@@ -67,7 +67,7 @@ use crate::graph::passes::utils::add_msaa_resolve_pass;
 use crate::graph::passes::{
     AtmosphereFeature, BloomFeature, BrdfLutFeature, CasFeature, ClusteredLightingFeature,
     ClusteredLightingInputs, EquirectToCubeFeature, FxaaFeature, HiZFeature, IblComputeFeature,
-    MsaaSyncFeature, OpaqueFeature, PrepassFeature, PresentFeature, ShadowFeature,
+    MipmapFeature, MsaaSyncFeature, OpaqueFeature, PrepassFeature, PresentFeature, ShadowFeature,
     SimpleForwardFeature, SkyboxFeature, SsaoFeature, SsgiFeature, SsrFeature, SsssFeature,
     TaaFeature, ToneMappingFeature, TransmissionCopyFeature, TransparentFeature,
 };
@@ -136,6 +136,7 @@ pub struct ComposerContext<'a> {
     pub ibl_pass: &'a mut IblComputeFeature,
     pub atmosphere_pass: &'a mut AtmosphereFeature,
     pub clustered_lighting_pass: &'a mut ClusteredLightingFeature,
+    pub mipmap_pass: &'a mut MipmapFeature,
 
     #[cfg(feature = "3dgs")]
     // Gaussian Splatting
@@ -576,6 +577,8 @@ impl<'a> FrameComposer<'a> {
 
             // ── 2c. Wire Compute + Shadow Passes ───────────────────────────
             graph_ctx.with_group("Compute", |c| {
+                self.ctx.mipmap_pass.add_to_graph(c);
+
                 if self.ctx.resource_manager.needs_brdf_compute() {
                     self.ctx.brdf_pass.add_to_graph(c);
                 }
@@ -1243,7 +1246,7 @@ impl<'a> FrameComposer<'a> {
                 queue: &self.ctx.wgpu_ctx.queue,
                 pipeline_cache: self.ctx.pipeline_cache,
                 global_bind_group_cache: self.ctx.global_bind_group_cache,
-                mipmap_generator: self.ctx.resource_manager.mipmap_generator(),
+                mipmap_generator: self.ctx.mipmap_pass.generator(),
                 baked_lists: &baked_lists,
                 wgpu_ctx: &*self.ctx.wgpu_ctx,
                 current_timeline_index: 0,

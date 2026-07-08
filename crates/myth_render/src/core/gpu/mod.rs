@@ -35,7 +35,7 @@ mod tracked;
 use std::sync::Arc;
 use std::sync::atomic::{AtomicU64, Ordering};
 
-use rustc_hash::FxHashMap;
+use rustc_hash::{FxHashMap, FxHashSet};
 use slotmap::SecondaryMap;
 
 use myth_assets::{GeometryHandle, ImageHandle, MaterialHandle, TextureHandle};
@@ -51,6 +51,7 @@ pub(crate) use crate::core::gpu::texture::{GpuImage, ResourceState, TextureBindi
 use crate::pipeline::vertex::VertexLayoutSignature;
 
 pub use crate::core::gpu::mipmap::MipmapGenerator;
+pub(crate) use crate::core::gpu::mipmap::MipmapRequest;
 pub use allocator::ModelBufferAllocator;
 use myth_resources::buffer::{CpuBuffer, GpuData};
 pub use resource_ids::{
@@ -120,6 +121,9 @@ pub(crate) struct GpuResourceStore {
     pub gpu_buffers: slotmap::SlotMap<GpuBufferHandle, GpuBuffer>,
     /// Reverse index: CPU-side buffer ID -> SlotMap handle.
     pub buffer_index: FxHashMap<u64, GpuBufferHandle>,
+
+    pending_mipmap_requests: Vec<MipmapRequest>,
+    pending_mipmap_keys: FxHashSet<(u64, u64)>,
 }
 
 impl GpuResourceStore {
@@ -135,7 +139,21 @@ impl GpuResourceStore {
             texture_bindings: SecondaryMap::new(),
             gpu_buffers,
             buffer_index,
+            pending_mipmap_requests: Vec::new(),
+            pending_mipmap_keys: FxHashSet::default(),
         }
+    }
+
+    pub fn queue_mipmap_request(&mut self, request: MipmapRequest) {
+        if self.pending_mipmap_keys.insert(request.key()) {
+            self.pending_mipmap_requests.push(request);
+        }
+    }
+
+    #[must_use]
+    pub fn take_mipmap_requests(&mut self) -> Vec<MipmapRequest> {
+        self.pending_mipmap_keys.clear();
+        std::mem::take(&mut self.pending_mipmap_requests)
     }
 }
 
@@ -214,10 +232,6 @@ pub struct ResourceManager {
 
     pub(crate) sampler_registry: SamplerRegistry,
 
-    // pub(crate) dummy_image: GpuImage,
-    // pub(crate) dummy_env_image: GpuImage,
-    pub(crate) mipmap_generator: MipmapGenerator,
-
     // === Model Buffer Allocator ===
     pub(crate) model_allocator: ModelBufferAllocator,
 
@@ -232,7 +246,6 @@ impl ResourceManager {
     #[must_use]
     #[allow(clippy::too_many_lines)]
     pub fn new(device: wgpu::Device, queue: wgpu::Queue, anisotropy_clamp: u16) -> Self {
-        let mipmap_generator = MipmapGenerator::new(&device);
         let model_allocator = ModelBufferAllocator::new();
 
         let mut gpu_buffers = slotmap::SlotMap::with_key();
@@ -254,7 +267,6 @@ impl ResourceManager {
             environments: EnvironmentStore::default(),
             internal_textures: InternalTextureRegistry::default(),
             sampler_registry,
-            mipmap_generator,
             model_allocator,
             system_textures,
         }
@@ -287,10 +299,9 @@ impl ResourceManager {
         &self.system_textures
     }
 
-    #[inline]
     #[must_use]
-    pub fn mipmap_generator(&self) -> &MipmapGenerator {
-        &self.mipmap_generator
+    pub(crate) fn take_mipmap_requests(&mut self) -> Vec<MipmapRequest> {
+        self.resources.take_mipmap_requests()
     }
 
     pub fn flush_model_buffers(&mut self) {

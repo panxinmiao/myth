@@ -18,10 +18,10 @@ use crate::graph::passes::DebugViewFeature;
 use crate::graph::passes::GaussianSplattingFeature;
 use crate::graph::passes::{
     AtmosphereFeature, BloomFeature, BrdfLutFeature, CasFeature, ClusteredLightingFeature,
-    EquirectToCubeFeature, FxaaFeature, HiZFeature, IblComputeFeature, MsaaSyncFeature,
-    OpaqueFeature, PrepassFeature, PresentFeature, ShadowFeature, SimpleForwardFeature,
-    SkyboxFeature, SsaoFeature, SsgiFeature, SsrFeature, SsssFeature, TaaFeature,
-    ToneMappingFeature, TransmissionCopyFeature, TransparentFeature,
+    EquirectToCubeFeature, FxaaFeature, HiZFeature, IblComputeFeature, MipmapFeature,
+    MsaaSyncFeature, OpaqueFeature, PrepassFeature, PresentFeature, ShadowFeature,
+    SimpleForwardFeature, SkyboxFeature, SsaoFeature, SsgiFeature, SsrFeature, SsssFeature,
+    TaaFeature, ToneMappingFeature, TransmissionCopyFeature, TransparentFeature,
 };
 use myth_assets::AssetServer;
 use myth_core::Result;
@@ -141,6 +141,7 @@ struct RendererState {
     pub(crate) ibl_pass: IblComputeFeature,
     pub(crate) atmosphere_pass: AtmosphereFeature,
     pub(crate) clustered_lighting_pass: ClusteredLightingFeature,
+    pub(crate) mipmap_pass: MipmapFeature,
 
     #[cfg(feature = "3dgs")]
     // Gaussian Splatting
@@ -278,6 +279,7 @@ impl Renderer {
         let brdf_pass = BrdfLutFeature::new(&wgpu_ctx.device);
         let equirect_to_cube_pass = EquirectToCubeFeature::new(&wgpu_ctx.device);
         let ibl_pass = IblComputeFeature::new(&wgpu_ctx.device);
+        let mipmap_pass = MipmapFeature::new(&wgpu_ctx.device);
 
         self.context = Some(RendererState {
             wgpu_ctx,
@@ -318,6 +320,7 @@ impl Renderer {
             ibl_pass,
             atmosphere_pass: AtmosphereFeature::new(),
             clustered_lighting_pass: ClusteredLightingFeature::new(),
+            mipmap_pass,
 
             #[cfg(feature = "3dgs")]
             gaussian_splatting_pass: GaussianSplattingFeature::new(),
@@ -725,6 +728,8 @@ impl Renderer {
                     }
                 }
             }
+
+            state.mipmap_pass.extract_and_prepare(&mut extract_ctx);
         }
 
         // ── Phase 3: Build ComposerContext ──────────────────────────────
@@ -779,6 +784,7 @@ impl Renderer {
             ibl_pass: &mut state.ibl_pass,
             atmosphere_pass: &mut state.atmosphere_pass,
             clustered_lighting_pass: &mut state.clustered_lighting_pass,
+            mipmap_pass: &mut state.mipmap_pass,
 
             #[cfg(feature = "3dgs")]
             gaussian_splatting_pass: &mut state.gaussian_splatting_pass,

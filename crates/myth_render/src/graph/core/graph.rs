@@ -80,7 +80,9 @@ struct ReadyNode {
 // Rust's BinaryHeap is a max-heap, so we define the ordering such that higher priority scores come first.
 impl Ord for ReadyNode {
     fn cmp(&self, other: &Self) -> Ordering {
-        self.priority.cmp(&other.priority)
+        self.priority
+            .cmp(&other.priority)
+            .then_with(|| other.pass_idx.cmp(&self.pass_idx))
     }
 }
 
@@ -1138,6 +1140,37 @@ mod tests {
                     .collect::<Vec<_>>()
             );
         }
+    }
+
+    #[test]
+    fn side_effect_passes_keep_registration_order_when_unconstrained() {
+        let mut storage = GraphStorage::new();
+        let arena = FrameArena::new();
+        let mut graph = begin_test_frame(&mut storage, &arena);
+
+        graph.add_pass("First", |builder| {
+            builder.mark_side_effect();
+            (MockExec, ())
+        });
+        graph.add_pass("Second", |builder| {
+            builder.mark_side_effect();
+            (MockExec, ())
+        });
+        graph.add_pass("Third", |builder| {
+            builder.mark_side_effect();
+            (MockExec, ())
+        });
+
+        graph.compile_topology();
+
+        let queue_names: Vec<&str> = graph
+            .storage
+            .execution_queue
+            .iter()
+            .map(|&i| graph.storage.passes[i].name)
+            .collect();
+
+        assert_eq!(queue_names, ["First", "Second", "Third"]);
     }
 
     #[test]
