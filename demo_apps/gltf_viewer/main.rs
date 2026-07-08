@@ -2932,33 +2932,23 @@ impl GltfViewer {
         ui.separator();
         // 预览纹理
         ui.label("Preview:");
-        if let Some(tex_id) = self.ui_pass.request_texture(handle) {
-            let size = if let Some(ref img) = image_info {
-                egui::vec2(img.width as f32, img.height as f32)
-            } else {
-                egui::vec2(256.0, 256.0)
-            };
-
-            // 自适应缩放
-            let available_width = ui.available_width();
-            let display_size = if size.x > available_width {
-                let scale = available_width / size.x;
-                egui::vec2(available_width, size.y * scale)
-            } else {
-                size
-            };
-
-            ui.image(egui::load::SizedTexture::new(tex_id, display_size));
+        let tex_id = self.ui_pass.texture_id(handle);
+        let size = if let Some(ref img) = image_info {
+            egui::vec2(img.width as f32, img.height as f32)
         } else {
-            // 如果返回 None，说明还在注册中或等待 GPU 上传
-            ui.horizontal(|ui| {
-                ui.spinner();
-                ui.label(" Loading GPU Texture...");
-            });
+            egui::vec2(256.0, 256.0)
+        };
 
-            // 强制触发重绘，以便一旦纹理就绪能立刻显示出来，不用等鼠标动
-            ui.ctx().request_repaint();
-        }
+        // 自适应缩放
+        let available_width = ui.available_width();
+        let display_size = if size.x > available_width {
+            let scale = available_width / size.x;
+            egui::vec2(available_width, size.y * scale)
+        } else {
+            size
+        };
+
+        ui.image(egui::load::SizedTexture::new(tex_id, display_size));
     }
 }
 

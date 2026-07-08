@@ -79,6 +79,7 @@ pub struct Renderer {
     previous_uniform_buffer_content: UniformBuffer,
     uniform_bind_group: wgpu::BindGroup,
     texture_bind_group_layout: wgpu::BindGroupLayout,
+    placeholder_bind_group: wgpu::BindGroup,
     textures: FxHashMap<epaint::TextureId, Texture>,
     next_user_texture_id: u64,
     samplers: FxHashMap<epaint::textures::TextureOptions, wgpu::Sampler>,
@@ -247,6 +248,43 @@ impl Renderer {
         const INDEX_BUFFER_START_CAPACITY: wgpu::BufferAddress =
             (std::mem::size_of::<u32>() * 1024 * 3) as _;
 
+        let placeholder_texture = device.create_texture(&wgpu::TextureDescriptor {
+            label: Some("myth_egui_placeholder_texture"),
+            size: wgpu::Extent3d {
+                width: 1,
+                height: 1,
+                depth_or_array_layers: 1,
+            },
+            mip_level_count: 1,
+            sample_count: 1,
+            dimension: wgpu::TextureDimension::D2,
+            format: wgpu::TextureFormat::Rgba8Unorm,
+            usage: wgpu::TextureUsages::TEXTURE_BINDING | wgpu::TextureUsages::COPY_DST,
+            view_formats: &[wgpu::TextureFormat::Rgba8Unorm],
+        });
+        let placeholder_view =
+            placeholder_texture.create_view(&wgpu::TextureViewDescriptor::default());
+        let placeholder_sampler = device.create_sampler(&wgpu::SamplerDescriptor {
+            label: Some("myth_egui_placeholder_sampler"),
+            mag_filter: wgpu::FilterMode::Nearest,
+            min_filter: wgpu::FilterMode::Nearest,
+            ..Default::default()
+        });
+        let placeholder_bind_group = device.create_bind_group(&wgpu::BindGroupDescriptor {
+            label: Some("myth_egui_placeholder_bg"),
+            layout: &texture_bind_group_layout,
+            entries: &[
+                wgpu::BindGroupEntry {
+                    binding: 0,
+                    resource: wgpu::BindingResource::TextureView(&placeholder_view),
+                },
+                wgpu::BindGroupEntry {
+                    binding: 1,
+                    resource: wgpu::BindingResource::Sampler(&placeholder_sampler),
+                },
+            ],
+        });
+
         Self {
             pipeline,
             vertex_buffer: SlicedBuffer {
@@ -263,6 +301,7 @@ impl Renderer {
             previous_uniform_buffer_content: UniformBuffer::zeroed(),
             uniform_bind_group,
             texture_bind_group_layout,
+            placeholder_bind_group,
             textures: FxHashMap::default(),
             next_user_texture_id: 0,
             samplers: FxHashMap::default(),
@@ -483,10 +522,27 @@ impl Renderer {
         view: &wgpu::TextureView,
         sampler: &wgpu::Sampler,
     ) -> epaint::TextureId {
-        let id = epaint::TextureId::User(self.next_user_texture_id);
-        self.next_user_texture_id += 1;
+        let id = self.reserve_external_texture();
         self.update_external_texture(device, id, view, sampler);
         id
+    }
+
+    pub fn reserve_external_texture(&mut self) -> epaint::TextureId {
+        let id = epaint::TextureId::User(self.next_user_texture_id);
+        self.next_user_texture_id += 1;
+        self.use_placeholder_texture(id);
+        id
+    }
+
+    pub fn use_placeholder_texture(&mut self, id: epaint::TextureId) {
+        self.insert_texture(
+            id,
+            Texture {
+                texture: None,
+                bind_group: self.placeholder_bind_group.clone(),
+                options: None,
+            },
+        );
     }
 
     pub fn update_external_texture(
@@ -512,7 +568,7 @@ impl Renderer {
             ],
         });
 
-        self.textures.insert(
+        self.insert_texture(
             id,
             Texture {
                 texture: None,
@@ -520,6 +576,14 @@ impl Renderer {
                 options: None,
             },
         );
+    }
+
+    fn insert_texture(&mut self, id: epaint::TextureId, texture: Texture) {
+        if let Some(old) = self.textures.insert(id, texture)
+            && let Some(texture) = old.texture
+        {
+            texture.destroy();
+        }
     }
 
     pub fn register_native_texture(

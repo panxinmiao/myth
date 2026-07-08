@@ -37,6 +37,10 @@ Also migrated major compute-heavy paths such as 3D Gaussian Splatting, atmospher
   - Asset Support: Load point clouds from compressed `.npz` (via `gaussian-npz`) and standard `.ply` formats via the async asset server.
 
 ### Refactored / Changed
+- Updated Myth's graphics backend dependency to `wgpu` v30 and adjusted render graph, pipeline, readback, and surface presentation code for the new API.
+- Split egui support into a dedicated `myth_egui` crate with a Myth-native renderer and optional `myth/egui` facade, removing the examples' dependency on `egui-wgpu`.
+  - Added stable Myth texture registration for egui via `UiPass::texture_id` / `UiPass::register_texture`, allowing `TextureHandle` values to be shown directly in egui while the backend keeps the GPU view and sampler synchronized.
+
 - Removed the `compose_frame` method from `AppHandler` and narrowed its responsibility to providing only a high-level render trigger, with full render graph orchestration delegated to the `Engine`.
   > _Note: This simplifies `AppRunner`, returning control of `RedrawRequested` execution to the user. It also improves the extensibility of headless mode — `FrameComposer` can now be accessed directly to attach custom RenderGraph nodes (e.g., offline data extraction or custom compute passes), without being constrained by the window system lifecycle._
 
