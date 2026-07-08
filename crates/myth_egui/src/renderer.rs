@@ -191,7 +191,7 @@ impl Renderer {
             vertex: wgpu::VertexState {
                 entry_point: Some("vs_main"),
                 module: &module,
-                buffers: &[wgpu::VertexBufferLayout {
+                buffers: &[Some(wgpu::VertexBufferLayout {
                     array_stride: 5 * 4,
                     step_mode: wgpu::VertexStepMode::Vertex,
                     attributes: &wgpu::vertex_attr_array![
@@ -199,7 +199,7 @@ impl Renderer {
                         1 => Float32x2,
                         2 => Uint32
                     ],
-                }],
+                })],
                 compilation_options: wgpu::PipelineCompilationOptions::default(),
             },
             primitive: wgpu::PrimitiveState {

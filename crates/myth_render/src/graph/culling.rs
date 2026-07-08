@@ -608,7 +608,7 @@ fn prepare_shadow_commands(
                     .layout_info
                     .buffers
                     .iter()
-                    .map(|l| l.as_wgpu())
+                    .map(|l| Some(l.as_wgpu()))
                     .collect();
 
                 // For shadow pipelines, we always cull front faces to avoid self-shadowing artifacts.

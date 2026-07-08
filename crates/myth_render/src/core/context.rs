@@ -94,6 +94,7 @@ impl WgpuContext {
                 power_preference: init_config.power_preference,
                 compatible_surface: Some(&surface),
                 force_fallback_adapter: false,
+                apply_limit_buckets: false,
             })
             .await
             .map_err(|e| Error::Platform(PlatformError::AdapterNotFound(e.to_string())))?;
@@ -147,6 +148,7 @@ impl WgpuContext {
         let config = wgpu::SurfaceConfiguration {
             usage: wgpu::TextureUsages::RENDER_ATTACHMENT,
             format: surface_format,
+            color_space: wgpu::SurfaceColorSpace::Auto,
             width,
             height,
             desired_maximum_frame_latency: 2,
@@ -208,6 +210,7 @@ impl WgpuContext {
                 power_preference: init_config.power_preference,
                 compatible_surface: None,
                 force_fallback_adapter: false,
+                apply_limit_buckets: false,
             })
             .await
             .map_err(|e| Error::Platform(PlatformError::AdapterNotFound(e.to_string())))?;

@@ -1217,7 +1217,9 @@ impl Renderer {
             .map_err(|e| myth_core::RenderError::ReadbackFailed(e.to_string()))?;
 
         // Strip per-row padding and produce a tightly-packed pixel buffer.
-        let mapped = buffer_slice.get_mapped_range();
+        let mapped = buffer_slice
+            .get_mapped_range()
+            .map_err(|e| myth_core::RenderError::ReadbackFailed(e.to_string()))?;
         let mut pixels = Vec::with_capacity((width * height * bytes_per_pixel) as usize);
         for row in 0..height {
             let start = (row * padded_bytes_per_row) as usize;

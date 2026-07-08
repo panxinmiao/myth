@@ -305,8 +305,11 @@ impl PipelineCache {
             immediate_size: 0,
         });
 
-        let vertex_buffers_layout: Vec<_> =
-            vertex_layout.buffers.iter().map(|l| l.as_wgpu()).collect();
+        let vertex_buffers_layout: Vec<_> = vertex_layout
+            .buffers
+            .iter()
+            .map(|l| Some(l.as_wgpu()))
+            .collect();
 
         let color_targets: Vec<Option<wgpu::ColorTargetState>> = canonical_key
             .color_targets
@@ -500,7 +503,7 @@ impl PipelineCache {
         pipeline_layout: &wgpu::PipelineLayout,
         canonical_key: &SimpleGeometryPipelineKey,
         label: &str,
-        vertex_buffers: &[wgpu::VertexBufferLayout<'_>],
+        vertex_buffers: &[Option<wgpu::VertexBufferLayout<'_>>],
     ) -> RenderPipelineId {
         let hash = fx_hash_key(canonical_key);
         if let Some(&id) = self.simple_geometry_lookup.get(&hash) {
