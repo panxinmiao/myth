@@ -19,8 +19,6 @@
 //! consumers (e.g. `ResourceIdSet` fingerprints) that the physical resource has
 //! changed and dependent `BindGroup`s must be rebuilt.
 
-use slotmap::SlotMap;
-
 use super::{EnsureResult, ResourceManager, generate_gpu_resource_id};
 use myth_resources::buffer::BufferRef;
 
@@ -150,56 +148,6 @@ impl GpuBuffer {
 
 impl ResourceManager {
     // ────────────────────────────────────────────────────────────────────────
-    // Internal write helper (borrows split fields to satisfy borrow-checker)
-    // ────────────────────────────────────────────────────────────────────────
-
-    /// Upload `data` for the buffer identified by `buffer_ref`, creating or
-    /// resizing the GPU-side buffer as needed.
-    ///
-    /// This is a **static method** that borrows only the fields it touches,
-    /// allowing callers to hold references to other `ResourceManager` members
-    /// concurrently (e.g. `model_allocator`).
-    pub fn write_buffer_internal(
-        device: &wgpu::Device,
-        queue: &wgpu::Queue,
-        gpu_buffers: &mut SlotMap<GpuBufferHandle, GpuBuffer>,
-        buffer_index: &mut rustc_hash::FxHashMap<u64, GpuBufferHandle>,
-        frame_index: u64,
-        buffer_ref: &BufferRef,
-        data: &[u8],
-    ) -> (GpuBufferHandle, EnsureResult) {
-        let cpu_id = buffer_ref.id();
-
-        if let Some(&handle) = buffer_index.get(&cpu_id) {
-            if let Some(gpu_buf) = gpu_buffers.get_mut(handle) {
-                let mut was_recreated = false;
-
-                if buffer_ref.version > gpu_buf.last_uploaded_version {
-                    let old_id = gpu_buf.id;
-                    was_recreated = gpu_buf.write_to_gpu(device, queue, data);
-                    if !was_recreated && gpu_buf.id != old_id {
-                        was_recreated = true;
-                    }
-                    gpu_buf.last_uploaded_version = buffer_ref.version;
-                }
-                gpu_buf.last_used_frame = frame_index;
-                return (handle, EnsureResult::new(gpu_buf.id, was_recreated));
-            }
-            // Stale handle — slot was freed. Remove from index and fall through.
-            buffer_index.remove(&cpu_id);
-        }
-
-        // First encounter: create a new GPU buffer.
-        let mut buf = GpuBuffer::new(device, data, buffer_ref.usage, buffer_ref.label());
-        buf.last_uploaded_version = buffer_ref.version;
-        buf.last_used_frame = frame_index;
-        let phys_id = buf.id;
-        let handle = gpu_buffers.insert(buf);
-        buffer_index.insert(cpu_id, handle);
-        (handle, EnsureResult::created(phys_id))
-    }
-
-    // ────────────────────────────────────────────────────────────────────────
     // Public ensure_buffer family
     // ────────────────────────────────────────────────────────────────────────
 
@@ -214,7 +162,7 @@ impl ResourceManager {
     ) -> (GpuBufferHandle, EnsureResult) {
         // ── Fast path: CpuBuffer already knows its slot ────────────
         if let Some(handle) = cpu_buffer.gpu_handle() {
-            if let Some(gpu_buf) = self.resources.gpu_buffers.get_mut(handle) {
+            if let Some(gpu_buf) = self.resources.buffer_mut(handle) {
                 let buffer_ref = cpu_buffer.handle();
                 let mut was_recreated = false;
 
@@ -237,11 +185,9 @@ impl ResourceManager {
         let guard = cpu_buffer.read();
         let data: &[u8] = bytemuck::cast_slice(guard.as_bytes());
 
-        let (handle, result) = Self::write_buffer_internal(
+        let (handle, result) = self.resources.write_buffer(
             &self.device,
             &self.queue,
-            &mut self.resources.gpu_buffers,
-            &mut self.resources.buffer_index,
             self.frame_index,
             &buffer_ref,
             data,
@@ -259,11 +205,9 @@ impl ResourceManager {
         buffer_ref: &BufferRef,
         data: &[u8],
     ) -> (GpuBufferHandle, EnsureResult) {
-        Self::write_buffer_internal(
+        self.resources.write_buffer(
             &self.device,
             &self.queue,
-            &mut self.resources.gpu_buffers,
-            &mut self.resources.buffer_index,
             self.frame_index,
             buffer_ref,
             data,
@@ -309,26 +253,14 @@ impl ResourceManager {
         data: &[u8],
         label: &str,
     ) -> EnsureResult {
-        if let Some(&handle) = self.resources.buffer_index.get(&slot_id) {
-            if let Some(gpu_buf) = self.resources.gpu_buffers.get_mut(handle) {
-                let was_recreated = gpu_buf.write_to_gpu(&self.device, &self.queue, data);
-                gpu_buf.last_used_frame = self.frame_index;
-                return EnsureResult::new(gpu_buf.id, was_recreated);
-            }
-            self.resources.buffer_index.remove(&slot_id);
-        }
-
-        let mut buf = GpuBuffer::new(
+        self.resources.write_uniform_slot(
             &self.device,
+            &self.queue,
+            self.frame_index,
+            slot_id,
             data,
-            wgpu::BufferUsages::UNIFORM | wgpu::BufferUsages::COPY_DST,
-            Some(label),
-        );
-        buf.last_used_frame = self.frame_index;
-        let phys_id = buf.id;
-        let handle = self.resources.gpu_buffers.insert(buf);
-        self.resources.buffer_index.insert(slot_id, handle);
-        EnsureResult::created(phys_id)
+            label,
+        )
     }
 
     // ────────────────────────────────────────────────────────────────────────
@@ -341,15 +273,12 @@ impl ResourceManager {
     /// slower than a direct `gpu_buffers.get(handle)`.
     #[inline]
     pub fn get_gpu_buffer_by_cpu_id(&self, cpu_id: u64) -> Option<&GpuBuffer> {
-        self.resources
-            .buffer_index
-            .get(&cpu_id)
-            .and_then(|&h| self.resources.gpu_buffers.get(h))
+        self.resources.buffer_by_cpu_id(cpu_id)
     }
 
     /// Look up a [`GpuBuffer`] by its GPU arena handle.
     #[inline]
     pub(crate) fn get_gpu_buffer(&self, handle: GpuBufferHandle) -> Option<&GpuBuffer> {
-        self.resources.gpu_buffers.get(handle)
+        self.resources.buffer(handle)
     }
 }

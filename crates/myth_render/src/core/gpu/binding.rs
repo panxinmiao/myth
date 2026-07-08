@@ -21,8 +21,8 @@ use myth_resources::builder::{Binding, BindingDesc};
 use myth_resources::{BindingResource, ResourceBuilder, WgslStructName};
 
 use super::{
-    BindGroupContext, GpuBuffer, GpuGlobalState, ModelBufferAllocator, ObjectBindGroupKey,
-    ResourceManager, generate_gpu_resource_id,
+    BindGroupContext, GpuGlobalState, ModelBufferAllocator, ObjectBindGroupKey, ResourceManager,
+    generate_gpu_resource_id,
 };
 
 static NEXT_GLOBAL_STATE_ID: AtomicU32 = AtomicU32::new(0);
@@ -36,11 +36,9 @@ impl ResourceManager {
     pub fn prepare_skeleton(&mut self, skeleton: &Skeleton) {
         let buffer_ref = skeleton.joint_matrices.handle();
         let buffer_guard = skeleton.joint_matrices.read();
-        Self::write_buffer_internal(
+        self.resources.write_buffer(
             &self.device,
             &self.queue,
-            &mut self.resources.gpu_buffers,
-            &mut self.resources.buffer_index,
             self.frame_index,
             &buffer_ref,
             bytemuck::cast_slice(buffer_guard.as_slice()),
@@ -48,11 +46,9 @@ impl ResourceManager {
 
         let prev_buffer_ref = skeleton.prev_joint_matrices.handle();
         let prev_buffer_guard = skeleton.prev_joint_matrices.read();
-        Self::write_buffer_internal(
+        self.resources.write_buffer(
             &self.device,
             &self.queue,
-            &mut self.resources.gpu_buffers,
-            &mut self.resources.buffer_index,
             self.frame_index,
             &prev_buffer_ref,
             bytemuck::cast_slice(prev_buffer_guard.as_slice()),
@@ -108,9 +104,7 @@ impl ResourceManager {
                 }
 
                 // Look up GPU resource corresponding to the Asset
-                if let Some(binding) = self.resources.texture_bindings.get(*handle)
-                    && let Some(img) = self.resources.gpu_images.get(binding.image_handle)
-                {
+                if let Some(img) = self.resources.texture_image(*handle) {
                     return &img.default_view;
                 }
 
@@ -158,7 +152,7 @@ impl ResourceManager {
         let cache_key = current_ids.hash_value();
 
         // Check global cache
-        if let Some(binding_data) = self.bind_groups.object_bind_group_cache.get(&cache_key) {
+        if let Some(binding_data) = self.bind_groups.cached_object_bind_group(cache_key) {
             return Some(binding_data.clone());
         }
 
@@ -226,11 +220,7 @@ impl ResourceManager {
         };
 
         self.bind_groups
-            .object_bind_group_cache
-            .insert(cache_key, data.clone());
-        self.bind_groups
-            .bind_group_id_lookup
-            .insert(bind_group_id, data.clone());
+            .cache_object_bind_group(cache_key, bind_group_id, data.clone());
         data
     }
 
@@ -253,34 +243,14 @@ impl ResourceManager {
                 } => {
                     let id = buffer_ref.id();
                     if let Some(bytes) = data {
-                        let handle = if let Some(&h) = self.resources.buffer_index.get(&id) {
-                            h
-                        } else {
-                            let mut buf = GpuBuffer::new(
-                                &self.device,
-                                bytes,
-                                buffer_ref.usage,
-                                buffer_ref.label(),
-                            );
-                            buf.last_uploaded_version = buffer_ref.version;
-                            buf.last_used_frame = self.frame_index;
-                            let h = self.resources.gpu_buffers.insert(buf);
-                            self.resources.buffer_index.insert(id, h);
-                            h
-                        };
-
-                        if let Some(gpu_buf) = self.resources.gpu_buffers.get_mut(handle) {
-                            if buffer_ref.version > gpu_buf.last_uploaded_version {
-                                gpu_buf.write_to_gpu(&self.device, &self.queue, bytes);
-                                gpu_buf.last_uploaded_version = buffer_ref.version;
-                            }
-                            gpu_buf.last_used_frame = self.frame_index;
-                        }
-                    } else if let Some(&h) = self.resources.buffer_index.get(&id) {
-                        if let Some(gpu_buf) = self.resources.gpu_buffers.get_mut(h) {
-                            gpu_buf.last_used_frame = self.frame_index;
-                        }
-                    } else {
+                        self.resources.write_buffer(
+                            &self.device,
+                            &self.queue,
+                            self.frame_index,
+                            buffer_ref,
+                            bytes,
+                        );
+                    } else if !self.resources.touch_buffer_by_cpu_id(id, self.frame_index) {
                         panic!(
                             "ResourceManager: Trying to bind buffer {:?} (ID: {}) but it is not initialized!",
                             buffer_ref.label(),
@@ -303,22 +273,7 @@ impl ResourceManager {
         &mut self,
         entries: &[wgpu::BindGroupLayoutEntry],
     ) -> (wgpu::BindGroupLayout, u64) {
-        if let Some(layout) = self.bind_groups.layout_cache.get(entries) {
-            return layout.clone();
-        }
-
-        let layout = self
-            .device
-            .create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
-                label: Some("Cached BindGroupLayout"),
-                entries,
-            });
-
-        let id = generate_gpu_resource_id();
-        self.bind_groups
-            .layout_cache
-            .insert(entries.to_vec(), (layout.clone(), id));
-        (layout, id)
+        self.bind_groups.get_or_create_layout(&self.device, entries)
     }
 
     #[allow(clippy::too_many_lines)]
@@ -405,7 +360,7 @@ impl ResourceManager {
         desc: &BindingDesc,
     ) -> &wgpu::Sampler {
         if let Some(TextureSource::Asset(handle)) = source
-            && let Some(binding) = self.resources.texture_bindings.get(*handle)
+            && let Some(binding) = self.resources.texture_binding(*handle)
             && let Some(sampler) = self
                 .sampler_registry
                 .get_sampler_by_index(binding.sampler_id)
@@ -470,7 +425,7 @@ impl ResourceManager {
 
         let brdf_lut_id = self
             .environments
-            .brdf_lut_view_id
+            .brdf_lut_view_id()
             .unwrap_or(self.system_textures.black_2d.id());
 
         // === Collect: gather all resource IDs ===
@@ -485,7 +440,7 @@ impl ResourceManager {
         let state_id = Self::compute_global_state_key(render_state.id, extracted_scene.scene_id);
 
         // === Check: fast fingerprint comparison ===
-        if let Some(gpu_state) = self.bind_groups.global_states.get_mut(&state_id)
+        if let Some(gpu_state) = self.bind_groups.global_state_mut(state_id)
             && gpu_state.resource_ids.matches_slice(current_ids.as_slice())
         {
             gpu_state.last_used_frame = self.frame_index;
@@ -520,7 +475,7 @@ impl ResourceManager {
         let (layout, layout_id) = self.get_or_create_layout(&layout_entries);
         let (bind_group, bind_group_id) = self.create_bind_group(&layout, &builder);
 
-        let new_id = if let Some(existing) = self.bind_groups.global_states.get(&state_id) {
+        let new_id = if let Some(existing) = self.bind_groups.global_state(state_id) {
             existing.id
         } else {
             NEXT_GLOBAL_STATE_ID.fetch_add(1, Ordering::Relaxed)
@@ -537,7 +492,7 @@ impl ResourceManager {
             last_used_frame: self.frame_index,
         };
 
-        self.bind_groups.global_states.insert(state_id, gpu_state);
+        self.bind_groups.insert_global_state(state_id, gpu_state);
         new_id
     }
 
@@ -629,7 +584,7 @@ impl ResourceManager {
         // Resolve brdf_lut from ResourceManager
         let brdf_lut_source = self
             .environments
-            .brdf_lut_view_id
+            .brdf_lut_view_id()
             .map(|id| TextureSource::Attachment(id, wgpu::TextureViewDimension::D2));
 
         builder.add_texture(
@@ -643,6 +598,6 @@ impl ResourceManager {
 
     pub fn get_global_state(&self, render_state_id: u32, scene_id: u32) -> Option<&GpuGlobalState> {
         let state_id = Self::compute_global_state_key(render_state_id, scene_id);
-        self.bind_groups.global_states.get(&state_id)
+        self.bind_groups.global_state(state_id)
     }
 }

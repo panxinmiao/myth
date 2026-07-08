@@ -263,8 +263,7 @@ impl ResourceManager {
 
         let needs_recreate = self
             .environments
-            .scene_gpu_environments
-            .get(&scene_id)
+            .scene_environment(scene_id)
             .is_none_or(|gpu_env| {
                 gpu_env.base_cube_texture.width() != config.base_cube_size
                     || gpu_env.pmrem_texture.width() != config.pmrem_size
@@ -282,8 +281,7 @@ impl ResourceManager {
             let starbox_hash = resolved_procedural_starbox_hash(self, assets, params);
             let gpu_env = self
                 .environments
-                .scene_gpu_environments
-                .get_mut(&scene_id)
+                .scene_environment_mut(scene_id)
                 .expect("scene gpu environment must exist after recreation");
 
             gpu_env.last_used_frame = self.frame_index;
@@ -330,7 +328,7 @@ impl ResourceManager {
             unreachable!("procedural backgrounds are handled above")
         } else {
             let Some(source) = environment.source_env_map().copied() else {
-                if let Some(gpu_env) = self.environments.scene_gpu_environments.get_mut(&scene_id) {
+                if let Some(gpu_env) = self.environments.scene_environment_mut(scene_id) {
                     gpu_env.compute_state.set_needs_compute(false);
                     gpu_env.source_key = None;
                     gpu_env.source_ready = false;
@@ -354,18 +352,16 @@ impl ResourceManager {
             }
 
             let source_type = match &source {
-                TextureSource::Asset(handle) => self
-                    .resources
-                    .texture_bindings
-                    .get(*handle)
-                    .and_then(|binding| self.resources.gpu_images.get(binding.image_handle))
-                    .map_or(CubeSourceType::Equirectangular, |img| {
+                TextureSource::Asset(handle) => self.resources.texture_image(*handle).map_or(
+                    CubeSourceType::Equirectangular,
+                    |img| {
                         if img.default_view_dimension == TextureViewDimension::D2 {
                             CubeSourceType::Equirectangular
                         } else {
                             CubeSourceType::Cubemap
                         }
-                    }),
+                    },
+                ),
                 TextureSource::Attachment(_, dim) => {
                     if *dim == TextureViewDimension::D2 {
                         CubeSourceType::Equirectangular
@@ -385,8 +381,7 @@ impl ResourceManager {
 
         let gpu_env = self
             .environments
-            .scene_gpu_environments
-            .get_mut(&scene_id)
+            .scene_environment_mut(scene_id)
             .expect("scene gpu environment must exist after recreation");
 
         gpu_env.last_used_frame = self.frame_index;
@@ -419,7 +414,7 @@ impl ResourceManager {
         base_cube_size: u32,
         pmrem_size: u32,
     ) {
-        if let Some(old) = self.environments.scene_gpu_environments.remove(&scene_id) {
+        if let Some(old) = self.environments.remove_scene_environment(scene_id) {
             self.internal_textures.remove(old.base_cube_view.id());
             self.internal_textures.remove(old.pmrem_view.id());
         }
@@ -499,7 +494,7 @@ impl ResourceManager {
         self.internal_textures
             .register_direct(pmrem_view.id(), (*pmrem_view).clone());
 
-        self.environments.scene_gpu_environments.insert(
+        self.environments.insert_scene_environment(
             scene_id,
             GpuEnvironment {
                 base_cube_texture,
@@ -523,21 +518,20 @@ impl ResourceManager {
     #[inline]
     #[must_use]
     pub fn gpu_environment(&self, scene_id: u32) -> Option<&GpuEnvironment> {
-        self.environments.scene_gpu_environments.get(&scene_id)
+        self.environments.scene_environment(scene_id)
     }
 
     #[inline]
     #[must_use]
     pub fn gpu_environment_mut(&mut self, scene_id: u32) -> Option<&mut GpuEnvironment> {
-        self.environments.scene_gpu_environments.get_mut(&scene_id)
+        self.environments.scene_environment_mut(scene_id)
     }
 
     #[inline]
     #[must_use]
     pub fn scene_environment_ready(&self, scene_id: u32) -> bool {
         self.environments
-            .scene_gpu_environments
-            .get(&scene_id)
+            .scene_environment(scene_id)
             .is_some_and(|gpu_env| !gpu_env.needs_compute())
     }
 
@@ -545,8 +539,7 @@ impl ResourceManager {
     #[must_use]
     pub fn scene_environment_source_ready(&self, scene_id: u32) -> bool {
         self.environments
-            .scene_gpu_environments
-            .get(&scene_id)
+            .scene_environment(scene_id)
             .is_some_and(|gpu_env| match gpu_env.source_type {
                 CubeSourceType::Procedural => true,
                 _ => gpu_env.source_ready,
@@ -557,8 +550,7 @@ impl ResourceManager {
     #[must_use]
     pub fn get_env_map_max_mip_level(&self, scene_id: u32) -> f32 {
         self.environments
-            .scene_gpu_environments
-            .get(&scene_id)
+            .scene_environment(scene_id)
             .map_or(0.0, GpuEnvironment::env_map_max_mip_level)
     }
 
@@ -567,7 +559,7 @@ impl ResourceManager {
     /// Creates the texture on first call and sets `needs_brdf_compute`.
     /// Returns the resource ID of the BRDF LUT view.
     pub fn ensure_brdf_lut(&mut self) -> u64 {
-        if let Some(id) = self.environments.brdf_lut_view_id {
+        if let Some(id) = self.environments.brdf_lut_view_id() {
             return id;
         }
 
@@ -589,9 +581,7 @@ impl ResourceManager {
         let view = texture.create_view(&wgpu::TextureViewDescriptor::default());
         let id = self.register_internal_texture_by_name("BRDF_LUT", view);
 
-        self.environments.brdf_lut_texture = Some(texture);
-        self.environments.brdf_lut_view_id = Some(id);
-        self.environments.needs_brdf_compute = true;
+        self.environments.set_brdf_lut(texture, id);
 
         id
     }
@@ -599,17 +589,17 @@ impl ResourceManager {
     #[inline]
     #[must_use]
     pub fn brdf_lut_texture(&self) -> Option<&wgpu::Texture> {
-        self.environments.brdf_lut_texture.as_ref()
+        self.environments.brdf_lut_texture()
     }
 
     #[inline]
     #[must_use]
     pub fn needs_brdf_compute(&self) -> bool {
-        self.environments.needs_brdf_compute
+        self.environments.needs_brdf_compute()
     }
 
     #[inline]
     pub fn mark_brdf_lut_computed(&mut self) {
-        self.environments.needs_brdf_compute = false;
+        self.environments.mark_brdf_lut_computed();
     }
 }

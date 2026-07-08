@@ -77,7 +77,7 @@ impl ResourceManager {
         };
 
         // [Fast Path] Per-frame cache check
-        if let Some(gpu_mat) = self.resources.gpu_materials.get(handle)
+        if let Some(gpu_mat) = self.resources.material(handle)
             && gpu_mat.last_verified_frame == self.frame_index
         {
             return;
@@ -88,10 +88,10 @@ impl ResourceManager {
             self.ensure_material_resources(assets, &material);
 
         let needs_rebuild_bindgroup =
-            if has_pending_textures && self.resources.gpu_materials.contains_key(handle) {
+            if has_pending_textures && self.resources.contains_material(handle) {
                 // lagging sync: if textures are still loading, do not trigger a rebuild based on resource ID mismatch
                 false
-            } else if let Some(gpu_mat) = self.resources.gpu_materials.get(handle) {
+            } else if let Some(gpu_mat) = self.resources.material(handle) {
                 let mut cached_ids = gpu_mat.resource_ids.clone();
                 !current_resource_ids.matches(&mut cached_ids)
             } else {
@@ -104,7 +104,7 @@ impl ResourceManager {
         }
 
         // 4. Update version number and frame counter (very fast operation)
-        if let Some(gpu_mat) = self.resources.gpu_materials.get_mut(handle) {
+        if let Some(gpu_mat) = self.resources.material_mut(handle) {
             gpu_mat.version = material.data.version();
             gpu_mat.last_used_frame = self.frame_index;
             // If textures are pending (first-time creation with fallbacks),
@@ -147,7 +147,7 @@ impl ResourceManager {
                     if matches!(state, ResourceState::Pending) {
                         has_pending = true;
                     }
-                    if let Some(binding) = self.resources.texture_bindings.get(*tex_handle) {
+                    if let Some(binding) = self.resources.texture_binding(*tex_handle) {
                         resource_ids.push(binding.view_id);
                         resource_ids.push(binding.sampler_id as u64);
                     } else {
@@ -182,7 +182,7 @@ impl ResourceManager {
         let layout_hash = hash_layout_entries(&layout_entries);
 
         // Check if a new Layout is needed
-        let (layout, layout_id) = if let Some(gpu_mat) = self.resources.gpu_materials.get(handle) {
+        let (layout, layout_id) = if let Some(gpu_mat) = self.resources.material(handle) {
             if gpu_mat.layout_hash == layout_hash {
                 // Layout unchanged, reuse
                 (gpu_mat.layout.clone(), gpu_mat.layout_id)
@@ -210,10 +210,10 @@ impl ResourceManager {
             last_verified_frame: self.frame_index,
         };
 
-        self.resources.gpu_materials.insert(handle, gpu_mat);
+        self.resources.insert_material(handle, gpu_mat);
     }
 
     pub fn get_material(&self, handle: MaterialHandle) -> Option<&GpuMaterial> {
-        self.resources.gpu_materials.get(handle)
+        self.resources.material(handle)
     }
 }
