@@ -12,9 +12,10 @@
     "test": "echo \"Error: no test specified\" && exit 1",
     "docs:dev": "vitepress dev docs",
     "docs:build": "vitepress build docs",
-    "docs:preview": "vitepress preview docs",
+    "docs:preview": "npm run docs:build && vitepress preview docs",
+    "docs:serve": "vitepress preview docs",
     "site:build": "vitepress build docs && cargo xtask build-gallery --release",
-    "site:preview": "vitepress preview docs"
+    "site:preview": "npm run docs:build && vitepress preview docs"
   },
   "repository": {
     "type": "git",
@@ -31,7 +32,6 @@
     "@types/node": "^25.9.1",
     "mermaid": "^11.15.0",
     "vitepress": "^1.6.4",
-    "vitepress-plugin-mermaid": "^2.0.17",
     "vue": "^3.5.35"
   }
 }

@@ -1,5 +1,4 @@
 import { defineConfig } from 'vitepress'
-import { withMermaid } from 'vitepress-plugin-mermaid'
 
 const isGithub = process.env.GITHUB_ACTIONS === 'true'
 
@@ -201,67 +200,82 @@ function getEnThemeConfig() {
 }
 
 // ── 导出 VitePress 配置 ──────────────────────────────────────────────────
-export default withMermaid(
-  defineConfig({
-    title: 'Myth Engine',
-    description: '极致性能的轻量级 Rust 渲染引擎 · A high-performance, lightweight Rust rendering engine',
+export default defineConfig({
+  title: 'Myth Engine',
+  description: '极致性能的轻量级 Rust 渲染引擎 · A high-performance, lightweight Rust rendering engine',
 
-    appearance: 'dark',
+  appearance: 'dark',
 
-    base: BASE,
-    lastUpdated: true,
-    cleanUrls: true,
-    ignoreDeadLinks: !isGithub,
-    outDir: '../dist',
+  base: BASE,
+  lastUpdated: true,
+  cleanUrls: true,
+  ignoreDeadLinks: !isGithub,
+  outDir: '../dist',
 
-    vite: {
-      define: {
-        __MYTH_GITHUB_PAGES__: JSON.stringify(isGithub)
-      },
-      build: {
-        emptyOutDir: false
+  vite: {
+    define: {
+      __MYTH_GITHUB_PAGES__: JSON.stringify(isGithub)
+    },
+    build: {
+      emptyOutDir: true
+    }
+  },
+
+  head: [
+    ['meta', { name: 'theme-color', content: '#4a6f9f' }]
+  ],
+
+  markdown: {
+    config(md) {
+      const defaultFence = md.renderer.rules.fence?.bind(md.renderer.rules)
+      md.renderer.rules.fence = (tokens, idx, options, env, self) => {
+        const token = tokens[idx]
+        const language = token.info.trim().split(/\s+/, 1)[0]
+        if (language !== 'mermaid') {
+          return defaultFence ? defaultFence(tokens, idx, options, env, self) : self.renderToken(tokens, idx, options)
+        }
+
+        const id = `mermaid-${idx}`
+        const graph = encodeURIComponent(token.content)
+        return `<LazyMermaid id="${id}" graph="${graph}"></LazyMermaid>`
       }
-    },
+    }
+  },
 
-    head: [
-      ['meta', { name: 'theme-color', content: '#4a6f9f' }]
-    ],
+  rewrites: isGithub
+    ? (id: string) => (id.startsWith('en/') ? id.slice(3) : `zh/${id}`)
+    : undefined,
 
-    rewrites: isGithub
-      ? (id: string) => (id.startsWith('en/') ? id.slice(3) : `zh/${id}`)
-      : undefined,
+  themeConfig: {
+    socialLinks: [{ icon: 'github', link: GITHUB_REPO }],
+    search: { provider: 'local' }
+  },
 
-    themeConfig: {
-      socialLinks: [{ icon: 'github', link: GITHUB_REPO }],
-      search: { provider: 'local' }
-    },
-
-    locales: isGithub
-      ? {
-          root: {
-            label: 'English',
-            lang: 'en-US',
-            themeConfig: getEnThemeConfig()
-          },
-          zh: {
-            label: '简体中文',
-            lang: 'zh-CN',
-            link: '/zh/',
-            themeConfig: getZhThemeConfig()
-          }
+  locales: isGithub
+    ? {
+        root: {
+          label: 'English',
+          lang: 'en-US',
+          themeConfig: getEnThemeConfig()
+        },
+        zh: {
+          label: '简体中文',
+          lang: 'zh-CN',
+          link: '/zh/',
+          themeConfig: getZhThemeConfig()
         }
-      : {
-          root: {
-            label: '简体中文',
-            lang: 'zh-CN',
-            themeConfig: getZhThemeConfig()
-          },
-          en: {
-            label: 'English',
-            lang: 'en-US',
-            link: '/en/',
-            themeConfig: getEnThemeConfig()
-          }
+      }
+    : {
+        root: {
+          label: '简体中文',
+          lang: 'zh-CN',
+          themeConfig: getZhThemeConfig()
+        },
+        en: {
+          label: 'English',
+          lang: 'en-US',
+          link: '/en/',
+          themeConfig: getEnThemeConfig()
         }
-  })
-)
+      }
+})
