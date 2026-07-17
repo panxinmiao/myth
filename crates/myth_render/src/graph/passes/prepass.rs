@@ -257,7 +257,7 @@ impl PrepassFeature {
                 .layout_info
                 .buffers
                 .iter()
-                .map(|l| Some(l.as_wgpu()))
+                .map(|l| l.as_wgpu())
                 .collect();
 
             let cull_mode = match material.side() {

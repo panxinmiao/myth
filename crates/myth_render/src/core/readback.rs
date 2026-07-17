@@ -548,9 +548,7 @@ impl ReadbackStream {
     /// and unmaps the buffer for GPU reuse.
     fn extract_pixels_into(&self, buffer: &wgpu::Buffer, output: &mut Vec<u8>) {
         let slice = buffer.slice(..);
-        let mapped = slice
-            .get_mapped_range()
-            .expect("mapped readback buffer range should be readable");
+        let mapped = slice.get_mapped_range();
 
         let capacity = (self.width * self.height * self.bytes_per_pixel) as usize;
         output.clear();

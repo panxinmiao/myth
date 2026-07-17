@@ -55,7 +55,7 @@ myth_render    = { path = "crates/myth_render", version = "0.3.0", default-featu
 myth_app       = { path = "crates/myth_app", version = "0.3.0" }
 
 # Graphics and Math
-wgpu = { version = "30.0.0", features = ["wgsl"] }
+wgpu = { version = "29.0.4", features = ["wgsl"] }
 glam = { version = "0.32.1", features = ["bytemuck", "scalar-math"] }
 bumpalo = "3.20.2"
 bytemuck = { version = "1.25", features = ["derive", "min_const_generics"] }

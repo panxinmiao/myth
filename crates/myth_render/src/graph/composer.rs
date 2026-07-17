@@ -429,7 +429,7 @@ impl<'a> FrameComposer<'a> {
 
         // Acquire either the swap-chain back buffer or the headless texture view.
         // `surface_output` is `Some` only in windowed mode and holds the
-        // `SurfaceTexture` that must be queued for presentation after submission.
+        // `SurfaceTexture` that must be `.present()`ed after submission.
         let (surface_view, width, height, surface_output);
 
         if let Some(surface) = &self.ctx.wgpu_ctx.surface {
@@ -1277,7 +1277,7 @@ impl<'a> FrameComposer<'a> {
         };
 
         if let Some(output) = surface_output {
-            self.ctx.wgpu_ctx.queue.present(output);
+            output.present();
         }
     }
 }
