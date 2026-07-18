@@ -356,7 +356,6 @@ impl ExtractedScene {
 
     fn extract_lights(&mut self, scene: &Scene, camera: &RenderCamera, max_light_count: usize) {
         self.lights.reserve(scene.lights.len());
-        let mut visible_lights = Vec::with_capacity(scene.lights.len());
 
         for (light, world_matrix) in scene.iter_active_lights() {
             let position = world_matrix.translation.to_vec3();
@@ -380,23 +379,22 @@ impl ExtractedScene {
                 continue;
             }
 
-            visible_lights.push(extracted_light);
+            self.lights.push(extracted_light);
         }
 
-        let visible_light_count = visible_lights.len();
+        let visible_light_count = self.lights.len();
         let camera_position = camera.position.to_array().into();
-        let (ordered_lights, local_light_count, truncated_count) =
-            partition_sort_and_truncate_lights(visible_lights, camera_position, max_light_count);
+        let (local_light_count, truncated_count) =
+            sort_and_truncate_lights(&mut self.lights, camera_position, max_light_count);
         if truncated_count > 0 {
             log::warn!(
                 "Extracted light list truncated from {} to {} entries to satisfy GPU storage buffer limits",
                 visible_light_count,
-                ordered_lights.len(),
+                self.lights.len(),
             );
         }
 
         self.local_light_count = local_light_count;
-        self.lights = ordered_lights;
     }
 
     fn sync_directional_light_storage_buffer(&mut self) {
@@ -712,44 +710,43 @@ fn extracted_light_score(light: &ExtractedLight, camera_position: Vec3) -> f32 {
     if score.is_finite() { score } else { 0.0 }
 }
 
-fn partition_sort_and_truncate_lights(
-    lights: Vec<ExtractedLight>,
+fn sort_and_truncate_lights(
+    lights: &mut Vec<ExtractedLight>,
     camera_position: Vec3,
     max_light_count: usize,
-) -> (Vec<ExtractedLight>, usize, usize) {
-    let mut local_lights = Vec::with_capacity(lights.len());
-    let mut directional_lights = Vec::new();
-    for light in lights {
-        if light.is_directional() {
-            directional_lights.push(light);
-        } else {
-            local_lights.push(light);
-        }
-    }
+) -> (usize, usize) {
+    lights.sort_unstable_by(
+        |lhs, rhs| match (lhs.is_directional(), rhs.is_directional()) {
+            (false, false) => {
+                let lhs_score = extracted_light_score(lhs, camera_position);
+                let rhs_score = extracted_light_score(rhs, camera_position);
+                rhs_score
+                    .total_cmp(&lhs_score)
+                    .then_with(|| lhs.id.cmp(&rhs.id))
+            }
+            (true, true) => lhs.id.cmp(&rhs.id),
+            (false, true) => std::cmp::Ordering::Less,
+            (true, false) => std::cmp::Ordering::Greater,
+        },
+    );
 
-    local_lights.sort_unstable_by(|lhs, rhs| {
-        let lhs_score = extracted_light_score(lhs, camera_position);
-        let rhs_score = extracted_light_score(rhs, camera_position);
-        rhs_score
-            .total_cmp(&lhs_score)
-            .then_with(|| lhs.id.cmp(&rhs.id))
-    });
-    directional_lights.sort_unstable_by_key(|light| light.id);
-
-    let visible_light_count = local_lights.len() + directional_lights.len();
+    let visible_light_count = lights.len();
+    let mut local_light_count = lights.partition_point(|light| !light.is_directional());
+    let directional_light_count = visible_light_count - local_light_count;
     if visible_light_count > max_light_count {
-        if directional_lights.len() >= max_light_count {
-            local_lights.clear();
-            directional_lights.truncate(max_light_count);
+        if directional_light_count >= max_light_count {
+            lights.drain(..local_light_count);
+            lights.truncate(max_light_count);
+            local_light_count = 0;
         } else {
-            local_lights.truncate(max_light_count.saturating_sub(directional_lights.len()));
+            let retained_local_count = max_light_count - directional_light_count;
+            lights.drain(retained_local_count..local_light_count);
+            local_light_count = retained_local_count;
         }
     }
 
-    let retained_local_light_count = local_lights.len();
-    local_lights.extend(directional_lights);
-    let truncated_count = visible_light_count.saturating_sub(local_lights.len());
-    (local_lights, retained_local_light_count, truncated_count)
+    let truncated_count = visible_light_count.saturating_sub(lights.len());
+    (local_light_count, truncated_count)
 }
 
 fn extracted_light_radius(light: &ExtractedLight) -> f32 {
@@ -773,7 +770,7 @@ fn spot_bounding_sphere(position: Vec3, direction: Vec3, spot: &SpotLight) -> (V
 
 #[cfg(test)]
 mod tests {
-    use super::{partition_sort_and_truncate_lights, spot_bounding_sphere};
+    use super::{sort_and_truncate_lights, spot_bounding_sphere};
     use glam::Vec3;
     use myth_scene::light::{DirectionalLight, LightKind, PointLight, SpotLight};
 
@@ -827,40 +824,104 @@ mod tests {
 
     #[test]
     fn partition_sort_and_truncate_keeps_directional_lights_in_tail_segment() {
-        let lights = vec![
+        let mut lights = vec![
             point_light(1, Vec3::new(0.0, 0.0, -4.0), 4.0, 6.0),
             directional_light(2),
             spot_light(3, Vec3::new(0.0, 0.0, -2.0), 2.0, 5.0),
         ];
 
-        let (ordered, local_light_count, truncated_count) =
-            partition_sort_and_truncate_lights(lights, Vec3::ZERO, usize::MAX);
+        let (local_light_count, truncated_count) =
+            sort_and_truncate_lights(&mut lights, Vec3::ZERO, usize::MAX);
 
         assert_eq!(local_light_count, 2);
         assert_eq!(truncated_count, 0);
         assert_eq!(
-            ordered.iter().map(|light| light.id).collect::<Vec<_>>(),
+            lights.iter().map(|light| light.id).collect::<Vec<_>>(),
             vec![1, 3, 2]
         );
     }
 
     #[test]
     fn partition_sort_and_truncate_preserves_directional_lights_when_capping_locals() {
-        let lights = vec![
+        let mut lights = vec![
             point_light(1, Vec3::new(0.0, 0.0, -12.0), 2.0, 3.0),
             point_light(2, Vec3::new(0.0, 0.0, -3.0), 4.0, 10.0),
             spot_light(3, Vec3::new(0.0, 0.0, -5.0), 3.0, 9.0),
             directional_light(4),
         ];
 
-        let (ordered, local_light_count, truncated_count) =
-            partition_sort_and_truncate_lights(lights, Vec3::ZERO, 2);
+        let (local_light_count, truncated_count) =
+            sort_and_truncate_lights(&mut lights, Vec3::ZERO, 2);
 
         assert_eq!(local_light_count, 1);
         assert_eq!(truncated_count, 2);
         assert_eq!(
-            ordered.iter().map(|light| light.id).collect::<Vec<_>>(),
+            lights.iter().map(|light| light.id).collect::<Vec<_>>(),
             vec![2, 4]
+        );
+    }
+
+    #[test]
+    fn sort_and_truncate_reuses_the_input_allocation() {
+        let mut lights = Vec::with_capacity(16);
+        lights.extend([
+            directional_light(9),
+            point_light(2, Vec3::new(0.0, 0.0, -3.0), 4.0, 10.0),
+            directional_light(4),
+            point_light(1, Vec3::new(0.0, 0.0, -12.0), 2.0, 3.0),
+        ]);
+        let allocation = lights.as_ptr();
+        let capacity = lights.capacity();
+
+        let (local_light_count, truncated_count) =
+            sort_and_truncate_lights(&mut lights, Vec3::ZERO, 3);
+
+        assert_eq!(lights.as_ptr(), allocation);
+        assert_eq!(lights.capacity(), capacity);
+        assert_eq!(local_light_count, 1);
+        assert_eq!(truncated_count, 1);
+        assert_eq!(
+            lights.iter().map(|light| light.id).collect::<Vec<_>>(),
+            vec![2, 4, 9]
+        );
+    }
+
+    #[test]
+    fn sort_and_truncate_prefers_lowest_directional_ids_at_tight_capacity() {
+        let mut lights = vec![
+            point_light(1, Vec3::new(0.0, 0.0, -3.0), 4.0, 10.0),
+            directional_light(9),
+            directional_light(4),
+            directional_light(7),
+        ];
+
+        let (local_light_count, truncated_count) =
+            sort_and_truncate_lights(&mut lights, Vec3::ZERO, 2);
+
+        assert_eq!(local_light_count, 0);
+        assert_eq!(truncated_count, 2);
+        assert_eq!(
+            lights.iter().map(|light| light.id).collect::<Vec<_>>(),
+            vec![4, 7]
+        );
+    }
+
+    #[test]
+    fn sort_and_truncate_preserves_local_id_tie_breaking() {
+        let mut lights = vec![
+            point_light(9, Vec3::new(0.0, 0.0, -5.0), 2.0, 10.0),
+            point_light(4, Vec3::new(0.0, 0.0, -5.0), 2.0, 10.0),
+            directional_light(7),
+        ];
+
+        let (local_light_count, truncated_count) =
+            sort_and_truncate_lights(&mut lights, Vec3::ZERO, usize::MAX);
+
+        assert_eq!(local_light_count, 2);
+        assert_eq!(truncated_count, 0);
+        assert_eq!(
+            lights.iter().map(|light| light.id).collect::<Vec<_>>(),
+            vec![4, 9, 7]
         );
     }
 

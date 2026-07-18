@@ -698,6 +698,21 @@ impl RenderFrame {
         use glam::{Mat4, Vec4};
         use myth_scene::light::LightKind;
 
+        // The extracted light payload already carries the complete no-shadow
+        // state. Avoid taking write guards here: `CpuBuffer::write()` advances
+        // the version even when the assigned values are unchanged, which used
+        // to force two redundant Queue uploads on every shadow-free frame.
+        let has_shadow_views = active_views
+            .iter()
+            .any(crate::core::view::RenderView::is_shadow);
+        if !has_shadow_views {
+            // Keep the normal ensure path for first-frame materialization,
+            // resource residency and stable external RDG imports.
+            resource_manager.ensure_buffer(&extracted_scene.local_light_storage_buffer);
+            resource_manager.ensure_buffer(&extracted_scene.directional_light_storage_buffer);
+            return;
+        }
+
         // Reset shadow fields
         {
             let mut local_light_storage = extracted_scene.local_light_storage_buffer.write();
@@ -718,14 +733,6 @@ impl RenderFrame {
                 light.cascade_count = 0;
                 light.cascade_splits = Vec4::ZERO;
             }
-        }
-
-        let total_layers = active_views.iter().filter(|v| v.is_shadow()).count() as u32;
-
-        if total_layers == 0 {
-            resource_manager.ensure_buffer(&extracted_scene.local_light_storage_buffer);
-            resource_manager.ensure_buffer(&extracted_scene.directional_light_storage_buffer);
-            return;
         }
 
         // Aggregate per-light shadow metadata

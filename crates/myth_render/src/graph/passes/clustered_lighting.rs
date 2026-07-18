@@ -385,7 +385,7 @@ impl ClusteredLightingFeature {
         let slice_scale = cluster_z as f32 / log_ratio;
         let slice_bias = -(near.ln() * slice_scale);
 
-        self.frame_params = ClusteredLightingParams {
+        let frame_params = ClusteredLightingParams {
             screen_dimensions: glam::UVec4::new(width, height, cluster_x, cluster_y),
             grid_dimensions: glam::UVec4::new(
                 cluster_z,
@@ -405,11 +405,15 @@ impl ClusteredLightingFeature {
             ),
             depth_params: glam::Vec4::new(near, far, slice_scale, slice_bias),
         };
+        let params_changed =
+            bytemuck::bytes_of(&self.frame_params) != bytemuck::bytes_of(&frame_params);
+        self.frame_params = frame_params;
 
         self.ensure_pipelines(ctx);
         self.light_merge.extract_and_prepare(ctx);
 
         let params_desc = self.params_desc();
+        let params_buffer_missing = self.params_buffer.is_none();
         ensure_tracked_buffer(
             &mut self.params_buffer,
             ctx.device,
@@ -417,13 +421,15 @@ impl ClusteredLightingFeature {
             "Clustered Lighting Params",
         );
 
-        ctx.queue.write_buffer(
-            self.params_buffer
-                .as_ref()
-                .expect("clustered params buffer must exist"),
-            0,
-            bytemuck::bytes_of(&self.frame_params),
-        );
+        if params_buffer_missing || params_changed {
+            ctx.queue.write_buffer(
+                self.params_buffer
+                    .as_ref()
+                    .expect("clustered params buffer must exist"),
+                0,
+                bytemuck::bytes_of(&self.frame_params),
+            );
+        }
     }
 
     pub fn add_to_graph<'a>(
@@ -435,17 +441,14 @@ impl ClusteredLightingFeature {
             .params_buffer
             .as_ref()
             .expect("Clustered lighting params buffer must exist before graph build");
-        let imported_params = ctx.graph.add_pass("Cluster_Params_Import", |builder| {
-            let params_buffer = builder.read_external_buffer(
-                "Clustered_Params",
-                BufferDesc::new(
-                    std::mem::size_of::<ClusteredLightingParams>() as u64,
-                    wgpu::BufferUsages::UNIFORM | wgpu::BufferUsages::COPY_DST,
-                ),
-                params_buffer,
-            );
-            (ClusterParamsImportPassNode, params_buffer)
-        });
+        let imported_params = ctx.graph.import_external_buffer(
+            "Clustered_Params",
+            BufferDesc::new(
+                std::mem::size_of::<ClusteredLightingParams>() as u64,
+                wgpu::BufferUsages::UNIFORM | wgpu::BufferUsages::COPY_DST,
+            ),
+            params_buffer,
+        );
 
         let cpu_local_light_count = ctx.scene_local_light_count();
         let cpu_light_capacity =
@@ -647,14 +650,6 @@ fn resolve_cluster_far_depth(
     estimated_light_depth
         .unwrap_or(near + DEFAULT_CLUSTER_FAR_DEPTH_FALLBACK)
         .max(near + DEFAULT_CLUSTER_FAR_DEPTH_FALLBACK)
-}
-
-struct ClusterParamsImportPassNode;
-
-impl PassNode<'_> for ClusterParamsImportPassNode {
-    fn prepare(&mut self, _ctx: &mut PrepareContext<'_>) {}
-
-    fn execute(&self, _ctx: &ExecuteContext, _encoder: &mut wgpu::CommandEncoder) {}
 }
 
 struct ClusterDispatchArgsPassNode<'a> {

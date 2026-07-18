@@ -56,7 +56,7 @@ use crate::graph::core::ClusteredScreenBindings;
 use crate::graph::core::GraphStorage;
 use crate::graph::core::graph::FrameConfig;
 use crate::graph::core::{
-    BufferDesc, BufferNodeId, ExecuteContext, FrameArena, GraphBlackboard, HookStage, PassNode,
+    BufferDesc, BufferNodeId, ExecuteContext, FrameArena, GraphBlackboard, HookStage,
     PrepareContext, RenderGraph, TextureDesc, TransientPool, ViewResolver,
 };
 use crate::graph::extracted::SceneFeatures;
@@ -224,14 +224,6 @@ pub struct GpuLightBuffers {
     pub indirect_count_buffer: Option<BufferNodeId>,
 }
 
-struct SceneLightingImportPassNode;
-
-impl PassNode<'_> for SceneLightingImportPassNode {
-    fn prepare(&mut self, _ctx: &mut PrepareContext<'_>) {}
-
-    fn execute(&self, _ctx: &ExecuteContext, _encoder: &mut wgpu::CommandEncoder) {}
-}
-
 fn import_scene_lighting(
     ctx: &mut GraphBuilderContext<'_, '_>,
     render_lists: &RenderLists,
@@ -245,33 +237,28 @@ fn import_scene_lighting(
         .as_ref()
         .expect("scene light storage buffer missing");
 
-    ctx.graph.add_pass("Scene_Lighting_Import", |builder| {
-        let light_metadata = builder.read_external_buffer(
-            "Scene_Local_Light_Metadata",
-            BufferDesc::new(
-                std::mem::size_of::<LightBufferMetadata>() as u64,
-                wgpu::BufferUsages::UNIFORM | wgpu::BufferUsages::COPY_DST,
-            ),
-            light_metadata_buffer,
-        );
-        let light_storage = builder.read_external_buffer(
-            "Scene_Local_Lights",
-            BufferDesc::new(
-                light_storage_buffer.size(),
-                wgpu::BufferUsages::STORAGE | wgpu::BufferUsages::COPY_DST,
-            ),
-            light_storage_buffer,
-        );
+    let light_metadata = ctx.graph.import_external_buffer(
+        "Scene_Local_Light_Metadata",
+        BufferDesc::new(
+            std::mem::size_of::<LightBufferMetadata>() as u64,
+            wgpu::BufferUsages::UNIFORM | wgpu::BufferUsages::COPY_DST,
+        ),
+        light_metadata_buffer,
+    );
+    let light_storage = ctx.graph.import_external_buffer(
+        "Scene_Local_Lights",
+        BufferDesc::new(
+            light_storage_buffer.size(),
+            wgpu::BufferUsages::STORAGE | wgpu::BufferUsages::COPY_DST,
+        ),
+        light_storage_buffer,
+    );
 
-        (
-            SceneLightingImportPassNode,
-            GpuLightBuffers {
-                light_metadata,
-                light_storage,
-                indirect_count_buffer: None,
-            },
-        )
-    })
+    GpuLightBuffers {
+        light_metadata,
+        light_storage,
+        indirect_count_buffer: None,
+    }
 }
 
 fn base_cube_desc(texture: &wgpu::Texture) -> TextureDesc {

@@ -375,12 +375,14 @@ pub struct GpuLightStorage {
     /// Bit flags for renderer-side light specialization.
     pub flags: u32,
     /// Base layer index into the 2D shadow array (−1 if no 2D shadow).
+    #[default(-1)]
     pub shadow_layer_index: i32,
 
     pub shadow_bias: f32,
     pub shadow_normal_bias: f32,
     pub cascade_count: u32,
     /// Base cube index into the cube array shadow map (−1 if no point shadow).
+    #[default(-1)]
     pub point_shadow_index: i32,
 
     /// Cascade split distances (view-space depth thresholds).
@@ -497,5 +499,12 @@ mod tests {
     fn test_nested_wgsl() {
         let wgsl = GpuLightStorage::wgsl_struct_def("GpuLightStorage");
         println!("{wgsl}");
+    }
+
+    #[test]
+    fn default_light_storage_uses_inactive_shadow_indices() {
+        let light = GpuLightStorage::default();
+        assert_eq!(light.shadow_layer_index, -1);
+        assert_eq!(light.point_shadow_index, -1);
     }
 }
