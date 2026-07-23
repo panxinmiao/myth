@@ -20,24 +20,23 @@
 - Introduced a **procedural sky system** powered by a physically-based atmospheric scattering model (Hillaire 2020), enabling high-quality real-time sky rendering with procedural celestial bodies (sun, moon, and stars).
 Also includes a `DayNightCycle` component for dynamic time progression, automatically syncing the trajectories of the sun, moon, and star field with scene parameters.
 
-- Overhauled the **RenderGraph** into a more complete typed-resource system: buffers and textures are now first-class SSA resources with unified dependency tracking, zero-cost typed node handles, and transient power-of-two buffer pooling for aggressive VRAM reuse.
+- Overhauled the **RenderGraph** into a more complete typed-resource system: buffers and textures are now first-class SSA resources with unified dependency tracking, typed node handles, and transient power-of-two buffer pooling for compatible reuse.
 Also migrated major compute-heavy paths such as 3D Gaussian Splatting, atmosphere baking, and PMREM/environment processing onto RDG-managed buffer lifetimes, removing ad-hoc side channels around the graph.
 
-- Introduced a unified cached bind-group assembly API across `PrepareContext` and `ExtractContext`, centered around a fluent builder plus `myth_bind_group!`.This removes large amounts of repetitive WGPU boilerplate, unifies static and transient bind-group construction, and guarantees that RDG buffer bindings clamp pooled physical allocations back to their logical resource sizes.
+- Introduced a unified cached bind-group assembly API across `PrepareContext` and `ExtractContext`, centered around a fluent builder plus `myth_bind_group!`. This removes repetitive wgpu boilerplate, unifies static and transient bind-group construction, and ensures that RDG buffer bindings clamp pooled physical allocations back to their logical resource sizes.
 
-- Introduced **Clustered Shading (Forward+)** to support rendering massive numbers of dynamic lights. Built on a production-oriented, fully GPU-driven compute pipeline:
+- Introduced **Clustered Shading (Forward+)** to reduce the local-light list evaluated by each shaded cluster. The GPU compute pipeline includes:
   - **Precise Light Culling:** High-accuracy view-space frustum vs. sphere intersection testing for reliable light assignment across the logarithmic depth grid.
-  - **Dynamic VRAM Allocation:** Utilizes a global atomic allocator to support extreme light densities dynamically, maximizing memory efficiency without artificial per-cluster limits.
-  - **High-Performance Compute:** Aggressively leverages shared memory (`var<workgroup>`) and parallel workgroup execution to drastically reduce ALU and bandwidth overhead.
+  - **Bounded Index Allocation:** Uses a global atomic allocator and a configurable per-cluster budget, clamped when necessary to the available global index-buffer capacity.
+  - **Parallel Compute:** Uses workgroup memory (`var<workgroup>`) and parallel workgroup execution for cluster assignment.
   - **Visual Profiling:** Added a `ClusterHeatmap` debug view to inspect light density and grid allocation in real-time.
 
-- Introduced 3D Gaussian Splatting (3DGS) as a first-class rendering primitive behind the `3dgs` feature flag.
-  - High-Performance Sorting: Fast GPU radix sort for depth sorting millions of splats per frame, ensuring correct transparency and blending without CPU overhead.
-  - Scene Graph & Post-Processing Integration: Full integration with the render state and scene graph. Compatible with post-processing passes.
-  - Asset Support: Load point clouds from compressed `.npz` (via `gaussian-npz`) and standard `.ply` formats via the async asset server.
+- Introduced Experimental 3D Gaussian Splatting (3DGS) as a first-class rendering primitive behind the `3dgs` feature flag.
+  - GPU Sorting: Radix-sort passes order visible splats for alpha compositing without a CPU-side sort.
+  - Scene Graph & Post-Processing Integration: Gaussian clouds participate in the render state, scene graph, and High-Fidelity frame composition.
+  - Asset Support: Load `.ply`, compressed `.npz` (via `gaussian-npz`), and SPZ v4 `NGSP` files (via `gaussian-spz`) through the async asset server.
 
 ### Refactored / Changed
-- Updated Myth's graphics backend dependency to `wgpu` v30 and adjusted render graph, pipeline, readback, and surface presentation code for the new API.
 - Split egui support into a dedicated `myth_egui` crate with a Myth-native renderer and optional `myth/egui` facade, removing the examples' dependency on `egui-wgpu`.
   - Added stable Myth texture registration for egui via `UiPass::texture_id` / `UiPass::register_texture`, allowing `TextureHandle` values to be shown directly in egui while the backend keeps the GPU view and sampler synchronized.
 
@@ -49,7 +48,7 @@ Also migrated major compute-heavy paths such as 3D Gaussian Splatting, atmospher
 
 ### Added
 - Added `#[myth::main]` macro for ergonomic application entry point definition, unifying entry points across Native and WASM platforms.
-- Added "dynamic image/texture" support, via `Image::new_dynamic` and `AssetServer::update_dynamic_texture`. This provides a simple API for real-time updating of texture content from CPU data (without allocation), ideal for video streaming, dynamic UI elements, or procedural textures.
+- Added "dynamic image/texture" support via `Image::new_dynamic` and `AssetServer::update_dynamic_texture`. The update path reuses an existing buffer when the replacement byte length matches, supporting video frames, dynamic UI elements, and procedural textures.
 - Added some custom material examples to the Gallery, showcasing the use of custom shader code and material definitions.
 - Added some primitive geometry constructors to the API, such as `create_cone`, `create_cylinder`, `create_torus`, etc.
 - Added `LIGHT_FLAG_IS_SUN`/`LIGHT_FLAG_IS_MOON` flags to the `Light` struct, allowing the renderer to identify and treat directional lights as celestial bodies for sky rendering and IBL purposes. Now sunlight correctly considers the atmospheric scattering effects from the procedural sky system.
@@ -71,7 +70,7 @@ Released 2026-04-07
 - Refactored the asynchronous asset loading system, introducing a “fire-and-forget” style, ergonomic API. All asynchronous loading logic is now fully handled internally by the engine.
 - **Headless Rendering Mode**: Added support for offscreen rendering without a window surface (`Renderer.init_headless`). Ideal for server-side rendering, CI/CD testing, and offline video/image generation.
   - **Synchronous GPU Readback**: Introduced `Renderer.readback_pixels()` for simple, one-shot synchronous GPU-to-CPU pixel data extraction.
-  - **High-Throughput Asynchronous Readback Stream**: Implemented `ReadbackStream`, a non-blocking ring-buffer pipeline for continuous frame readback. Designed for extreme performance in video recording and AI training data generation without stalling the GPU pipeline.
+  - **Asynchronous Readback Stream**: Implemented `ReadbackStream`, a bounded ring-buffer pipeline for continuous frame readback, with non-blocking submission and an explicit blocking back-pressure option.
 - Refactored the shader management and templating system. Shader code is now organized based on functional semantics and responsibility boundaries. The API entry point for creating shader programs has been consolidated and unified, and support has been added for loading custom shaders from external files.
 
 ### Added
@@ -87,7 +86,7 @@ Released 2026-04-07
 
 ## v0.1.1
 
-Released 2021-03-26
+Released 2026-03-26
 
 #### Changes
 - Use `ehttp` instead of `reqwest`.
@@ -107,13 +106,13 @@ Inspired by the ergonomic simplicity of Three.js and built on the modern power o
 ### Features
 
 * **Core Architecture & Platform**
-    * **True Cross-platform, One Codebase**: Native (Windows, macOS, Linux, iOS, Android) + WebGPU/WASM + Python bindings.
-    * **Modern Backend**: Built on **wgpu**, fully supporting Vulkan, Metal, DX12, and WebGPU.
+    * **Cross-platform core**: Native Windows, macOS, and Linux targets, plus WebGPU/WASM and Python bindings. Mobile targets are not part of the current verified support matrix.
+    * **Modern Backend**: Built on **wgpu** across Vulkan, Metal, DX12, and WebGPU.
     * **SSA-based Render Graph**: A declarative, compiler-driven rendering architecture. You declare the topological needs, and the engine handles the rest:
-        * **Automatic Synchronization**: Zero manual memory barriers or layout transitions.
-        * **Aggressive Memory Aliasing**: Reuses transient high-resolution physical textures perfectly across distinct logical passes.
+        * **Dependency-driven ordering**: The graph orders declared producers and consumers; wgpu derives backend synchronization from recorded resource usage.
+        * **Memory Aliasing**: Reuses compatible transient physical textures across logical passes when their lifetimes permit.
         * **Dead Pass Elimination**: Automatically culls rendering workloads.
-        * **Zero-Allocation Per-Frame Rebuild**: Evaluates and compiles the entire DAG every frame.
+        * **Arena-backed Per-Frame Rebuild**: Evaluates and compiles the DAG every frame using short-lived arena storage.
 
 * **Advanced Rendering & Lighting**
     * **Physically Based Materials**: Robust PBR pipeline with Clearcoat, Iridescence, Transmission, Sheen, Anisotropy.
@@ -124,7 +123,7 @@ Inspired by the ergonomic simplicity of Three.js and built on the modern power o
     * **HDR Pipeline** + **Bloom** + **Color Grading** + **TAA / FXAA / MSAA**.
 
 * **Assets & Tooling**
-    * **Full glTF 2.0 Support** (PBR, animations, morph targets).
+    * **glTF 2.0 assets** including PBR materials, animations, and morph targets.
     * **Asynchronous Asset System** + **Embedded egui Inspector**.
 
 ## Diffs
