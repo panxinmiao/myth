@@ -1,13 +1,13 @@
-# 文章
+# Articles
 
-关于 Myth Engine 的设计、架构或实现细节等内容的文章。
+Articles about Myth Engine's design, architecture, or implementation details.
 
-## 文章列表
+## All Articles
 
-### [构建基于 SSA 的声明式渲染图](/articles/render-graph-design)
+### [Building an SSA-Based Declarative Render Graph](/articles/render-graph-design)
 
-Myth 渲染图编译器的完整设计历程：从线性硬编码原型，到"黑板"模式的失败尝试，最终收敛到一个基于 **SSA（静态单赋值）** 的、严格的声明式 RenderGraph。文中包含编译器生命周期、自动内存别名、死节点剔除（DPE）的原理，以及单帧编译耗时约 1.6µs 的实测基准与自动生成的拓扑图谱。
+The full design journey of Myth's render graph compiler: from a linear hardcoded prototype, through a failed "blackboard" pattern, to a strict declarative RenderGraph built on **SSA (Static Single Assignment)**. Covers the compiler lifecycle, automatic memory aliasing, dead-pass elimination (DPE), plus ~1.6µs per-frame compilation benchmarks and auto-generated topology graphs.
 
 ---
 
-> 想了解面向使用者的精炼版架构说明？请阅读 [Render Graph 渲染图](/architecture/render-graph) 章节。
+> Looking for the concise, user-facing architecture overview? Read the [Render Graph](/architecture/render-graph) chapter.

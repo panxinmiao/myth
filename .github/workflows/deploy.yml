@@ -26,12 +26,19 @@ jobs:
         uses: actions/setup-node@v4
         with:
           node-version: 20
+          cache: npm
 
       - name: Install npm dependencies
-        run: npm install
+        run: npm ci
+
+      - name: Check source locale topology
+        run: node scripts/check-doc-site.mjs --source-only
 
       - name: Build VitePress site
         run: npm run docs:build
+
+      - name: Check generated links and locale topology
+        run: node scripts/check-doc-site.mjs dist /myth/
 
       # ── Gallery sub-app (dist/gallery) ───────────────────────────────────
       - name: Install Rust
@@ -55,6 +62,9 @@ jobs:
 
       - name: Build Gallery & Demo Apps
         run: cargo xtask build-gallery --release
+
+      - name: Check final combined site
+        run: node scripts/check-doc-site.mjs dist /myth/ --require-gallery
 
       # ── Publish combined dist/ ───────────────────────────────────────────
       - name: Setup Pages

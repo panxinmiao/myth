@@ -1,31 +1,31 @@
-# 简介与愿景
+# Introduction & Vision
 
-**Myth Engine** 是一款对开发者友好的、基于 **Rust** 编写的高性能 3D 渲染引擎。
+**Myth Engine** is a developer-friendly, high-performance 3D rendering engine written in **Rust**.
 
-它深受 Three.js 简洁且符合直觉的 API 设计启发，并基于现代图形 API **wgpu** 构建，旨在弥合底层图形 API 与高层交互逻辑之间的鸿沟。
+Inspired by the ergonomic, intuitive API design of Three.js and built on the modern graphics API **wgpu**, Myth aims to bridge the gap between low-level graphics APIs and high-level interaction logic.
 
-## 为什么选择 Myth？
+## Why Myth?
 
-现代图形 API（如 WebGPU、Vulkan 和 DirectX 12）的功能极其强大，但代价是极其繁琐的样板代码 —— 即使只是绘制一个简单的场景，也需要处理大量的内存屏障和管线状态。
+Modern graphics APIs (WebGPU, Vulkan, DirectX 12) are extraordinarily powerful — but that power comes at the cost of overwhelming boilerplate. Even drawing a simple scene requires juggling memory barriers and pipeline state.
 
-另一方面，当你仅仅需要一个**极致性能的轻量级渲染库**时，像 Bevy 或 Godot 这样包罗万象的重量级商业引擎往往显得过于臃肿（"too heavy"）。
+On the other hand, when all you need is a **lean, high-performance rendering library**, all-in-one heavyweight engines like Bevy or Godot often feel *too heavy*.
 
-Myth 正是为填补这一空白而生。我们拒绝妥协，通过引入一套严格的底层架构，在保持轻量级的同时，压榨出极致的硬件性能。
+Myth was born to fill that gap. We refuse to compromise: through a strict low-level architecture, Myth stays lightweight while squeezing out extreme hardware performance.
 
-## 核心设计哲学
+## Core Design Philosophy
 
-Myth 的引擎底层不仅是一个渲染器，更是一个**图编译器**。
+At its foundation, Myth is not merely a renderer — it is a **graph compiler**.
 
-- **基于 SSA 的声明式渲染图 (RenderGraph)：** 我们抛弃了传统的手动状态管理，将渲染过程视为编译器问题。你只需声明渲染阶段的拓扑需求，引擎会自动执行拓扑排序、计算激进的内存别名（Aliasing），并自动剔除死节点（Dead-pass elimination）。**完全无需手动管理资源生命周期和内存屏障。**
-- **为下一代 3D 交互打造：** 原生集成 3D Gaussian Splatting (3DGS) 混合管线，并提供强大的 GPU-driven 聚类光照（Clustered Lighting），轻松应对海量动态光源。
-- **一套代码，全平台运行：** 基于 Rust 的跨平台特性，支持原生桌面端 (Windows, macOS, Linux)、移动端 (iOS, Android)、以及通过 WebAssembly 无缝导出至 WebGPU 浏览器环境。
+- **SSA-based Declarative RenderGraph:** We abandon traditional manual state management and treat rendering as a compiler problem. You simply declare the topological needs of each render stage, and the engine performs topological sorting, computes aggressive memory aliasing, and culls dead passes automatically. **No manual resource lifetime or memory-barrier management required.**
+- **Built for Next-Gen 3D Interaction:** Natively integrates a 3D Gaussian Splatting (3DGS) hybrid pipeline and provides powerful GPU-driven Clustered Lighting to effortlessly handle massive numbers of dynamic lights.
+- **One Codebase, Every Platform:** Thanks to Rust's cross-platform nature, Myth runs on native desktop (Windows, macOS, Linux), mobile (iOS, Android), and seamlessly targets WebGPU browsers via WebAssembly.
 
-::: tip 适用场景
-Myth 非常适合需要**高度定制化渲染管线**、**AI Agent 驱动的 3D 数字生命**展示，以及需要嵌入到其他系统中的高性能图形模块。
+::: tip Where Myth Shines
+Myth is ideal for projects that need a **highly customizable rendering pipeline**, **AI-agent-driven 3D digital life** showcases, or a high-performance graphics module that embeds into a larger system.
 :::
 
-## 下一步
+## Next Steps
 
-- 想立刻动手？ → [快速开始](/guide/quick-start)
-- 想纵览全部能力？ → [核心特性总览](/guide/features)
-- 想理解底层架构？ → [Render Graph 渲染图](/architecture/render-graph)
+- Want to get hands-on right away? → [Quick Start](/guide/quick-start)
+- Want a bird's-eye view of all capabilities? → [Feature Overview](/guide/features)
+- Want to understand the architecture? → [Render Graph](/architecture/render-graph)

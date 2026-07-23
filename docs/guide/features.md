@@ -1,43 +1,43 @@
-# 核心特性总览
+# Feature Overview
 
-Myth 在保持**轻量级**的同时，提供了媲美重型商业引擎的现代渲染能力。本页对引擎的核心能力做一个鸟瞰式梳理，帮助你快速判断它是否契合你的项目。
+Myth delivers modern rendering capabilities rivaling heavyweight commercial engines while staying **lightweight**. This page gives a bird's-eye view of the engine's core capabilities to help you quickly decide whether it fits your project.
 
-## 能力矩阵
+## Capability Matrix
 
-| 领域 | 能力 |
+| Domain | Capabilities |
 | :--- | :--- |
-| **核心架构** | 基于 SSA 的声明式 RenderGraph 编译器、每帧零分配重建、自动内存别名、死节点剔除 |
-| **跨平台** | Windows / macOS / Linux / iOS / Android · WebGPU/WASM · Python 绑定 |
-| **后端** | 基于 wgpu，支持 Vulkan / Metal / DX12 / WebGPU |
-| **光照** | 聚类前向光照 (Clustered Forward)、IBL 基于图像的光照、CSM 级联阴影、聚光灯阴影 |
-| **材质** | 完整 PBR（Clearcoat / Iridescence / Transmission / Sheen / Anisotropy）、Phong、Unlit、自定义材质宏 |
-| **屏幕空间特效** | SSAO、SSR、SSGI、SSSS（次表面散射） |
-| **后处理** | HDR 管线、Bloom、色彩分级、TAA / FXAA / MSAA、CAS 锐化 |
-| **环境** | 程序化天空（Hillaire 2020 大气散射）、日月星辰、昼夜循环、Skybox、HDR 环境贴图 |
-| **3DGS** | GPU-Driven 3D 高斯溅射，与 PBR 管线统一融合 |
-| **资产** | 完整 glTF 2.0（PBR、动画、Morph Target）、异步资产系统 |
-| **工具** | 内嵌 egui Inspector、运行时 RenderGraph 拓扑导出 |
-| **离屏** | 无头渲染、非阻塞 GPU→CPU 回读环形缓冲 |
+| **Core Architecture** | SSA-based declarative RenderGraph compiler, zero-allocation per-frame rebuild, automatic memory aliasing, dead-pass elimination |
+| **Cross-platform** | Windows / macOS / Linux / iOS / Android · WebGPU/WASM · Python bindings |
+| **Backend** | Built on wgpu — Vulkan / Metal / DX12 / WebGPU |
+| **Lighting** | Clustered forward lighting, Image-Based Lighting (IBL), Cascaded Shadow Maps (CSM), spot-light shadows |
+| **Materials** | Full PBR (Clearcoat / Iridescence / Transmission / Sheen / Anisotropy), Phong, Unlit, custom material macro |
+| **Screen-Space FX** | SSAO, SSR, SSGI, SSSS (subsurface scattering) |
+| **Post-Processing** | HDR pipeline, Bloom, color grading, TAA / FXAA / MSAA, CAS sharpening |
+| **Environment** | Procedural sky (Hillaire 2020 atmospheric scattering), sun/moon/stars, day-night cycle, skybox, HDR environment maps |
+| **3DGS** | GPU-driven 3D Gaussian Splatting, unified with the PBR pipeline |
+| **Assets** | Full glTF 2.0 (PBR, animation, morph targets), asynchronous asset system |
+| **Tooling** | Embedded egui inspector, runtime RenderGraph topology dump |
+| **Offscreen** | Headless rendering, non-blocking GPU→CPU readback ring buffer |
 
-## 设计取舍
+## Design Trade-offs
 
-Myth 的目标不是成为又一个 "全家桶" 引擎，而是做一个**专注、可嵌入、可定制**的高性能渲染核心。
+Myth's goal is not to be yet another "batteries-included" engine, but a **focused, embeddable, customizable** high-performance rendering core.
 
-- **专注渲染：** 我们把精力集中在图形管线本身。物理、音频、网络等系统留给你自由选择，引擎不强加架构。
-- **可嵌入：** 引擎可以无窗口运行，也可以嵌入到既有的 winit / egui / 自定义事件循环中，便于做编辑器、可视化工具或服务端渲染。
-- **编译器思维：** 渲染过程被建模为一个图编译问题。你声明拓扑需求，编译器负责调度、同步与内存复用——把复杂性交给编译器，把创造力还给开发者。
+- **Focused on rendering:** We concentrate on the graphics pipeline itself. Physics, audio, and networking are left to your choice — the engine imposes no architecture on you.
+- **Embeddable:** The engine can run windowless, or embed into existing winit / egui / custom event loops, making it ideal for editors, visualization tools, or server-side rendering.
+- **Compiler mindset:** Rendering is modeled as a graph-compilation problem. You declare topological needs; the compiler handles scheduling, synchronization, and memory reuse — leaving the complexity to the compiler and the creativity to you.
 
-## 渲染路径一览
+## Render Paths at a Glance
 
-引擎提供两条主要的渲染路径，可在创建 `App` 时通过 `RendererSettings` 指定：
+The engine offers two main render paths, selectable via `RendererSettings` when creating an `App`:
 
-- **`RenderPath::HighFidelity`（高保真）：** 完整的 PBR + 后处理 + 屏幕空间特效 + 3DGS 管线。绝大多数特性（Bloom、SSAO、SSR、SSGI、TAA、3DGS 等）都依赖该路径。
-- **`RenderPath::BasicForward`（基础前向）：** 极简前向渲染，适合低端设备或仅需基础着色的场景。
+- **`RenderPath::HighFidelity`:** The full PBR + post-processing + screen-space FX + 3DGS pipeline. Most features (Bloom, SSAO, SSR, SSGI, TAA, 3DGS, etc.) depend on this path.
+- **`RenderPath::BasicForward`:** Minimal forward rendering, suited to low-end devices or scenes that only need basic shading.
 
-详见 [渲染路径与帧合成](/architecture/rendering-pipeline)。
+See [Render Paths & Frame Composer](/architecture/rendering-pipeline) for details.
 
-## 下一步
+## Next Steps
 
-- 想立刻上手？ → [快速开始](/guide/quick-start)
-- 想理解引擎心智模型？ → [场景与节点系统](/guide/scene-graph)
-- 想深入底层架构？ → [Render Graph 渲染图](/architecture/render-graph)
+- Ready to dive in? → [Quick Start](/guide/quick-start)
+- Want the engine's mental model? → [Scene & Node System](/guide/scene-graph)
+- Want to go deep on the architecture? → [Render Graph](/architecture/render-graph)

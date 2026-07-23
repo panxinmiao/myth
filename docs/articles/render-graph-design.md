@@ -1,95 +1,100 @@
 ---
-title: 构建基于 SSA 的声明式渲染图
-description: Myth Engine 渲染图编译器的设计历程：从硬编码原型到黑板模式，再到基于 SSA 的声明式 RenderGraph。
+title: Building an SSA-Based Declarative Render Graph
+description: The design journey of Myth Engine's render graph compiler — from hardcoded prototype to blackboard pattern to a strict SSA-based declarative RenderGraph.
 date: 2025-01-01
 author: Myth Engine
 ---
 
-# Myth Engine 架构：构建基于SSA的声明式渲染图
+# Myth Engine Architecture: Building an SSA-Based Declarative Render Graph
 
-## 0. 引言
+*(Note: The original text was written in Chinese and translated and polished into English.)*
 
-现代图形 API（如 WebGPU、Vulkan 和 DirectX 12）赋予了开发者前所未有的 GPU 资源与同步控制能力。
+## 0. Introduction
 
-但这种控制是有代价的。
+Modern graphics APIs (like WebGPU, Vulkan, and DirectX 12) give developers unprecedented control over GPU resources and synchronization.
 
-一旦你的渲染器扩展到需要处理几个以上的渲染过程（RenderPass），你很快就会发现自己深陷于管理如下内容的泥潭之中：
+But this control comes at a cost.
 
-*   资源生命周期
-*   内存屏障
-*   布局转换
-*   瞬时内存分配
-*   渲染顺序约束
+Once your renderer scales beyond a handful of RenderPasses, you quickly find yourself bogged down in a swamp of manual state management:
 
-如果没有强大的架构支撑，渲染管线很容易就会崩塌成一堆脆弱的状态管理代码。
+* Resource lifecycles
+* Memory barriers
+* Layout transitions
+* Transient memory allocations
+* Render order constraints                       
 
-在开发 **Myth Engine** 的过程中，我对此深有体会。每次添加新的渲染特性，都像是一场与状态管理的战斗，引擎的状态管理复杂度呈“指数级”上升。
+Without a robust architectural foundation, a rendering pipeline can easily collapse into a fragile mess of state management code.
 
-虽然它“勉强能用”，但我不愿就此满足于“足够好”，并在底层积累技术债务。因此，我多次重构了这个子系统，经历了三次快速且方向性的架构调整，最终才得到当前的设计：一个基于 **SSA（静态单赋值，Static Single Assignment）** 的、**严格的、声明式的 RenderGraph**。
+During the development of **Myth Engine**, I experienced this firsthand. Every new rendering feature felt like a battle against state management, and the complexity of managing state grew exponentially.
+
+It “kind of worked,” but I didn’t want to settle for “good enough” and accumulate technical debt at the foundation. So I refactored this subsystem many times, going through three rapid and deliberate architectural pivots, until I arrived at the current design: a strict, declarative RenderGraph based on **SSA (Static Single Assignment)**.
 
 ---
 
-## 1. 通往 SSA 之路：快速的架构转向
+## 1. The Road to SSA: Rapid Architecture Pivots
 
-### 转向 1: 硬编码原型
+### Pivot 1: The Hardcoded Prototype
 
-像许多引擎一样，最早的原型采用了一系列线性、硬编码的 `RenderPass` 调用。对于一个基础的前向渲染器来说，这写起来非常快。但是，当我开始添加级联阴影映射 (CSM) 和后处理特效时，它就开始显得力不从心了。
+Like many engines, the earliest prototype utilized a linear, hardcoded series of `RenderPass` calls. For a basic forward renderer, this is extremely fast to write. However, when I began implementing Cascaded Shadow Maps (CSM) and post-processing, it started to buckle under the pressure.
 
-插入一个新的渲染过程，意味着要在主循环中手动重新连接整个 BindGroup。没过几天，我就意识到这种方法从根本上说是不可扩展的。
+Inserting a new Pass meant manually rewiring entire BindGroups within the main loop. Within days, I realized this approach was fundamentally unscalable.
 
-### 转向 2: “黑板”模式的尝试（手动连接）
+### Pivot 2: The "Blackboard" Attempt (Manual Wiring)
 
-许多技术文章提到现代渲染器是通过 “渲染图（RenderGraph）” 来管理渲染的，虽然大多只是寥寥几笔带过，但这确实给了我很大的启发。为了快速解耦各个RenderPass，我迅速转向了一种黑板（Blackboard）驱动的渲染图。各个渲染过程通过向一个以字符串为键的全局哈希映射（HashMap）中读写资源来进行通信。这种架构很容易理解和实现，并且成功地解耦了代码，但在开发过程中很快暴露了严重的架构缺陷：
+Many technical articles mention that modern renderers manage execution via a "RenderGraph." Although most only gloss over the details, this gave me significant inspiration. To quickly decouple Passes, I rapidly pivoted to a Blackboard-driven RenderGraph. Passes communicated by reading and writing resources to a global HashMap keyed by strings.
 
-*   **显存浪费：** 因为系统无法确切知道谁是资源的 *最后一个* 消费者，它不得不保守地延长资源生命周期（通常持续整个 frame）。动态分配的资源存活时间远超必要，完全错过了回收瞬时内存的机会，GPU 内存利用率极差。
-*   **隐式数据流：** 因为渲染过程通过全局黑板键进行交互，它们实际的依赖关系被隐藏了。这使得无法静态分析真实的数据流，也无法安全地重排序渲染过程的执行。
-*   **验证噩梦：** 在复杂的帧设置中，手动追踪资源生命周期、调整纹理的 `Load/Store` 操作、显式插入内存屏障，导致了无休止的 WGPU Validation Error。追踪渲染错误变成了一场噩梦。
+This architecture was simple to understand and successfully decoupled the codebase, but it quickly exposed fatal architectural flaws during development:
 
-### 转向 3：基于 SSA 的声明式渲染图（当前设计）
+* **VRAM Waste:** Because the system could not definitively know who the *last* consumer of a resource was, it had to conservatively extend resource lifecycles (often lasting the entire frame). Dynamically allocated resources lived far longer than necessary, completely missing opportunities to recycle transient memory. GPU memory utilization was abysmal.
+* **Implicit Data Flow:** Because Passes interacted via global blackboard keys, their true dependencies were hidden. This made it impossible to statically analyze the actual data flow or safely reorder Pass execution.
+* **Validation Nightmares:** In complex frame setups, manually tracking resource lifecycles, adjusting texture `Load/Store` ops, and explicitly inserting memory barriers led to endless WGPU Validation Errors. Tracking down rendering bugs became a nightmare.
 
-意识到 Blackboard 模式的致命问题后，我决定彻底重写 RenderGraph。
+### Pivot 3: SSA-Based Declarative Render Graph (Current Design)
 
-**一个 RenderGraph 不应该只是一个纹理 HashMap；它应该是一个编译器。**
+Realizing the fatal flaws of the Blackboard pattern, I decided to rewrite the RenderGraph from scratch.
 
-类似思想出现在多个现代引擎中（如 Frostbite 的 Render Graph 和 Unreal Engine 的 RDG）。Unreal Engine 的 RDG 文档给了我很大的启发。Myth Engine 的 RDG 与这些系统理念类似，但在设计上更加严格地采用 **SSA (Static Single Assignment, 静态单赋值)** 。
+**A RenderGraph shouldn't just be a texture HashMap; it should be a compiler.**
 
-通过这种架构，我们终于完全消除了手动资源管理。现在，RenderPass 只需声明它们的拓扑需求，例如：
+Similar philosophies appear in several modern engines (such as Frostbite's Render Graph and Unreal Engine's RDG). Unreal Engine's RDG documentation was highly inspiring. Myth Engine's RDG shares conceptual similarities with these systems, but its design strictly enforces **SSA (Static Single Assignment)**.
+
+With this architecture, we have finally eradicated manual resource management entirely. Now, a RenderPass merely declares its topological requirements, for example:
 
 ```rust
 builder.read_texture(id);
+
 ```
-图编译器接收这个不可变的逻辑拓扑，并自动执行 **拓扑排序**、**自动生命周期管理**、**Dead Pass Elimination (DPE)** 以及 **激进的内存 aliasing**。
+
+The graph compiler ingests this immutable logical topology and automatically performs **topological sorting**, **automatic lifecycle management**, **Dead Pass Elimination (DPE)**, and **aggressive memory aliasing**.
 
 ---
 
-## 2. 核心理念：渲染中的严格 SSA
+## 2. Core Philosophy: Strict SSA in Rendering
 
-Myth Engine 的 RDG（Render Dependency Graph）的核心理念是 SSA。
-SSA 常见于编译器设计中，其核心思想很简单：*每个变量只被赋值一次*。
+The core philosophy of Myth Engine's RDG (Render Dependency Graph) is SSA.
+SSA is common in compiler design, and its central idea is simple: *every variable is assigned exactly once*.
 
-在传统渲染中，一个 Pass 可能只是简单地“绑定一个纹理并绘制到它”。而在 SSA RenderGraph 中，一个逻辑资源（`TextureNodeId`）是严格不可变的。一旦一个 Pass 声明自己是某个资源的生产者，其他 Pass 绝对不能写入同一个逻辑 ID。
+In traditional rendering, a Pass might simply "bind a texture and draw to it." But in an SSA RenderGraph, a logical resource (`TextureNodeId`) is strictly immutable. Once a Pass declares itself as the producer of a resource, no other Pass is permitted to write to that same logical ID.
 
-**但是，如果有多个 Pass 需要渲染到同一个屏幕缓冲区呢？**
+**But what if multiple Passes need to render to the same screen buffer?**
 
-为了不进行会破坏 DAG 拓扑的就地修改，我引入了 **别名（Aliasing）** 的概念（`mutate_texture`）。
+To avoid in-place modifications that would break the DAG topology, I introduced the concept of **Aliasing** (`mutate_texture`).
 
-当一个 Pass 需要执行“read-modify-write”操作时，它会消费前一个逻辑版本并产生一个 **新的** 逻辑版本。图编译器理解这个拓扑链，并保证在物理层面，**它们指向同一块物理 GPU 内存（即互为别名）。**
+When a Pass needs to perform a "read-modify-write" operation, it consumes the previous logical version and produces a **new** logical version. The graph compiler understands this topological chain and guarantees that, at the physical level, **they alias to the exact same block of physical GPU memory.**
 
-*（以下是现在 Myth Engine 中声明一个 Pass 的便捷性的快速预览：）*
+*(Here is a quick preview of how effortless it is to declare a Pass in Myth Engine today:)*
 
 ```rust
-
-let input_id = ...; // 某个现有的逻辑资源 ID
-let input_id_2 = ...; // 某个现有的逻辑资源 ID
+let input_id = ...; // Some existing logical resource ID
+let input_id_2 = ...; // Some existing logical resource ID
 
 let pass_out = graph.add_pass("Some_Pass", |builder| {
-    // 声明对输入资源的只读依赖。
+    // Declare a read-only dependency on an input resource.
     builder.read_texture(input_id);
 
-    // 创建一个全新的资源。
+    // Create a brand new resource.
     let output_texture = builder.create_texture("Some_Out_Res", TextureDesc::new(...));
 
-    // 声明一个 alias 输入资源的新逻辑资源。（Read-Modify-Write）
+    // Declare a new logical resource that aliases an input resource. (Read-Modify-Write)
     let output_texture_2 = builder.mutate_texture(input_id_2, "Some_Out_Res2", TextureDesc::new(...));
 
     let node = SomePassNode {
@@ -104,127 +109,137 @@ let pass_out = graph.add_pass("Some_Pass", |builder| {
 
 ---
 
-## 3. 生命周期：从声明到执行
+## 3. Lifecycle: From Declaration to Execution
 
-RDG 的生命周期被严格划分为不同的阶段，确保 Pass 只在需要时精确地访问所需的数据：
+The RDG's lifecycle is strictly divided into distinct phases, ensuring Passes only access the exact data they need, precisely when they need it:
 
-1.  **Setup:** 在这个阶段，Pass 仅仅是数据包。它们使用 `builder.read_texture()` 和 `builder.create_texture()` 等方法声明依赖。此时，相关的帧内物理 GPU 资源还没创建。
-2.  **Compilation:** 此时图编译器接管。它执行拓扑排序，计算精确的资源生命周期，剔除 dead passes，并使用激进的别名策略分配物理内存。所有必要的内存屏障都在这个阶段被自动推导出来。
-3.  **Preparation:** 物理内存现已可用。Pass 获取它们的物理 `wgpu::TextureView` 并组装临时的 BindGroup。例如，`ShadowPass` 在此刻动态创建其基于层的 array views，完美地与静态资源管理器解耦。
-4.  **Execution:** Pass 将命令录制到 `wgpu::CommandEncoder` 中。因为所有依赖和屏障都在编译期间完美解决，执行阶段完全无锁且非常快。
+1. **Setup (Topology Building):** In this phase, Passes are merely data packets. They declare dependencies using methods like `builder.read_texture()` and `builder.create_texture()`. At this point, zero physical GPU resources exist.
+2. **Compilation (The Magic):** The graph compiler takes over. It performs a topological sort, calculates precise resource lifecycles, culls dead passes, and allocates physical memory using aggressive aliasing strategies. All necessary memory barriers are automatically deduced.
+3. **Preparation (Late Binding):** Physical memory is now available. Passes fetch their physical `wgpu::TextureView`s and assemble transient BindGroups. For instance, the `ShadowPass` dynamically creates its layer-based array views at this exact moment, perfectly decoupling from the static resource manager.
+4. **Execution (Command Recording):** Passes record commands into the `wgpu::CommandEncoder`. Because all dependencies and barriers were flawlessly resolved during compilation, the execution phase is completely lock-free and blazing fast.
 
-这种架构为引擎带来了巨大的性能和灵活性，同时大幅降低了开发新渲染特性时的摩擦。添加一个新的视觉效果不再是一次进入未知状态变化的冒险之旅；它只是一个简单的声明式操作。
+This architecture brings immense performance and flexibility to the engine while drastically reducing the friction of developing new rendering features. Adding a new visual effect is no longer an adventurous journey into unknown state mutations; it is simply a declarative operation.
 
 ---
 
-## 4. 即时模式 vs. 保留模式
+## 4. Immediate vs. Cached RenderGraphs
 
-当讨论编译型 RenderGraph 时，一个设计问题不可避免地会出现：*图应该每帧重建并编译吗？还是引擎应该缓存图，并且只在拓扑结构改变时才重新编译？*
+When discussing compiled RenderGraphs, a design question inevitably arises: *Should the graph be rebuilt and compiled every frame? Or should the engine cache the graph and only recompile when the topology changes?*
 
-这两种方法代表了根本不同的架构理念：
-*   **Retained / Cached graphs** — 追踪拓扑变化，仅在必要时重新编译。
-*   **Immediate / Per-frame graphs** — 每帧都重建并编译图。
+These two approaches represent fundamentally different architectural philosophies:
 
-在 Myth Engine 中，我选择了 **每帧重建（per-frame rebuild）** 的方法。
+* **Retained / Cached graphs** — Tracks topology changes, recompiles only when necessary.
+* **Immediate / Per-frame graphs** — Rebuilds and compiles the graph every single frame.
 
-得益于几个架构选择——特别是零分配编译（zero-allocation compilation）和缓存友好的数据布局——每帧重建图在实践中被证明既更简单，通常也更快。让我们来分析原因。
+For Myth Engine, I chose the **per-frame rebuild** approach.
 
-### 4.1 编译其实非常便宜
-第一个误解是编译 RenderGraph 一定很昂贵。实际上，在 `compile_topology` 期间执行的工作非常轻量：
-*   遍历连续的 `Vec` 存储来构建依赖边。
-*   计算引用计数以进行无效过程剔除（Dead Pass Elimination）。
-*   对几十个节点运行拓扑排序（Kahn’s algorithm）。
-*   计算资源生命周期（`first_use` / `last_use`）。
-*   从预分配的基于 slot 的池中重用物理纹理。
+Thanks to several architectural choices—specifically zero-allocation compilation and cache-friendly data layouts—rebuilding the graph every frame has proven in practice to be both simpler and often faster. Let's break down why.
 
-重要的是：
-*   **无堆分配**
-*   **无系统调用**
-*   **纯整数运算和线性内存扫描**
+### 4.1 Compilation is Actually Incredibly Cheap
 
-#### 4.1.1 算法复杂度分析
+The first misconception is that compiling a RenderGraph must be expensive. In reality, the work performed during `compile_topology` is extremely lightweight:
 
-整个编译过程可分为三个主要阶段，每个阶段都具有**线性或近似线性的时间复杂度**：
+* Iterating over contiguous `Vec` storage to build dependency edges.
+* Calculating reference counts for dead pass elimination.
+* Running a topological sort (Kahn’s algorithm) on a few dozen nodes.
+* Calculating resource lifecycles (`first_use` / `last_use`).
+* Reusing physical textures from a pre-allocated, slot-based pool.
 
-假设 $V$ = Pass 节点数， $E$ = 依赖边数， $R$ = 虚拟资源数：
+Crucially:
 
-* 拓扑排序（Kahn 算法）： $O(V + E)$
+* **No heap allocations**
+* **No system calls**
+* Pure integer arithmetic and linear memory scans
 
-在渲染图中平均每个 Pass 一般仅有 2–3 个输入/输出， $E \approx 2.5V$，实际退化为 $O(V)$。
+#### 4.1.1 Algorithm Complexity Analysis
 
-* 生命周期分析： $O(V)$
+The entire compilation process can be broken down into three main phases, each boasting **linear or near-linear time complexity**:
 
-线性扫描拓扑排序后的节点数组，更新每个资源的 first_use / last_use。
+Assuming $V$= Number of Pass nodes, $E$ = Number of dependency edges, $R$ = Number of virtual resources:
 
-* 资源池化分配： $O(R \log R)$ 或 $O(R)$
+* Topological Sort (Kahn's Algorithm): $O(V + E)$
 
-使用区间贪心分配（Interval Allocation）时需排序生命周期区间，但 $R$ 通常 < 100，此项在现代 CPU 上几乎等同于免费。
+In a render graph, an average Pass only has 2–3 inputs/outputs, so $E \approx 2.5V$, effectively degrading to $O(V)$.
 
-综合来看，整个 RenderGraph 编译路径均为严格线性扩展。随着Pass数量的增加，编译时间仅线性平缓增长，不会出现指数级的雪崩。
+* Lifecycle Analysis: $O(V)$
 
-#### 4.1.2 性能基准：实测数据
-以下是在我的电脑（CPU: Intel Core i9-9900K）上的实际基准测试数据（Criterion，12 个测试套件）：
+A linear scan of the topologically sorted node array to update `first_use` / `last_use` for each resource.
 
-- **单 Pass 边际开销稳定在 ~75 ns**：从 10 Pass 增加到 500 Pass，编译耗时从 0.8 µs 增至 37.7 µs，每增加一个 Pass 仅增加约 75 ns，完美验证了 $O(n)$ 线性度。
-- **完整高保真管线仅 1.6 µs**：模拟当前引擎的真实渲染流程（Shadow + Prepass + SSAO + Opaque + Skybox + Bloom 5 级 + ToneMap + FXAA，共 19 Pass），单帧编译总耗时仅 1.6 微秒。
-- **内存分配零成本**：基于 FrameArena 的分配器每次操作仅需 ~1.3 ns（纯指针 bump）
+* Pooled Resource Allocation: $O(R \log R)$ or $O(R)$
 
-*（完整 12 组表格、线性链 / 扇入 / Dead-Pass Culling / FrameArena 等极端测试数据见文末附录 A）*
+Using Interval Greedy Allocation requires sorting lifecycle intervals, but $R$ is typically < 100, making this step effectively free on the CPU.
 
-### 4.2 检测 Graph 变化可能更昂贵
-如果我们想避免重新编译图，我们必须首先确定拓扑结构是否发生了变化。这产生了一个有趣的悖论。
+Overall, the entire RenderGraph compilation path scales strictly linearly. Growing from 20 to 200 passes results in a gentle linear increase in compile time, never an exponential avalanche.
 
-为了检测变化，引擎每帧仍然必须重建当前的图描述。之后，它必须要么：
-*   计算整个图的 hash。
-*   或者对上一帧执行深层的结构性差异比较。
+#### 4.1.2 Performance Benchmarks: Empirical Data
 
-这两种方法都会引入自身的开销：hashing 字符串和描述符、不可预测的分支、非线性内存访问以及指针追逐（pointer chasing）。在实践中，这些操作消耗的 CPU 周期通常比简单地再次运行编译步骤还要多。
+Real-world benchmark data from my older PC (CPU: Intel Core i9-9900K) running Criterion (12 test suites):
 
-换句话说：**我们花费在检查是否应该编译上的时间比实际编译的时间还要多。**
+* **Marginal overhead per Pass is stable at ~75 ns:** Scaling from 10 to 500 passes increases compile time from 0.8 µs to 37.7 µs. Each additional Pass costs roughly 75 ns, perfectly validating the $O(n)$ linearity.
+* **Full High-Fidelity Pipeline takes only 1.6 µs:** Simulating the engine's actual real-world pipeline (Shadow + Prepass + SSAO + Opaque + Skybox + Bloom 5 levels + ToneMap + FXAA, totaling 19 passes), the total compile time per frame is a mere 1.6 microseconds.
+* **Zero-cost memory allocation:** Allocations based on the `FrameArena` take only ~1.3 ns per operation (pure pointer bumping).
 
-### 4.3 立即模式极大简化了API设计
-每帧方法最大的好处或许是开发使用体验。RenderGraph 代码在概念上变得类似于 immediate-mode UI 框架（例如imgui）。渲染管线每帧以声明式方式描述。
+*(For the complete 12 data tables covering extreme tests like Linear Chain, Fan-In, Dead-Pass Culling, and FrameArena, see Appendix A at the bottom).*
 
-例如：
+### 4.2 Detecting Graph Changes Might Be More Expensive
+
+If we want to avoid recompiling the graph, we must first determine if the topology *has* changed. This creates an interesting paradox.
+
+To detect changes, the engine must still rebuild the current graph description every frame. Afterward, it must either:
+
+* Calculate a hash of the entire graph.
+* Or perform a deep structural diff against the previous frame.
+
+Both approaches introduce their own overhead: hashing strings and descriptors, unpredictable branching, non-linear memory access, and pointer chasing. In practice, these operations often consume more CPU cycles than simply running the compilation step again.
+
+In other words: **We spend more time checking if we should compile than we would spend just compiling.**
+
+### 4.3 Immediate Mode Drastically Simplifies API Design
+
+Perhaps the greatest benefit of the per-frame approach is the developer experience. The RenderGraph code conceptually behaves like an immediate-mode UI framework (e.g., imgui). The rendering pipeline is described declaratively every frame.
+
+For example:
+
 ```rust
 if ui.is_open() {
     graph.add_pass("UI_Blur", |builder| { ... });
 }
+
 ```
 
-动态渲染特性变得易于表达：
+Dynamic rendering features become trivial to express:
 
-*   室内场景禁用 sunlight shadow passes。
-*   UI 叠加插入临时的后处理。
-*   动态分辨率缩放改变纹理大小。
-*   可选效果（SSAO, bloom, motion blur）。
+* Disabling sunlight shadow passes in indoor scenes.
+* Inserting temporary post-processing for UI overlays.
+* Altering texture sizes for dynamic resolution scaling.
+* Toggling optional effects (SSAO, bloom, motion blur).
 
-图编译器自动推导出正确的拓扑结构。如果系统依赖于 cached graphs，引擎就需要手动追踪拓扑失效、闭包捕获失效以及资源描述符不匹配。这会大大增加架构复杂性，并为诸如“陈旧资源”（stale resources）、“错误复用”（incorrect reuse） 或“悬空依赖”（dangling dependencies） 等细微 bug 打开大门。
+The graph compiler automatically deduces the correct topology. If the system relied on cached graphs, the engine would need to manually track topology invalidations, closure capture expirations, and resource descriptor mismatches. This dramatically increases architectural complexity and opens the door to subtle bugs like stale resources, incorrect reuse, or dangling dependencies.
 
-对 Myth Engine 而言，结论很明确：**每帧重建和编译 RenderGraph 更简单、更安全，而且通常更（或同样）快。** 
+For Myth Engine, the conclusion was clear: **Rebuilding and compiling the RenderGraph per frame is simpler, safer, and usually faster (or equally fast).**
 
-### 4.4 与Rust语言特性的完美契合
+### 4.4 Perfect Synergy with Rust's Language Features
 
-在最新的重构中，RenderGraph 全面拥抱了 Rust 的生命周期系统，并利用Rust的语言特性实现了 **零运行时开销、零堆内存分配、零析构成本** 的渲染管线底层。
+In the latest refactor, the RenderGraph fully embraces Rust's lifetime system, realizing a foundational rendering pipeline with **zero runtime overhead, zero heap allocation, and zero drop costs**.
 
-*  **纯正单帧生命周期 (`'a`)**：每一帧的渲染图都是瞬态的。所有渲染节点（PassNode）均在帧分配器（FrameArena）上进行 $O(1)$ 的线性分配。帧结束时，指针瞬间复位，不产生任何内存碎片。
-*  **零成本物理借用**：渲染节点不再需要拥有外部资源（如 Arc 或持久化状态）的所有权。通过 `<'a>` 生命周期约束，节点可以直接安全地持有对外部状态或物理显存对象（如 wgpu::RenderPipeline）的内存借用。
-*  **编译期 POD 断言**：引擎底层强制执行 `AssertNoDrop` 检查。任何试图向图内注入携带 String、Vec 或智能指针的节点的行为，都会在编译期被拒绝，从而保证执行期的绝对纯粹。
-*  **执行期“零查找”**：将所有的 ID 解析、哈希寻址和变体计算提前至“组装期”与“准备期”，确保最终的 execute 阶段退化为一个纯粹的“机器码倾泻机”。
+* **Pure single-frame lifetimes (`'a`)**: The render graph for each frame is transient. All render nodes (`PassNode`) are linearly allocated in $O(1)$ on the frame allocator (`FrameArena`). At the end of the frame, the pointer is instantly reset, creating zero memory fragmentation.
+* **Zero-cost physical borrowing**: Nodes no longer need to own external resources (like `Arc` or persistent states). Through the `<'a>` lifetime constraint, nodes can safely and directly hold memory borrows to external state or physical VRAM objects (like `wgpu::RenderPipeline`).
+* **Compile-time POD assertions**: The engine's lowest levels enforce an `AssertNoDrop` check. Any attempt to inject a node carrying a `String`, `Vec`, or smart pointer into the graph is ruthlessly rejected at compile-time, ensuring absolute purity during execution.
+* **"Zero-lookup" execution phase**: All ID resolutions, hash addressing, and variant calculations are pushed forward to the "Setup" and "Preparation" phases, ensuring the final `execute` phase acts purely as a relentless "machine-code dumping machine."
 
-基于此，我还为 Frame Composer 提供了安全的 `add_custom_pass` 钩子系统。结合黑板（GraphBlackboard），外部程序可以在特定的钩子阶段 （HookStage）无痛挂载自定义瞬态节点，而无需感知底层设施的复杂性。
+Building upon this, I also provided a safe `add_custom_pass` hook system for the Frame Composer. Combined with the `GraphBlackboard`, external programs can painlessly mount custom transient nodes at specific `HookStage`s without needing to understand the underlying infrastructure's complexity.
 
 ---
 
-## 5. 案例研究：自动生成的图拓扑
+## 5. Case Studies: Auto-Generated Graph Topology
 
-以下是 Myth Engine 在不同 Render Path 配置下的 实时 Dump 出的 RenderGraph 。
+Below are live-dumped RenderGraphs from Myth Engine under different Render Path configurations.
 
-> *注：引擎提供了一个实用方法，可以实时导出动态编译的拓扑和依赖关系，并以 `mermaid` 格式导出。这对于调试来说简直是救命稻草。*
+> *Note: The engine provides a utility to export dynamically compiled topologies and dependencies in real-time using the `mermaid` format. This is an absolute lifesaver for debugging.*
 
-### Case 1: 驯服复杂的依赖与内存别名
+### Case 1: Taming Complex Dependencies & Memory Aliasing
 
-在一个具有屏幕空间环境光遮蔽 (SSAO) 和屏幕空间次表面散射 (SSSS) 的高度复杂场景中，依赖关系网会迅速变得混乱。
+In a highly complex scene featuring Screen Space Ambient Occlusion (SSAO) and Screen Space Subsurface Scattering (SSSS), the dependency web can quickly become chaotic.
 
 ```mermaid
 flowchart
@@ -266,16 +281,17 @@ flowchart
     P8 ==>|"Surface_After_FXAA"| P9;
     OUT_16[/"Surface_With_UI"/]:::external
     P9 --> OUT_16;
+
 ```
 
-*(* **图例说明：** *单箭头 `-->` 代表逻辑数据依赖；双箭头 `==>` 代表物理内存别名 / 就地复用)*
+*(* **Legend:** *Single arrow `-->` represents logical data dependencies; Double arrow `==>` represents physical memory aliasing / in-place reuse)*
 
-*   **依赖解析:** SSSS 需要来自不同 Pass 中的 5 个不同输入。你只需为这些输入声明 `builder.read_texture()`。编译器保证执行顺序，并精确插入所需的 `ImageMemoryBarrier` 转换。
-*   **内存别名:** 注意双箭头（`==>`）。追踪主颜色缓冲区：`Scene_Color_SSSS ==> Scene_Color_Skybox ==> Scene_Color_Transparent`。逻辑上，它们是完全不同的、不可变的资源。物理上，编译器智能地将它们的分配重叠到完全相同的、高分辨率的瞬时 GPU 纹理上。
+* **Dependency Resolution:** SSSS requires 5 different inputs from various Passes. You simply declare `builder.read_texture()` for these inputs. The compiler guarantees execution order and precisely inserts the required `ImageMemoryBarrier` transitions.
+* **Memory Aliasing:** Notice the double arrows (`==>`). Trace the main color buffer: `Scene_Color_SSSS ==> Scene_Color_Skybox ==> Scene_Color_Transparent`. Logically, these are completely distinct, immutable resources. Physically, the compiler intelligently overlaps their allocations onto the exact same high-resolution transient GPU texture.
 
-### Case 2: Dead Pass Elimination ( DPE 死节点剔除 )
+### Case 2: Dead Pass Elimination (DPE)
 
-编译器不仅管理内存，它还能主动优化 GPU 工作负载。如果我们禁用 SSAO 和 SSSS，但启用硬件 MSAA 会发生什么？
+The compiler doesn't just manage memory; it proactively optimizes the GPU workload. What happens if we disable SSAO and SSSS, but enable hardware MSAA?
 
 ```mermaid
 flowchart
@@ -303,29 +319,30 @@ flowchart
     P6 ==>|"Surface_After_FXAA"| P7;
     OUT_11[/"Surface_With_UI"/]:::external
     P7 --> OUT_11;
+
 ```
 
-*(* **图例说明：** *灰色虚线节点代表被编译器剔除的 dead passes)*
+*(* **Legend:** *Dashed gray nodes represent dead passes culled by the compiler)*
 
-因为 MSAA 需要其自身的 multisampled depth buffer，`Opaque_Pass` 不再依赖于来自 `Pre_Pass` 的标准 depth buffer。随着 SSAO 和 SSSS 被禁用，没有活动的 Pass 消费 `Pre_Pass` 的输出。
+Because MSAA requires its own multisampled depth buffer, `Opaque_Pass` no longer relies on the standard depth buffer from `Pre_Pass`. With SSAO and SSSS disabled, there are zero active Passes consuming `Pre_Pass`'s output.
 
-图编译器在编译期间检测到这个零引用状态。它将 `P1(["Pre_Pass"])` 标记为 dead，自动绕过其物理内存分配、CPU preparation 和 GPU command recording。**零配置。**
+The graph compiler detects this zero-reference state during compilation. It marks `P1(["Pre_Pass"])` as dead, completely bypassing its physical memory allocation, CPU preparation, and GPU command recording. **Zero configuration required.**
 
 ---
 
-## 6. 释放编译器的力量：打破“宏节点”
+## 6. Unleashing the Compiler: Shattering "Macro Nodes"
 
-我很快发现了这种架构的强大力量。当我逐步将所有的 RenderPass 都移植到新系统后，它被证明是如此强大，以至于完全改变了我设计高级渲染特性的方式。
+I quickly discovered the sheer power of this architecture. As I incrementally ported all RenderPasses to the new system, it proved so capable that it completely changed how I designed advanced rendering features.
 
-在此之前，像 Bloom、SSAO 或 SSSS 这样的复杂效果是作为“宏节点”编写的——内部自行分配 ping-pong 纹理并分派多个 draw calls 的 RDG 黑盒。
+Previously, complex effects like Bloom, SSAO, or SSSS were written as "macro nodes"—RDG black boxes that internally allocated ping-pong textures and dispatched multiple draw calls on their own.
 
-由于图编译器现在可以零成本地完美推导内存屏障和重叠的瞬时生命周期，我意识到我们不再需要这些黑盒了，编译器需要看到整个图的所有细节，才能执行更好的优化，发挥其全部能力。**我彻底将这些宏节点扁平化为原子的微过程（micro-passes）。** 一个 6-mip-level 的 Bloom 效果现在由 12 个完全独立的 RDG passes 组成。编译器现在可以“看到”每一个中间的 Mip 纹理，在下采样链、上采样链和其他后处理效果之间无缝地回收物理内存。
+Because the graph compiler could now perfectly deduce memory barriers and overlapping transient lifecycles at zero cost, I realized we didn't need these black boxes anymore. The compiler needs to see the full granularity of the graph to perform better optimizations and reach its full potential. **I completely flattened these macro-nodes into atomic micro-passes.** A 6-mip-level Bloom effect is now comprised of 12 completely independent RDG passes. The compiler can now "see" every intermediate Mip texture, seamlessly recycling physical memory between downsampling chains, upsampling chains, and other post-processing effects.
 
-将这些“宏节点”完全展平并交予RenderGraph管理，会使得最终的RenderGraph变得非常复杂，但幸运的是，这完全是自动化的。你只需声明节点，编译器就会构建图。
+Flattening these "macro nodes" entirely and handing them over to the RenderGraph makes the final graph incredibly complex, but fortunately, this is completely automated. You simply declare the nodes; the compiler builds the graph.
 
-为了在如此高度扁平的图中保持心智可管理性，我引入了**逻辑子图**。Pass 在像 `ctx.with_group("Bloom_System", |ctx| { ... })` 这样的块内编写。当启用 `rdg_inspector` 特性时，检查器会提取此元数据并生成漂亮的、递归嵌套的 Mermaid 流程图。
+To keep the mental model manageable in such highly flattened graphs, I introduced **logical subgraphs**. Passes are written within blocks like `ctx.with_group("Bloom_System", |ctx| { ... })`. When the `rdg_inspector` feature is enabled, the inspector extracts this metadata and generates beautiful, recursively nested Mermaid flowcharts.
 
-以下是 Myth Engine 渲染一个复杂场景的实时 Dump：
+Here is a live dump of Myth Engine rendering a complex scene:
 
 ```mermaid
 flowchart TD
@@ -462,137 +479,147 @@ flowchart TD
     P28 -->|"Surface_View"| P29;
     P29 --> OUT_35;
 ```
-*（图例说明：单线箭头 `-->` 表示逻辑数据依赖；双线箭头 `==>` 表示物理内存别名/原位复用）*
 
-通过这样做，我们充分释放了编译器的力量。每个 Pass 都是一个独立的原子单元。可以在全局范围内优化它们的执行顺序、内存分配和资源别名，而无需担心隐藏的副作用。同时，逻辑子图使开发者的认知负荷保持得完美可控。
+*(Legend: Single-line arrows --> indicate logical data dependencies; double-line arrows ==> indicate physical memory aliasing/in-place reuse)*
 
-另外，我还将一些常用的微Pass封装成了可重用的RenderNode节点，这使得构建一些复杂的调度逻辑就像搭积木一样简单。例如，MSAA、SSSS 和 Transmission 等特性的共存，曾经需要手动处理 MSAA Buffer 与单采样 Buffer 之间地狱般的来回转换，且难以达到最佳性能。现在，这一切都被渲染图编译器自动管理，变得简单而优雅。
+By doing this, we fully unlock the power of the compiler. Each Pass is an independent atomic unit. Their execution order, memory allocation, and resource aliasing can be globally optimized without worrying about hidden side effects. Meanwhile, logical subgraphs keep the developer's cognitive load perfectly manageable.
 
-这就是 SSA 声明式渲染图的力量：将复杂性交给编译器，把创造力还给渲染工程师。
+I also wrapped some commonly used micro‑passes into reusable RenderNode types, making it easy to build complex scheduling logic like building blocks. For example, making MSAA, SSSS, and transmission maps coexist used to require manually handling the hellish back‑and‑forth between MSAA buffers and single‑sample buffers, and it was nearly impossible to achieve peak performance (because of frequent memory copies and state switches — you could hardly manage those resource lifetimes by hand). Now it’s simple and elegant.
+
+This is the true power of a declarative SSA RenderGraph: hand the complexity over to the compiler, and give creativity back to the rendering engineer.
 
 ---
 
 <details>
-<summary><b>附录 A：RenderGraph 编译性能基准测试（完整版）</b></summary>
+<summary><b>Appendix A: RenderGraph Compilation Performance Benchmarks (Full Version)</b></summary>
 
-所有 12 个基准测试均使用 **Criterion** 框架编写，在 Myth Engine 当前主分支上运行。测试环境为：Intel Core i9-9900K、32GB DDR5、Rust 1.92。
+All 12 benchmarks were written using the **Criterion** framework and run on the current main branch of Myth Engine. The testing environment was: Intel Core i9-9900K, 32GB DDR5, Rust 1.92.
 
-### 一、测试用例
+### I. Test Suites
 
-| 文件                  | 作用 |
-|-----------------------|------|
-| `render_graph_bench.rs` | 完整 12 个基准测试套件（包含 500 Pass 极端测试） |
+| File | Purpose |
+| --- | --- |
+| `render_graph_bench.rs` | The complete 12 benchmark suites (includes a 500-Pass extreme test) |
 
-### 二、测试结果汇总
+### II. Benchmark Results Summary
 
-#### 1. 线性链 (LinearChain) — $O(n)$ 线性度验证
-| Pass 数量 | 耗时（中位数） | 每 Pass 开销 | 倍率（实测 / 理论） |
-|-----------|----------------|--------------|---------------------|
-| 10        | 797 ns         | 79.7 ns      | —                   |
-| 50        | 3.75 µs        | 75.0 ns      | 4.71× (5×)          |
-| 100       | 7.53 µs        | 75.3 ns      | 9.45× (10×)         |
-| 200       | 15.1 µs        | 75.6 ns      | 18.9× (20×)         |
-| 500       | 37.7 µs        | 75.4 ns      | 47.3× (50×)         |
+#### 1. Linear Chain (LinearChain) — $O(n)$ Linearity Validation
 
-**结论**：完美 $O(n)$ 线性扩展，每 Pass 边际开销稳定 ~75 ns。
+| Pass Count | Time (Median) | Cost per Pass | Multiplier (Actual / Theoretical) |
+| --- | --- | --- | --- |
+| 10 | 797 ns | 79.7 ns | — |
+| 50 | 3.75 µs | 75.0 ns | 4.71× (5×) |
+| 100 | 7.53 µs | 75.3 ns | 9.45× (10×) |
+| 200 | 15.1 µs | 75.6 ns | 18.9× (20×) |
+| 500 | 37.7 µs | 75.4 ns | 47.3× (50×) |
 
-#### 2. 扇入拓扑 (Fan-In) — 高扇入压力测试
-| 生产者数量 | 耗时     | 每 Pass 开销 |
-|------------|----------|--------------|
-| 10         | 1.03 µs  | 103 ns       |
-| 50         | 4.75 µs  | 95.0 ns      |
-| 100        | 9.84 µs  | 98.4 ns      |
-| 200        | 21.4 µs  | 107 ns       |
-| 500        | 69.5 µs  | 139 ns       |
+**Conclusion**: Perfect $O(n)$ linear scaling; marginal overhead per Pass is stable at ~75 ns.
 
-**结论**：仍为严格 $O(n)$，500 个生产者汇聚时仅有轻微 SmallVec 开销。
+#### 2. Fan-In Topology — High Fan-In Stress Test
 
-#### 3. 钻石 DAG — 真实渲染管线拓扑
-| 管线重复数 | Pass 总数 | 耗时    |
-|------------|-----------|---------|
-| 1          | 6         | 463 ns  |
-| 5          | 26        | 1.58 µs |
-| 10         | 51        | 2.94 µs |
-| 20         | 101       | 6.00 µs |
+| Producer Count | Time | Cost per Pass |
+| --- | --- | --- |
+| 10 | 1.03 µs | 103 ns |
+| 50 | 4.75 µs | 95.0 ns |
+| 100 | 9.84 µs | 98.4 ns |
+| 200 | 21.4 µs | 107 ns |
+| 500 | 69.5 µs | 139 ns |
 
-**结论**：线性扩展，与实际场景高度吻合。
+**Conclusion**: Remains strictly $O(n)$, with only slight `SmallVec` overhead when converging 500 producers.
 
-#### 4. SSA 别名中继链 (Alias Relay)
-| 中继深度 | 耗时    | 每中继开销 |
-|----------|---------|------------|
-| 5        | 410 ns  | 82.1 ns    |
-| 10       | 772 ns  | 77.2 ns    |
-| 50       | 3.43 µs | 68.7 ns    |
-| 100      | 6.76 µs | 67.6 ns    |
-| 200      | 14.0 µs | 70.2 ns    |
+#### 3. Diamond DAG — Real-World Rendering Pipeline Topology
 
-**结论**：`mutate_texture` 路径完全线性，无额外复杂度。
+| Pipeline Repeats | Total Passes | Time |
+| --- | --- | --- |
+| 1 | 6 | 463 ns |
+| 5 | 26 | 1.58 µs |
+| 10 | 51 | 2.94 µs |
+| 20 | 101 | 6.00 µs |
 
-#### 5. 死 Pass 剔除 (Dead-Pass Culling)
-| 总 Pass 数 | 存活 Pass（10%） | 耗时   |
-|------------|------------------|--------|
-| 50         | 5                | 2.46 µs|
-| 100        | 10               | 5.02 µs|
-| 200        | 20               | 10.6 µs|
-| 500        | 50               | 26.8 µs|
+**Conclusion**: Scales linearly, highly consistent with real-world scenarios.
 
-**结论**：mark-and-sweep 与总 Pass 数线性无关，与存活比例无关。
+#### 4. SSA Alias Relay Chain
 
-#### 6. FrameArena 分配吞吐量
-| 分配次数 | 耗时     | 单次开销     |
-|----------|----------|--------------|
-| 100      | 124 ns   | **1.24 ns**  |
-| 500      | 682 ns   | **1.36 ns**  |
-| 1,000    | 1.38 µs  | **1.38 ns**  |
-| 5,000    | 6.90 µs  | **1.38 ns**  |
+| Relay Depth | Time | Cost per Relay |
+| --- | --- | --- |
+| 5 | 410 ns | 82.1 ns |
+| 10 | 772 ns | 77.2 ns |
+| 50 | 3.43 µs | 68.7 ns |
+| 100 | 6.76 µs | 67.6 ns |
+| 200 | 14.0 µs | 70.2 ns |
 
-**结论**：纯 bump 分配器，相比 `malloc` 快约 50 倍，生命周期借用零开销。
+**Conclusion**: The `mutate_texture` path is completely linear with no added complexity.
 
-#### 7. 多帧容量复用 (Steady-State)
-| 场景               | 耗时    |
-|--------------------|---------|
-| 100 Pass 稳态帧    | **7.30 µs** |
+#### 5. Dead Pass Culling (Dead-Pass Culling)
 
+| Total Passes | Alive Passes (10%) | Time |
+| --- | --- | --- |
+| 50 | 5 | 2.46 µs |
+| 100 | 10 | 5.02 µs |
+| 200 | 20 | 10.6 µs |
+| 500 | 50 | 26.8 µs |
 
-#### 8. Side-Effect Pass
-| 总 Pass 数 | 耗时    |
-|------------|---------|
-| 10         | 625 ns  |
-| 50         | 2.99 µs |
-| 100        | 6.20 µs |
-| 200        | 12.8 µs |
+**Conclusion**: Mark-and-sweep performance is linearly independent of the total Pass count and the alive ratio.
 
-**结论**：与常规 Pass 混合无任何性能退化。
+#### 6. FrameArena Allocation Throughput
 
-#### 9. HighFidelity 全管线
-模拟引擎当前真实的 High-Fidelity 渲染管线（Shadow + Prepass + SSAO + Opaque + Skybox + Transparent + Bloom 展平 10 个 Pass + ToneMap + FXAA，共 **19 个 Pass**）：
+| Allocation Count | Time | Cost per Alloc |
+| --- | --- | --- |
+| 100 | 124 ns | **1.24 ns** |
+| 500 | 682 ns | **1.36 ns** |
+| 1,000 | 1.38 µs | **1.38 ns** |
+| 5,000 | 6.90 µs | **1.38 ns** |
 
-| 场景           | 耗时    |
-|----------------|---------|
-| 完整 HiFi 管线 | **1.61 µs** |
+**Conclusion**: Pure bump allocator, roughly 50x faster than `malloc`, with zero-cost lifetime borrowing.
 
-**结论**：每帧纯 CPU 开销仅 **1.61 微秒**，占 60 fps 帧预算 **0.0096%**。
+#### 7. Multi-Frame Capacity Reuse (Steady-State)
 
-#### 10. 构建 vs 编译分离度量
-| Phase          | 50 Pass | 100 Pass | 500 Pass |
-|----------------|---------|----------|----------|
-| Build Only     | 1.97 µs | 3.91 µs  | 20.4 µs  |
-| Build + Compile| 3.65 µs | 7.27 µs  | 37.9 µs  |
+| Scenario | Time |
+| --- | --- |
+| 100 Pass Steady Frame | **7.30 µs** |
+
+#### 8. Side-Effect Passes
+
+| Total Passes | Time |
+| --- | --- |
+| 10 | 625 ns |
+| 50 | 2.99 µs |
+| 100 | 6.20 µs |
+| 200 | 12.8 µs |
+
+**Conclusion**: Mixing with standard Passes incurs zero performance degradation.
+
+#### 9. High-Fidelity Full Pipeline
+
+Simulating the engine's current real-world High-Fidelity rendering pipeline (Shadow + Prepass + SSAO + Opaque + Skybox + Transparent + Bloom flattened 10 passes + ToneMap + FXAA, totaling **19 Passes**):
+
+| Scenario | Time |
+| --- | --- |
+| Full Hi-Fi Pipeline | **1.61 µs** |
+
+**Conclusion**: Pure CPU overhead per frame is a mere **1.61 microseconds**, occupying **0.0096%** of a 60 fps frame budget.
+
+#### 10. Build vs. Compile Separation Metrics
+
+| Phase | 50 Passes | 100 Passes | 500 Passes |
+| --- | --- | --- | --- |
+| Build Only | 1.97 µs | 3.91 µs | 20.4 µs |
+| Build + Compile | 3.65 µs | 7.27 µs | 37.9 µs |
 | **Compile Only** | **1.68 µs** | **3.36 µs** | **17.5 µs** |
 
-**结论**：构建与编译开销几乎 1:1 均分，两者均为 $O(n)$。
+**Conclusion**: Build and compile overhead is split almost exactly 1:1, both scaling at $O(n)$.
 
-### 三、关键数据总结
+### III. Key Data Summary
 
-| 指标               | 数值                  |
-|--------------------|-----------------------|
-| 单 Pass 边际开销   | ~75 ns                |
-| FrameArena 单次分配| ~1.3 ns               |
-| 实际 HiFi 管线开销 | **1.61 µs**           |
-| 帧预算占比 (60 fps)| **< 0.01%**           |
-| 算法复杂度         | 所有路径均为 $O(n)$   |
-| 方差/抖动          | 极低（异常值 < 10%）  |
+| Metric | Value |
+| --- | --- |
+| Marginal Cost per Pass | ~75 ns |
+| FrameArena Single Alloc | ~1.3 ns |
+| Actual Hi-Fi Pipeline Cost | **1.61 µs** |
+| Frame Budget Share (60 fps) | **< 0.01%** |
+| Algorithm Complexity | All paths are strictly $O(n)$ |
+| Variance/Jitter | Extremely low (outliers < 10%) |
 
-**最终结论**：Myth Engine 的 RenderGraph 在理论与实测上均实现严格线性扩展，从 10 Pass 到 500 Pass 无任何性能雪崩，为 Immediate/Per-frame 架构提供了坚实的数据支撑。
+**Final Conclusion**: Myth Engine's RenderGraph achieves strict linear scaling in both theory and practice, exhibiting zero performance avalanches from 10 to 500 passes, thereby providing a rock-solid empirical foundation for the Immediate/Per-frame architecture.
 
 </details>

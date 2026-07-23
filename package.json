@@ -1,33 +1,28 @@
 {
   "name": "myth-engine",
-  "version": "1.0.0",
-  "description": "[中文](README_zh.md)",
-  "main": "index.js",
-  "directories": {
-    "doc": "docs",
-    "example": "examples",
-    "test": "tests"
-  },
+  "version": "0.3.0",
+  "private": true,
+  "description": "Documentation and Gallery site tooling for Myth Engine.",
   "scripts": {
-    "test": "echo \"Error: no test specified\" && exit 1",
     "docs:dev": "vitepress dev docs",
     "docs:build": "vitepress build docs",
+    "docs:check": "node scripts/check-doc-site.mjs dist",
+    "docs:check:source": "node scripts/check-doc-site.mjs --source-only",
     "docs:preview": "npm run docs:build && vitepress preview docs",
     "docs:serve": "vitepress preview docs",
     "site:build": "vitepress build docs && cargo xtask build-gallery --release",
-    "site:preview": "npm run docs:build && vitepress preview docs"
+    "site:preview": "npm run site:build && vitepress preview docs"
   },
   "repository": {
     "type": "git",
     "url": "git+https://github.com/panxinmiao/myth.git"
   },
-  "keywords": [],
-  "author": "",
-  "license": "ISC",
+  "author": "Pan Xinmiao",
+  "license": "MIT OR Apache-2.0",
   "bugs": {
     "url": "https://github.com/panxinmiao/myth/issues"
   },
-  "homepage": "https://github.com/panxinmiao/myth#readme",
+  "homepage": "https://panxinmiao.github.io/myth/",
   "devDependencies": {
     "@types/node": "^25.9.1",
     "mermaid": "^11.15.0",

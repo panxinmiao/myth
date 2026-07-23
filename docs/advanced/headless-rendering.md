@@ -1,10 +1,10 @@
-# 离屏与无头渲染
+# Headless & Offscreen Rendering
 
-Myth 可以在**完全没有窗口**的情况下运行，将渲染结果直接读回 CPU 内存。这使引擎天然适合 **CI/CD 自动化测试、云端渲染、服务端缩略图生成与离线视频合成**等场景。
+Myth can run with **no window at all**, reading rendered results directly back into CPU memory. This makes the engine a natural fit for **CI/CD automated testing, cloud rendering, server-side thumbnail generation, and offline video composition**.
 
-## 1. 无头初始化
+## 1. Headless Initialization
 
-与基于 `App` 的窗口化流程不同，无头渲染直接操作 `Engine`，通过 `init_headless` 在指定分辨率下初始化 GPU（无需 surface）：
+Unlike the windowed `App`-based flow, headless rendering operates the `Engine` directly, initializing the GPU at a given resolution (without a surface) via `init_headless`:
 
 ```rust
 use myth::prelude::*;
@@ -13,52 +13,52 @@ fn main() {
     let mut engine = Engine::default();
 
     let (width, height) = (800, 600);
-    // 在无头模式下初始化 GPU —— 没有窗口，没有 surface
+    // Initialize the GPU in headless mode — no window, no surface
     pollster::block_on(engine.init_headless(width, height, None))
         .expect("headless init failed");
 
-    // …构建场景（见下文）
+    // …build the scene (see below)
 }
 ```
 
-## 2. 构建场景
+## 2. Building the Scene
 
-无头模式下，场景的构建方式与窗口化完全一致：
+In headless mode, the scene is built exactly as in the windowed flow:
 
 ```rust
 let scene = engine.scene_manager.create_active();
 
-// 棋盘格材质的立方体
+// A cube with a checkerboard material
 let image = engine.assets.images.add(Image::checkerboard(512, 512, 64));
 let tex = engine.assets.textures.add(Texture::new_2d(Some("checker"), image));
 let _cube = scene.spawn_box(2.0, 2.0, 2.0, UnlitMaterial::new(Vec4::ONE).with_map(tex), &engine.assets);
 
-// 相机
+// Camera
 let cam = scene.add_camera(Camera::new_perspective(45.0, width as f32 / height as f32, 0.1));
 scene.node(&cam).set_position(0.0, 3.0, 8.0).look_at(Vec3::ZERO);
 scene.active_camera = Some(cam);
 
-// 方向光
+// Directional light
 let light = scene.add_light(Light::new_directional(Vec3::ONE, 5.0));
 scene.node(&light).set_position(5.0, 10.0, 5.0).look_at(Vec3::ZERO);
 ```
 
-## 3. 渲染并读回像素
+## 3. Render and Read Back Pixels
 
-手动推进一帧、渲染当前活跃场景，然后将帧缓冲读回 CPU：
+Manually advance a frame, render the active scene, then read the framebuffer back to the CPU:
 
 ```rust
-// 推进一帧逻辑（dt 以秒为单位）
+// Advance one frame of logic (dt in seconds)
 engine.update(0.016);
 
-// 渲染当前活跃场景
+// Render the active scene
 let rendered = engine.render_active_scene();
 assert!(rendered, "render_active_scene returned false");
 
-// 读回像素（RGBA8）
+// Read back pixels (RGBA8)
 let pixels = engine.readback_pixels().expect("readback failed");
 
-// 用 image crate 保存为 PNG
+// Save as PNG with the image crate
 image::save_buffer(
     "output.png",
     &pixels,
@@ -68,29 +68,29 @@ image::save_buffer(
 ).expect("failed to save output.png");
 ```
 
-::: tip 完整示例
-仓库中的 [`examples/headless_export.rs`](https://github.com/panxinmiao/myth/blob/main/examples/headless_export.rs) 提供了可直接运行的完整示例：
+::: tip Complete Example
+The repository's [`examples/headless_export.rs`](https://github.com/panxinmiao/myth/blob/main/examples/headless_export.rs) provides a ready-to-run complete example:
 ```bash
 cargo run --example headless_export --no-default-features
 ```
 :::
 
-## 4. 高吞吐回读流
+## 4. High-Throughput Readback Stream
 
-对于需要**连续导出大量帧**（如离线视频生成）的场景，引擎内置了**非阻塞的异步 GPU→CPU 回读管线**：
+For scenarios that **continuously export many frames** (e.g. offline video generation), the engine has a built-in **non-blocking asynchronous GPU→CPU readback pipeline**:
 
-- 采用**环形缓冲 (ring-buffer)** 架构，多帧回读可流水线化进行，避免 GPU 因等待 CPU 读取而停顿。
-- 内置**自动背压 (back-pressure)** 机制，当 CPU 消费速度跟不上时自动调节，防止内存无限增长。
+- A **ring-buffer** architecture pipelines multi-frame readback, preventing the GPU from stalling while it waits for the CPU to read.
+- Built-in **automatic back-pressure** self-regulates when CPU consumption can't keep up, preventing unbounded memory growth.
 
-这套设计让 Myth 能以接近实时的吞吐率持续产出帧序列，非常适合服务端批量渲染与视频管线。
+This design lets Myth sustain near-realtime throughput while continuously producing frame sequences — ideal for server-side batch rendering and video pipelines.
 
-## 适用场景
+## Use Cases
 
-- **CI / 回归测试：** 在无 GPU 显示器的服务器上渲染参考图并做像素级比对。
-- **云渲染 / 缩略图服务：** 按请求生成 3D 模型的预览图。
-- **离线视频生成：** 以固定步长逐帧渲染并编码成视频。
+- **CI / regression testing:** Render reference images on a GPU server with no display and do pixel-level comparison.
+- **Cloud rendering / thumbnail services:** Generate preview images of 3D models on demand.
+- **Offline video generation:** Render frame-by-frame at a fixed step and encode to video.
 
-## 下一步
+## Next Steps
 
-- 了解一帧的完整合成流程 → [渲染路径与帧合成](/architecture/rendering-pipeline)
-- 理解底层资源调度 → [Render Graph 渲染图](/architecture/render-graph)
+- Understand the full frame composition flow → [Render Paths & Frame Composer](/architecture/rendering-pipeline)
+- Understand the underlying resource scheduling → [Render Graph](/architecture/render-graph)

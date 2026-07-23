@@ -1,19 +1,19 @@
-# 材质系统
+# Material System
 
-Myth 的材质系统围绕一个目标设计：**让自定义材质既易于编写，又不在渲染热路径（Hot Path）上引入额外开销。** 本章介绍当前的材质架构、`#[myth_material]` 宏的能力，以及如何实现你自己的材质。
+Myth's material system is designed around one goal: **make custom materials easy to author without adding overhead on the rendering hot path.** This chapter covers the current material architecture, what the `#[myth_material]` macro generates, and how to implement your own material.
 
-## 1. 架构概览
+## 1. Architecture Overview
 
-引擎中的每一种材质都是一个**强类型、内存紧凑的 Rust 结构体**。材质属性按 `std140` 布局排列，可以直接作为 Uniform 上传到 GPU；纹理则通过独立的绑定槽（Texture Slot）声明。
+Every material in the engine is a **strongly-typed, memory-compact Rust struct**. Material properties are laid out per the `std140` rules so they can be uploaded directly as a uniform; textures are declared through dedicated texture slots.
 
-这带来三个直接的好处：
+This yields three concrete benefits:
 
-- **缓存友好**：每帧为成千上万个材质实例构建 Bind Group 时，访问的是连续的紧凑内存，没有字符串哈希或散列查找。
-- **编译期校验**：字段类型、对齐和 Shader 契约在编译期确定，错误在构建时即被捕获。
-- **自动同步**：材质属性或贴图发生变化时，引擎会自动让对应的管线缓存失效并重建，无需手动管理。
+- **Cache-friendly**: building bind groups across thousands of material instances every frame touches contiguous, compact memory — no string hashing or hash-map lookups.
+- **Compile-time validation**: field types, alignment, and the shader contract are fixed at compile time, so mistakes are caught at build.
+- **Automatic synchronization**: when a property or texture changes, the engine invalidates and rebuilds the corresponding pipeline cache automatically — no manual bookkeeping.
 
 ```rust
-// 一个最小的自定义材质定义
+// A minimal custom material definition
 #[myth_material(shader = "examples/holo", shader_src = HOLO_SHADER)]
 pub struct HoloMaterial {
     #[uniform(default = "Vec4::new(0.1, 0.8, 1.2, 1.0)")]
@@ -27,42 +27,42 @@ pub struct HoloMaterial {
 }
 ```
 
-## 2. `#[myth_material]` 宏
+## 2. The `#[myth_material]` Macro
 
-`#[myth_material]` 是连接 CPU 端数据与 GPU 端 Shader 契约的核心。它在编译期为每一个材质生成所需的全部样板代码：
+`#[myth_material]` is the bridge between CPU-side data and the GPU-side shader contract. At compile time it generates all the boilerplate each material needs:
 
-| 生成内容 | 说明 |
+| Generated | Description |
 | --- | --- |
-| **GPU Uniform 结构** | 按 `std140` 自动处理字段对齐与填充，可直接上传，零运行时开销。 |
-| **WGSL 映射** | `#[uniform]` 字段自动映射为 Shader 中 `u_material` 的成员；`#[texture]` 字段自动生成纹理 / 采样器绑定，并定义 `HAS_NORMAL_MAP` 等条件编译宏。 |
-| **版本追踪** | 属性或贴图变更时自动标记脏状态，触发对应管线缓存的失效与重建。 |
-| **默认值** | `default = "..."` 表达式在材质构造时求值，省去手写 `Default` 实现。 |
+| **GPU uniform struct** | Handles `std140` field alignment and padding automatically; directly uploadable with zero runtime overhead. |
+| **WGSL mapping** | `#[uniform]` fields map to members of `u_material` in the shader; `#[texture]` fields generate texture/sampler bindings and define conditional-compilation flags such as `HAS_NORMAL_MAP`. |
+| **Version tracking** | Property or texture changes mark dirty state automatically, triggering invalidation and rebuild of the corresponding pipeline cache. |
+| **Defaults** | The `default = "..."` expression is evaluated at construction, removing the need to hand-write `Default`. |
 
-### 字段属性
+### Field Attributes
 
-- `#[uniform]`：标记一个会被打包进 Uniform Buffer 的数值字段（`f32`、`Vec3`、`Vec4`、`Mat4` 等）。可选 `default` 表达式提供初始值。
-- `#[texture]`：标记一个 `TextureSlot` 字段。绑定存在时，引擎会在 Shader 中自动定义对应的 `HAS_*_MAP` 宏，便于在 WGSL 里做分支。
+- `#[uniform]`: marks a numeric field (`f32`, `Vec3`, `Vec4`, `Mat4`, …) that is packed into the uniform buffer. An optional `default` expression provides the initial value.
+- `#[texture]`: marks a `TextureSlot` field. When a binding is present, the engine defines the matching `HAS_*_MAP` flag in the shader so you can branch on it in WGSL.
 
-宏头部的 `shader` 用于标识材质类别（影响管线缓存键），`shader_src` 指向材质的 WGSL 源（可内联常量或外部文件）。
+In the macro header, `shader` identifies the material category (it participates in the pipeline cache key) and `shader_src` points to the material's WGSL source (an inline constant or an external file).
 
-## 3. 着色器模板系统
+## 3. Shader Template System
 
-为避免开发者编写大量与光照、几何相关的样板 WGSL，材质着色器支持两种模式：
+To avoid forcing developers to write large amounts of lighting/geometry boilerplate WGSL, material shaders support two modes:
 
-- **`MaterialBody` 模式（默认）**：你只需编写核心着色逻辑（`vs_main` / `fs_main` 的内部计算）。编译器会自动为你注入：
-  - 场景光照结构体（`scene_lighting_structs`）
-  - 集群光照定义（`clustered_lighting_structs`）
-  - 依据几何布局自动生成的顶点输入结构（`VertexInput`）
-- **`Template` 模式**：当你需要完全掌控整个 Shader（包括入口函数与绑定布局）时使用，引擎仅做最少的必要注入。
+- **`MaterialBody` mode (default)**: you write only the core shading logic (the internals of `vs_main` / `fs_main`). The compiler injects for you:
+  - Scene lighting structs (`scene_lighting_structs`)
+  - Clustered lighting definitions (`clustered_lighting_structs`)
+  - The vertex input struct (`VertexInput`), auto-generated from the geometry layout
+- **`Template` mode**: use this when you need full control over the entire shader (entry points and binding layout included); the engine performs only the minimal necessary injection.
 
-由于注入是按管线进行的，**同一份材质代码可以无缝复用于前向渲染、深度预处理（Depth Prepass）与阴影投射（Shadow Pass）等多套管线**，无需为每条管线重复编写。
+Because injection is per-pipeline, **the same material code is reused seamlessly across forward rendering, the depth prepass, and shadow passes** — no need to rewrite it for each pipeline.
 
-## 4. 实现一个自定义材质
+## 4. Implementing a Custom Material
 
-完整流程分三步：定义结构体、编写 WGSL、在场景中使用。
+The full flow is three steps: define the struct, write the WGSL, use it in a scene.
 
 ```rust
-// 1. 定义材质（CPU 侧）
+// 1. Define the material (CPU side)
 #[myth_material(shader = "examples/holo", shader_src = HOLO_SHADER)]
 pub struct HoloMaterial {
     #[uniform(default = "Vec4::new(0.1, 0.8, 1.2, 1.0)")]
@@ -71,23 +71,23 @@ pub struct HoloMaterial {
     pub opacity: f32,
 }
 
-// 2. 编写着色逻辑（MaterialBody 模式，仅核心部分）
+// 2. Write the shading logic (MaterialBody mode, core only)
 const HOLO_SHADER: &str = r#"
 fn fs_main(in: VertexOutput) -> @location(0) vec4<f32> {
-    // u_material 由宏根据字段自动生成
+    // u_material is generated by the macro from the fields
     let glow = u_material.base_color.rgb * (0.6 + 0.4 * sin(globals.time * 3.0));
     return vec4<f32>(glow, u_material.opacity);
 }
 "#;
 
-// 3. 在场景中使用
+// 3. Use it in a scene
 let mat = HoloMaterial::default();
 let mesh = scene.spawn_box(1.0, 1.0, 1.0, mat, &engine.assets);
 ```
 
-引擎会自动为该材质创建并缓存管线，处理 Uniform 上传、绑定与版本追踪。运行时修改 `mat.opacity` 等字段，引擎会在下一帧自动同步到 GPU。
+The engine creates and caches the pipeline for this material, handling uniform upload, binding, and version tracking. Mutating fields like `mat.opacity` at runtime is synced to the GPU automatically on the next frame.
 
-## 下一步
+## Next Steps
 
-- 使用内置 PBR 材质 → [PBR 物理材质](/advanced/pbr-materials)
-- 编写更复杂的自定义材质与后处理 → [自定义 Shader 与后处理](/advanced/custom-shader)
+- Use the built-in PBR materials → [PBR Materials](/advanced/pbr-materials)
+- Author more complex custom materials and post FX → [Custom Shaders & Post FX](/advanced/custom-shader)

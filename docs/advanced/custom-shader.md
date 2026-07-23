@@ -1,12 +1,12 @@
-# 自定义 Shader 与后处理
+# Custom Shaders & Post FX
 
-Myth 提供了一套极为强大的面向高级用户的自定义扩展机制。得益于基于 SSA 的 Render Graph，所有自定义逻辑都可以零副作用地嵌入引擎的主循环。
+Myth provides an extremely powerful extension mechanism for advanced users. Thanks to the SSA-based Render Graph, all custom logic can be embedded into the engine's main loop with zero side effects.
 
-## 1. 自定义网格材质 (`#[myth_material]`)
+## 1. Custom Mesh Materials (`#[myth_material]`)
 
-想要编写一个保留在标准几何管线内的自定义网格材质，首选高层 API `#[myth_material]`。它通过宏自动生成对齐的 Uniform 结构、版本追踪以及 WGSL 绑定。
+To write a custom mesh material that stays within the standard geometry pipeline, the high-level `#[myth_material]` API is the first choice. Via a macro it automatically generates an aligned uniform struct, version tracking, and WGSL bindings.
 
-以下是一个极简的全息 (Hologram) 材质实现，我们使用 `shader_src` 注入逻辑主体（Body 模式），引擎会自动为你补全光照结构体和顶点前导块：
+Below is a minimal Hologram material. We inject the logic body via `shader_src` (Body mode), and the engine automatically fills in the lighting structs and vertex preamble for you:
 
 ```rust
 use myth::prelude::*;
@@ -39,32 +39,30 @@ pub struct HoloMaterial {
     #[uniform(default = "2.0")]
     pub speed: f32,
 }
-
 ```
 
-::: tip 宏生成的动态 Define
-如果你在结构体中添加了 `#[texture]` 字段，宏会自动在 WGSL 中生成对应的绑定声明、`u_material.xxx_transform` 以及 `HAS_MAP` 等预编译宏。
+::: tip Macro-Generated Dynamic Defines
+If you add a `#[texture]` field to the struct, the macro automatically generates the corresponding binding declaration in WGSL, the `u_material.xxx_transform`, and precompiler defines like `HAS_MAP`.
 :::
 
-## 2. 模板通道 (Template Pass) 系统
+## 2. The Template Pass System
 
-对于那些“不自然属于物体材质”的工作（如全屏后处理、屏幕空间特效或 GPU 数据生成），请使用 **Template Pass** 系统。
+For work that "doesn't naturally belong to an object's material" (full-screen post-processing, screen-space effects, or GPU data generation), use the **Template Pass** system.
 
-该系统分为两个阶段以实现最大化的解耦与复用：
+The system splits into two stages for maximum decoupling and reuse:
 
-**阶段 1：Builder 阶段 (声明静态布局)**
+**Stage 1: Builder stage (declare the static layout)**
 
 ```rust
 let post_pass = RenderPassBuilder::fullscreen("Custom Post FX")
     .inline_shader_template(SHADER_NAME, SHADER_WGSL)
-    .bind_texture_2d(0, 0, wgpu::ShaderStages::FRAGMENT, true) // 声明绑定槽
+    .bind_texture_2d(0, 0, wgpu::ShaderStages::FRAGMENT, true) // declare binding slot
     .color_target(...)
     .build(&mut engine.renderer);
-
 ```
 
-**阶段 2：Graph 阶段 (注入动态图资源)**
-结合 `FrameComposer` 的钩子系统（如 `HookStage::BeforePostProcess`），在每帧将其插入 Render Graph，并绑定具体的瞬态图纹理：
+**Stage 2: Graph stage (inject dynamic graph resources)**
+Combined with the `FrameComposer` hook system (e.g. `HookStage::BeforePostProcess`), insert it into the Render Graph each frame and bind the concrete transient graph texture:
 
 ```rust
 let node = post_pass.build_node(
@@ -74,15 +72,14 @@ let node = post_pass.build_node(
     RenderTargetOps::DontCare,
     Some("CustomPostFX BindGroup"),
     |bindings| {
-        bindings.bind_texture(0, 0, scene_color); // 绑定当帧实际产生的场景纹理
+        bindings.bind_texture(0, 0, scene_color); // bind the scene texture actually produced this frame
     },
 );
-
 ```
 
-这种设计让编译器能够“看透”你的自定义后处理节点，并智能地在上下游管线之间复用物理内存。
+This design lets the compiler "see through" your custom post-processing node and intelligently reuse physical memory across upstream and downstream pipelines.
 
-## 下一步
+## Next Steps
 
-- 理解钩子插入的帧合成顺序 → [渲染路径与帧合成](/architecture/rendering-pipeline)
-- 理解底层资源调度 → [Render Graph 渲染图](/architecture/render-graph)
+- Understand the frame composition order for hooks → [Render Paths & Frame Composer](/architecture/rendering-pipeline)
+- Understand the underlying resource scheduling → [Render Graph](/architecture/render-graph)

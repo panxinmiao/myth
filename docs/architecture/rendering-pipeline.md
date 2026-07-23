@@ -1,10 +1,10 @@
-# 渲染路径与帧合成
+# Render Paths & Frame Composer
 
-在深入 Render Graph 的底层机制之前，理解 Myth 的**渲染路径 (Render Path)** 与**帧合成器 (Frame Composer)** 有助于你建立全局视角：一帧画面究竟由哪些阶段、按什么顺序组装而成。
+Before diving into the internals of the Render Graph, understanding Myth's **render paths** and **frame composer** helps you build a global picture: which stages assemble a frame, and in what order.
 
-## 1. 两条渲染路径
+## 1. Two Render Paths
 
-引擎在创建 `App` 时通过 `RendererSettings` 选择渲染路径：
+The engine selects a render path via `RendererSettings` when creating an `App`:
 
 ```rust
 App::new()
@@ -16,62 +16,62 @@ App::new()
     .run::<MyApp>()
 ```
 
-| 渲染路径 | 定位 | 适用场景 |
+| Render Path | Role | Use Case |
 | :--- | :--- | :--- |
-| `RenderPath::HighFidelity` | 完整的 PBR + 后处理 + 屏幕空间特效 + 3DGS 管线 | 桌面 / 高端设备，需要 Bloom、SSAO、SSR、SSGI、TAA、3DGS 等特性 |
-| `RenderPath::BasicForward` | 极简前向渲染 | 低端设备、移动端，仅需基础着色 |
+| `RenderPath::HighFidelity` | Full PBR + post-processing + screen-space FX + 3DGS pipeline | Desktop / high-end devices needing Bloom, SSAO, SSR, SSGI, TAA, 3DGS, etc. |
+| `RenderPath::BasicForward` | Minimal forward rendering | Low-end devices, mobile, basic shading only |
 
-::: warning 特性依赖
-绝大多数高级特性（Bloom、SSAO、SSR、SSGI、SSSS、TAA、3DGS）都依赖 `HighFidelity` 路径。若发现某个后处理“不生效”，请先确认渲染路径设置正确。
+::: warning Feature Dependencies
+Most advanced features (Bloom, SSAO, SSR, SSGI, SSSS, TAA, 3DGS) depend on the `HighFidelity` path. If a post-processing effect "doesn't work," first confirm the render path is set correctly.
 :::
 
-## 2. 高保真帧的合成顺序
+## 2. High-Fidelity Frame Composition Order
 
-`HighFidelity` 路径下，帧合成器 (`FrameComposer`) 按下列拓扑顺序组装各个阶段。每个阶段都会向 Render Graph 声明其资源依赖，由编译器统一调度：
+On the `HighFidelity` path, the `FrameComposer` assembles each stage in the following topological order. Each stage declares its resource dependencies to the Render Graph, which schedules them uniformly:
 
 ```mermaid
 flowchart LR
-    A[Shadow Pass<br/>阴影] --> B[Pre Pass<br/>深度/法线预处理]
+    A[Shadow Pass] --> B[Pre Pass<br/>Depth/Normals]
     B --> C[SSAO]
-    C --> D[Opaque Pass<br/>不透明几何]
-    D --> E[SSSS<br/>次表面散射]
-    E --> F[Skybox / 程序化天空]
+    C --> D[Opaque Pass]
+    D --> E[SSSS<br/>Subsurface]
+    E --> F[Skybox / Procedural Sky]
     F --> G[TAA / CAS]
-    G --> H[3DGS<br/>高斯溅射]
-    H --> I[Transparent Pass<br/>透明几何]
+    G --> H[3DGS<br/>Gaussian Splatting]
+    H --> I[Transparent Pass]
     I --> J[Bloom]
-    J --> K[Tone Mapping<br/>色调映射]
+    J --> K[Tone Mapping]
     K --> L[FXAA]
     L --> M[UI Pass]
 ```
 
-各阶段要点：
+Key points per stage:
 
-- **Shadow Pass：** 为投射阴影的方向光生成级联阴影贴图 (CSM)，聚光灯生成独立阴影。
-- **Pre Pass：** 提前写入场景深度、法线与速度缓冲，供 SSAO、SSSS、TAA 等屏幕空间特效复用。
-- **Opaque Pass：** PBR 不透明几何的主着色阶段，在此进行聚类光照查找。
-- **SSSS：** 基于屏幕空间的次表面散射，依赖 Pre Pass 的法线与 Feature ID。
-- **3DGS：** 高斯溅射读取不透明深度缓冲，实现与传统几何的正确遮挡（仅在启用 `3dgs` 特性时存在）。
-- **Bloom → Tone Mapping → FXAA：** HDR 后处理链，最终输出到屏幕。
+- **Shadow Pass:** Generates Cascaded Shadow Maps (CSM) for shadow-casting directional lights, and separate shadows for spot lights.
+- **Pre Pass:** Writes scene depth, normals, and velocity buffers ahead of time, reused by screen-space effects like SSAO, SSSS, and TAA.
+- **Opaque Pass:** The main shading stage for PBR opaque geometry, where clustered light lookups happen.
+- **SSSS:** Screen-space subsurface scattering, depending on Pre Pass normals and Feature ID.
+- **3DGS:** Gaussian splatting reads the opaque depth buffer for correct occlusion against traditional geometry (present only when the `3dgs` feature is enabled).
+- **Bloom → Tone Mapping → FXAA:** The HDR post-processing chain, finally output to screen.
 
-::: tip 自动剔除
-上述阶段并非每帧全部执行。若某个特效被关闭（例如 SSAO），编译器会自动剔除它及其唯一为它服务的前置节点（死节点剔除），完全零配置。详见 [Render Graph 渲染图](/architecture/render-graph)。
+::: tip Automatic Culling
+Not all of these stages run every frame. If an effect is disabled (e.g. SSAO), the compiler automatically culls it and any predecessor nodes that exist solely to serve it (dead-pass elimination), with zero configuration. See [Render Graph](/architecture/render-graph).
 :::
 
-## 3. 在合成流程中注入自定义阶段
+## 3. Injecting Custom Stages
 
-帧合成器提供了**钩子系统 (Hook System)**，允许你在标准阶段之间插入自定义的 Render Graph 节点，而无需修改引擎源码：
+The frame composer provides a **hook system** that lets you insert custom Render Graph nodes between standard stages without modifying engine source:
 
 ```rust
-// 在后处理之前插入自定义全屏特效
+// Insert a custom full-screen effect before post-processing
 composer.add_hook(HookStage::BeforePostProcess, move |ctx| {
-    // 向 ctx.graph 声明并返回你的自定义 Pass
+    // Declare and return your custom pass on ctx.graph
 });
 ```
 
-这套机制让自定义后处理、调试可视化、GPU 数据生成等工作都能零副作用地嵌入主循环。详见 [自定义 Shader 与后处理](/advanced/custom-shader)。
+This mechanism lets custom post-processing, debug visualization, and GPU data generation embed into the main loop with zero side effects. See [Custom Shaders & Post FX](/advanced/custom-shader).
 
-## 下一步
+## Next Steps
 
-- 深入编译器底层 → [Render Graph 渲染图](/architecture/render-graph)
-- 配置各项后处理特效 → [后处理与屏幕空间特效](/advanced/post-processing)
+- Go deep into the compiler internals → [Render Graph](/architecture/render-graph)
+- Configure post-processing effects → [Post-Processing & Screen-Space FX](/advanced/post-processing)

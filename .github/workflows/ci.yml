@@ -28,6 +28,35 @@ jobs:
       - name: Doc Check
         run: cargo doc --no-deps
 
+  # Build the public site with its production base path and verify every
+  # generated internal route. This also guards the English-root + /zh locale
+  # topology used by both local development and GitHub Pages.
+  docs-site:
+    name: Docs Site
+    runs-on: ubuntu-latest
+    env:
+      DOCS_BASE: /myth/
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: npm
+
+      - name: Install npm dependencies
+        run: npm ci
+
+      - name: Check source locale topology
+        run: node scripts/check-doc-site.mjs --source-only
+
+      - name: Build VitePress site
+        run: npm run docs:build
+
+      - name: Check generated links and locale topology
+        run: node scripts/check-doc-site.mjs dist /myth/
+
   # 2. Run tests across multiple platforms
   test-matrix:
     name: Test on ${{ matrix.os }}

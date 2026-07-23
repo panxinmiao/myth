@@ -6,9 +6,14 @@ const props = defineProps<{
   graph: string
 }>()
 
+const container = ref<HTMLElement | null>(null)
 const root = ref<HTMLElement | null>(null)
 const error = ref('')
-let observer: MutationObserver | null = null
+const hasRendered = ref(false)
+const isRendering = ref(false)
+let themeObserver: MutationObserver | null = null
+let viewportObserver: IntersectionObserver | null = null
+let isActivated = false
 let renderVersion = 0
 
 const decodedGraph = computed(() => decodeURIComponent(props.graph))
@@ -18,6 +23,7 @@ async function renderDiagram() {
   error.value = ''
 
   if (!root.value) return
+  isRendering.value = true
 
   try {
     const mermaid = (await import('mermaid')).default
@@ -33,50 +39,96 @@ async function renderDiagram() {
 
     root.value.innerHTML = svg
     bindFunctions?.(root.value)
+    hasRendered.value = true
   } catch (err) {
     if (currentVersion !== renderVersion) return
     error.value = err instanceof Error ? err.message : String(err)
     if (root.value) {
       root.value.textContent = error.value
     }
+  } finally {
+    if (currentVersion === renderVersion) {
+      isRendering.value = false
+    }
   }
+}
+
+function activate() {
+  if (isActivated) return
+  isActivated = true
+  viewportObserver?.disconnect()
+  viewportObserver = null
+  void renderDiagram()
 }
 
 onMounted(async () => {
   await nextTick()
-  await renderDiagram()
 
-  observer = new MutationObserver(() => {
-    renderDiagram()
+  themeObserver = new MutationObserver(() => {
+    if (isActivated) void renderDiagram()
   })
-  observer.observe(document.documentElement, {
+  themeObserver.observe(document.documentElement, {
     attributes: true,
     attributeFilter: ['class'],
   })
+
+  if (!container.value || !('IntersectionObserver' in window)) {
+    activate()
+    return
+  }
+
+  viewportObserver = new IntersectionObserver(
+    (entries) => {
+      if (entries.some((entry) => entry.isIntersecting)) activate()
+    },
+    { rootMargin: '320px 0px' },
+  )
+  viewportObserver.observe(container.value)
 })
 
 onBeforeUnmount(() => {
-  observer?.disconnect()
-  observer = null
+  themeObserver?.disconnect()
+  viewportObserver?.disconnect()
+  themeObserver = null
+  viewportObserver = null
   renderVersion++
 })
 
 watch(decodedGraph, () => {
-  renderDiagram()
+  if (isActivated) void renderDiagram()
 })
 </script>
 
 <template>
-  <div class="lazy-mermaid" :data-error="error || null">
-    <div ref="root" class="lazy-mermaid__canvas" aria-live="polite"></div>
+  <div
+    ref="container"
+    class="lazy-mermaid"
+    :data-error="error || null"
+    :data-rendered="hasRendered || null"
+  >
+    <div
+      ref="root"
+      class="lazy-mermaid__canvas"
+      aria-live="polite"
+      :aria-busy="isRendering"
+    ></div>
   </div>
 </template>
 
 <style scoped>
 .lazy-mermaid {
   width: 100%;
+  min-height: 120px;
   margin: 16px 0;
   overflow-x: auto;
+  border-radius: 8px;
+  background: var(--vp-c-bg-soft);
+}
+
+.lazy-mermaid[data-rendered],
+.lazy-mermaid[data-error] {
+  min-height: 0;
+  background: transparent;
 }
 
 .lazy-mermaid__canvas {

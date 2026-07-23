@@ -14,7 +14,7 @@
 
 [![Myth Engine Hero](https://raw.githubusercontent.com/panxinmiao/myth/main/docs/public/images/hero.jpg)](https://panxinmiao.github.io/myth/)
 
-[**Homepage**](https://panxinmiao.github.io/myth/en) | [**Live Demo**](https://panxinmiao.github.io/myth/gallery/) | [**Examples**](examples/)
+[**Homepage**](https://panxinmiao.github.io/myth/) | [**Live Demo**](https://panxinmiao.github.io/myth/gallery/) | [**Examples**](examples/)
 
 </div>
 
@@ -24,7 +24,7 @@
 
 **Myth** is a high-performance, cross-platform 3D rendering engine built with Rust and wgpu. It aims to provide ultimate rendering performance and a minimalist API design, delivering a seamless programming experience for developers.
 
-> For complete quick-start tutorials, API guides, advanced rendering features, and underlying architecture design, please visit the **[Myth Engine Homepage](https://panxinmiao.github.io/myth/en)**.
+> For complete quick-start tutorials, API guides, advanced rendering features, and underlying architecture design, please visit the **[Myth Engine Homepage](https://panxinmiao.github.io/myth/)**.
 
 > No environment configuration required—**[experience Myth Engine's rendering capabilities directly in your browser](https://panxinmiao.github.io/myth/gallery/)**.
 
@@ -37,10 +37,10 @@
     * Efficient Clustered Forward Lighting.
     * A suite of advanced post-processing effects including Screen Space Global Illumination (SSGI), Screen Space Reflections (SSR), and SSAO.
     * **Built-in 3D Gaussian Splatting (3DGS) rendering support** for high-fidelity novel view synthesis.
-* **Modern Render Graph Architecture:** The core utilizes a strict SSA (Static Single Assignment) [render graph architecture](https://panxinmiao.github.io/myth/en/architecture/render-graph), automatically handling complex VRAM reuse, pipeline barriers, and dependency synchronization.
+* **Modern Render Graph Architecture:** The core utilizes a strict SSA (Static Single Assignment) [render graph architecture](https://panxinmiao.github.io/myth/architecture/render-graph), automatically handling complex VRAM reuse, pipeline barriers, and dependency synchronization.
 * **Rich Productivity Ecosystem:** Complete glTF support, asynchronous asset loading, and native support for Python bindings to meet various workflow requirements.
 
-> To see the full list of features, please visit the [Features page](https://panxinmiao.github.io/myth/en/guide/features) in the documentation.
+> To see the full list of features, please visit the [Features page](https://panxinmiao.github.io/myth/guide/features) in the documentation.
 
 ## Quick Start
 
@@ -103,12 +103,12 @@ fn main() -> myth::Result<()> {
 
 Myth provides a rich set of Examples for developers. Whether you want to run it in a local Native environment, compile it for the Web, or use Python bindings, we have prepared comprehensive guides.
 
-> **[Read the complete Quick Start guide](https://panxinmiao.github.io/myth/en/guide/quick-start)** for detailed build instructions.
+> **[Read the complete Quick Start guide](https://panxinmiao.github.io/myth/guide/quick-start)** for detailed build instructions.
 
 ### Python Bindings
 
 The Myth engine also provides Python bindings for rapid prototyping and scientific visualization.
-For installation methods and examples, please refer to the [Python Bindings](https://panxinmiao.github.io/myth/en/guide/python).
+For installation methods and examples, please refer to the [Python Bindings](https://panxinmiao.github.io/myth/guide/python).
 
 ## License
 

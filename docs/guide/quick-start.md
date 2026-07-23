@@ -1,32 +1,32 @@
-# 快速开始
+# Quick Start
 
-在本节中，我们将使用不到 50 行代码，在屏幕上渲染出一个带有棋盘格纹理、不断旋转的 3D 立方体。
+In this section we'll render a spinning, checkerboard-textured 3D cube on screen in under 50 lines of code.
 
-## 1. 安装与依赖
+## 1. Installation & Dependencies
 
-首先，创建一个新的 Rust 项目并添加 Myth 引擎依赖。在你的 `Cargo.toml` 中加入：
+First, create a new Rust project and add the Myth engine dependency. In your `Cargo.toml`:
 
 ```toml
 [dependencies]
-# 从 crates.io 获取稳定版本
+# Stable release from crates.io
 myth-engine = "0.2.0"
 
-# 或从 GitHub 获取最新主分支
+# Or the latest from GitHub
 # myth-engine = { git = "https://github.com/panxinmiao/myth", branch = "main" }
 ```
 
-::: info Feature Flags (特性开关)
-Myth 采用模块化设计，许多重型能力默认隐藏在 Feature Flag 之后以保持极致轻量。在实际开发中，你可能需要根据需求启用以下特性：
+::: info Feature Flags
+Myth is modular, and many heavyweight capabilities are hidden behind feature flags by default to keep the engine lean. In practice you may need to enable:
 
-* `gltf`: 加载 glTF 和 GLB 格式的模型资产
-* `3dgs`: 启用 3D 高斯溅射（Gaussian Splatting）渲染支持
-* `gaussian-npz`: 支持加载压缩的 NPZ 格式高斯点云
-* `debug_view`: 开启调试视图和渲染图检查器辅助工具
+* `gltf`: Load glTF and GLB model assets
+* `3dgs`: Enable 3D Gaussian Splatting rendering support
+* `gaussian-npz`: Load compressed NPZ-format Gaussian point clouds
+* `debug_view`: Enable debug views and the render-graph inspector tooling
 :::
 
-## 2. 你的第一个 App (Hello World)
+## 2. Your First App (Hello World)
 
-Myth 使用了极其直观的 API 设计。创建 `src/main.rs` 并填入以下代码：
+Myth uses an extremely intuitive API. Create `src/main.rs` and fill in:
 
 ```rust
 use myth::prelude::*;
@@ -35,26 +35,26 @@ struct MyApp;
 
 impl AppHandler for MyApp {
     fn init(engine: &mut Engine, _window: &dyn Window) -> Self {
-        // 1. 创建并激活场景
+        // 1. Create and activate a scene
         let scene = engine.scene_manager.create_active();
 
-        // 2. 创建带有棋盘格纹理的立方体
+        // 2. Create a cube with a checkerboard texture
         let tex_handle = engine.assets.checkerboard(512, 64);
         let mesh_handle = scene.spawn_box(
-            1.0, 1.0, 1.0, 
+            1.0, 1.0, 1.0,
             PhongMaterial::new(Vec4::new(1.0, 0.76, 0.33, 1.0)).with_map(tex_handle),
             &engine.assets,
         );
 
-        // 3. 设置相机与视口
+        // 3. Set up camera and viewport
         let cam_node_id = scene.add_camera(Camera::new_perspective(45.0, 16.0 / 9.0, 0.1));
         scene.node(&cam_node_id).set_position(0.0, 0.0, 5.0).look_at(Vec3::ZERO);
         scene.active_camera = Some(cam_node_id);
 
-        // 4. 添加环境光源
+        // 4. Add a light
         scene.add_light(Light::new_directional(Vec3::ONE, 5.0));
 
-        // 5. 注册每帧更新回调逻辑
+        // 5. Register a per-frame update callback
         scene.on_update(move |scene, _input, _dt| {
             if let Some(node) = scene.get_node_mut(mesh_handle) {
                 let rot_y = Quat::from_rotation_y(0.02);
@@ -77,38 +77,36 @@ fn main() -> myth::Result<()> {
         })
         .run::<MyApp>()
 }
-
 ```
 
-## 3. 运行你的程序
+## 3. Run Your Program
 
-使用 Cargo 运行项目，体验你的第一个 Myth 3D 场景：
+Run the project with Cargo and experience your first Myth 3D scene:
 
 ```bash
 cargo run --release
-
 ```
 
-::: tip 渲染路径 (Render Path) 选择
-我们在 `main` 函数中指定了 `RenderPath::HighFidelity`。如果你的场景只需要非常基础的前向渲染，且运行在低端设备上，可以切换为 `RenderPath::BasicForward`。但如果你需要 PBR、泛光(Bloom)、SSAO 或 3DGS 特性，请始终保持在 `HighFidelity` 高保真管线下。
+::: tip Choosing a Render Path
+We specified `RenderPath::HighFidelity` in `main`. If your scene only needs very basic forward rendering and runs on low-end hardware, you can switch to `RenderPath::BasicForward`. But if you need PBR, Bloom, SSAO, or 3DGS features, always stay on the `HighFidelity` path.
 :::
 
-## 4. 运行官方示例
+## 4. Run the Official Examples
 
-仓库内置了 50+ 个覆盖各类特性的示例。克隆仓库后可直接运行：
+The repository ships 50+ examples covering all kinds of features. After cloning, run them directly:
 
 ```bash
-# 运行单个示例（如地球 Demo）
+# Run a single example (e.g. the Earth demo)
 cargo run --example earth --release
 
-# 运行独立 App（如 glTF Viewer）
+# Run a standalone app (e.g. the glTF Viewer)
 cargo run -p gltf_viewer --release
 ```
 
-关于 Web/WASM 示例的构建，请参考 [myth xtask 指南](https://github.com/panxinmiao/myth/blob/main/xtask/README.md)。
+For building Web/WASM examples, see the [myth xtask Guide](https://github.com/panxinmiao/myth/blob/main/xtask/README.md).
 
-## 下一步
+## Next Steps
 
-- 理解引擎的四层心智模型 → [场景与节点系统](/guide/scene-graph)
-- 加载模型并播放动画 → [资产、glTF 与动画](/guide/assets-animation)
-- 纵览全部能力 → [核心特性总览](/guide/features)
+- Understand the engine's four-layer mental model → [Scene & Node System](/guide/scene-graph)
+- Load models and play animations → [Assets, glTF & Animation](/guide/assets-animation)
+- Survey all capabilities → [Feature Overview](/guide/features)

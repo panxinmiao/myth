@@ -1,30 +1,66 @@
 <script setup lang="ts">
+import { onBeforeUnmount, onMounted, ref } from 'vue'
 import { withBase } from 'vitepress'
 
-// Transparent-background assets rendered offline by the `hero_capture`
-// example (see scripts/build-hero-video.ps1). The WebM carries a real alpha
-// channel (VP9) so it blends into both the light and dark themes; 
-// Safari does not support VP9 alpha, so the MOV is a fallback for that and similar platforms.
+// The VP9 WebM carries a real alpha channel. Browsers that cannot reliably
+// render VP9 alpha (notably Safari) keep the transparent PNG poster instead.
 const videoSrcWebm = withBase('/media/demo.webm')
-const videoSrcMov = withBase('/media/demo.mov')
 const poster = withBase('/images/hero.png')
+
+const shouldAnimate = ref(false)
+let motionPreference: MediaQueryList | null = null
+
+function supportsTransparentHeroVideo() {
+  const userAgent = navigator.userAgent
+  const isSafari = /Safari/i.test(userAgent) && !/(Chrome|Chromium|CriOS|Edg|OPR|Android)/i.test(userAgent)
+  const video = document.createElement('video')
+  const supportsVp9 = video.canPlayType('video/webm; codecs="vp9"') !== ''
+  return supportsVp9 && !isSafari
+}
+
+function updateMotionPreference() {
+  shouldAnimate.value = Boolean(
+    motionPreference && !motionPreference.matches && supportsTransparentHeroVideo()
+  )
+}
+
+onMounted(() => {
+  motionPreference = window.matchMedia('(prefers-reduced-motion: reduce)')
+  updateMotionPreference()
+  motionPreference.addEventListener?.('change', updateMotionPreference)
+})
+
+onBeforeUnmount(() => {
+  motionPreference?.removeEventListener?.('change', updateMotionPreference)
+  motionPreference = null
+})
 </script>
 
 <template>
-  <div class="hero-video">
-    <div class="hero-video__glow" aria-hidden="true"></div>
+  <div class="hero-video" aria-hidden="true">
+    <div class="hero-video__glow"></div>
+    <img
+      class="hero-video__media hero-video__poster"
+      :src="poster"
+      alt=""
+      width="768"
+      height="768"
+    >
     <video
+      v-if="shouldAnimate"
       class="hero-video__media"
       :poster="poster"
+      aria-hidden="true"
+      tabindex="-1"
       autoplay
       muted
       loop
       playsinline
       preload="metadata"
+      @error="shouldAnimate = false"
     >
-      <source :src="videoSrcMov" type='video/mp4; codecs="hvc1"'>
-      <source :src="videoSrcWebm" type="video/webm">
-  </video>
+      <source :src="videoSrcWebm" type='video/webm; codecs="vp9"'>
+    </video>
   </div>
 </template>
 
@@ -40,13 +76,18 @@ const poster = withBase('/images/hero.png')
 /* The media has a transparent background, so no frame/shadow/fill — it must
    blend straight into the page in both light and dark mode. */
 .hero-video__media {
-  position: relative;
+  position: absolute;
+  inset: 0;
   z-index: 1;
   display: block;
   width: 100%;
   height: 100%;
   object-fit: contain;
   background: transparent;
+}
+
+.hero-video__poster {
+  z-index: 0;
 }
 
 /* Soft brand-colored aura behind the character, echoing the VitePress hero
@@ -65,5 +106,12 @@ const poster = withBase('/images/hero.png')
     /* #bd34fe 50%,
     #47caff 50% */
   );
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .hero-video__glow {
+    filter: blur(64px);
+    opacity: 0.28;
+  }
 }
 </style>

@@ -1,23 +1,23 @@
-# 资产、glTF 与动画
+# Assets, glTF & Animation
 
-Myth 内置了完整的 **glTF 2.0** 加载能力与一套**异步资产系统**。本页聚焦于实际工作流：如何加载模型、播放骨骼/变形动画，以及如何正确处理异步时序。
+Myth ships with full **glTF 2.0** loading and an **asynchronous asset system**. This page focuses on real-world workflows: loading models, playing skeletal/morph animations, and handling async timing correctly.
 
-## 1. 加载 glTF / GLB 模型
+## 1. Loading glTF / GLB Models
 
-glTF 资源通过 `engine.assets.load_gltf()` 加载。它会解析节点树、网格、PBR 材质、蒙皮骨骼、动画轨道与 Morph Target，并返回一个 **Prefab 句柄**：
+glTF resources are loaded via `engine.assets.load_gltf()`. It parses the node tree, meshes, PBR materials, skinned skeletons, animation tracks, and morph targets, returning a **Prefab handle**:
 
 ```rust
-// 返回 PrefabHandle —— 后台异步加载
+// Returns a PrefabHandle — loaded asynchronously in the background
 let model_prefab = engine.assets.load_gltf("assets/Michelle.glb");
 ```
 
-::: tip Prefab vs 实例
-`load_gltf` 返回的是一个**预制件 (Prefab)**，相当于一个可复用的模板。你可以用同一个 Prefab 在场景中实例化任意多个副本，它们共享底层几何与材质资源。
+::: tip Prefab vs Instance
+`load_gltf` returns a **Prefab**, essentially a reusable template. You can instantiate any number of copies of the same Prefab in a scene, and they share the underlying geometry and material resources.
 :::
 
-## 2. 实例化与时序检查
+## 2. Instantiation & Timing Checks
 
-由于加载是**完全异步**的，调用 `load_gltf` 后 Prefab 不会立刻就绪。正确的做法是在 `update` 循环中轮询，待资源加载完成后再 `instantiate`：
+Because loading is **fully asynchronous**, the Prefab is not ready immediately after calling `load_gltf`. The correct approach is to poll inside the `update` loop and `instantiate` only once the resource is ready:
 
 ```rust
 fn update(&mut self, engine: &mut Engine, _window: &dyn Window, _frame: &FrameState) {
@@ -26,55 +26,55 @@ fn update(&mut self, engine: &mut Engine, _window: &dyn Window, _frame: &FrameSt
 
     if !self.model_loaded {
         if let Some(prefab) = assets.prefabs.get(self.model_prefab) {
-            // 资源就绪，实例化进场景
+            // Ready — instantiate into the scene
             let root = scene.instantiate(prefab.as_ref());
             self.model_loaded = true;
-            // …在此处启动动画（见下文）
+            // …start animation here (see below)
         } else if let Some(err) = assets.prefabs.get_error(self.model_prefab) {
-            eprintln!("模型加载失败: {err}");
+            eprintln!("Failed to load model: {err}");
             self.model_loaded = true;
         }
     }
 }
 ```
 
-::: warning ⚠️ 警惕异步时序陷阱
-在程序启动的前几帧，模型可能尚未完成 GPU 上传。应注意就绪检查保护，否则会出现闪烁、阴影撕裂等隐蔽 Bug。详见 [异步资源与加载管线](/architecture/asset-pipeline)。
+::: warning ⚠️ Beware of Async Timing Pitfalls
+During the first few frames after startup, models may not have finished uploading to the GPU. Be sure to perform readiness checks to avoid subtle bugs like flickering or shadow tearing. See [Async Asset Pipeline](/architecture/asset-pipeline) for details.
 :::
 
-## 3. 播放动画
+## 3. Playing Animations
 
-实例化后，引擎会为含动画的节点自动安装一个 **Animation Mixer（动画混合器）**。通过 `scene.animation_mixers` 获取并控制播放：
+After instantiation, the engine automatically installs an **Animation Mixer** on nodes that contain animations. Access and control playback via `scene.animation_mixers`:
 
 ```rust
 let root = scene.instantiate(prefab.as_ref());
 
 if let Some(mixer) = scene.animation_mixers.get_mut(root) {
-    // 列出模型内的所有动画片段
+    // List all animation clips in the model
     for name in mixer.list_animations() {
         println!(" - {name}");
     }
 
-    // 按名称播放
+    // Play by name
     mixer.play("SambaDance");
 }
 ```
 
-混合器支持骨骼蒙皮（Skinning）与 Morph Target（变形目标）动画。引擎会在每帧自动推进时间轴并更新骨骼矩阵 / 形变权重，无需手动驱动。
+The mixer supports both skeletal (skinning) and morph-target animation. The engine advances the timeline and updates bone matrices / morph weights every frame automatically — no manual driving required.
 
-## 4. 纹理与环境贴图
+## 4. Textures & Environment Maps
 
-除了模型，常见的资产加载方式还包括：
+Besides models, common asset-loading patterns include:
 
 ```rust
-// 普通 2D 纹理（指定色彩空间，是否生成 mipmap）
+// Standard 2D texture (color space, whether to generate mipmaps)
 let albedo = engine.assets.load_texture(
     "assets/uv_grid.png",
     ColorSpace::Srgb,
     true,
 );
 
-// HDR 环境贴图，用于 IBL 基于图像的光照
+// HDR environment map for Image-Based Lighting (IBL)
 let env = engine.assets.load_texture(
     "assets/studio.hdr.jpg",
     ColorSpace::Srgb,
@@ -83,18 +83,18 @@ let env = engine.assets.load_texture(
 scene.environment.set_env_map(Some(env));
 ```
 
-设置环境贴图后，引擎会自动完成预过滤（PMREM）并将其作为漫反射辐照度与镜面反射的光照来源，配合 PBR 材质即可得到真实的基于图像的光照效果。
+Once an environment map is set, the engine automatically prefilters it (PMREM) and uses it as the source of diffuse irradiance and specular reflection. Combined with PBR materials, this yields realistic image-based lighting.
 
-## 5. 程序化纹理
+## 5. Procedural Textures
 
-对于原型设计，引擎内置了便捷的程序化纹理生成器，无需任何外部资源：
+For prototyping, the engine provides convenient procedural texture generators that require no external assets:
 
 ```rust
-// 棋盘格纹理：尺寸 512，格子大小 64
+// Checkerboard texture: dimension 512, cell size 64
 let checker = engine.assets.checkerboard(512, 64);
 ```
 
-## 下一步
+## Next Steps
 
-- 想理解异步管线的底层机制？ → [异步资源与加载管线](/architecture/asset-pipeline)
-- 想自定义材质外观？ → [PBR 物理材质](/advanced/pbr-materials)
+- Understand the underlying async pipeline → [Async Asset Pipeline](/architecture/asset-pipeline)
+- Customize material appearance → [PBR Materials](/advanced/pbr-materials)

@@ -8,5 +8,3 @@ declare module '*.css' {
   const css: string
   export default css
 }
-
-declare const __MYTH_GITHUB_PAGES__: boolean
