@@ -4,9 +4,8 @@
 //!
 //! 1. Preprocess — project 3D Gaussians to 2D screen-space splats, evaluate
 //!    SH colour, cull invisible points, and emit reverse-Z depth keys.
-//! 2. Sort preparation + GPU radix sort — pad the inactive tail of the active
-//!    dispatch window with sentinels, then sort front-to-back to match the
-//!    accumulation blend equation.
+//! 2. Portable GPU radix sort — build per-workgroup histograms, scan them with
+//!    a hierarchical Blelloch prefix sum, then stably scatter front-to-back.
 //! 3. Render — draw storage-buffer-pulled triangle strips into an isolated
 //!    non-linear accumulation target, then composite that result back into
 //!    Myth's linear HDR scene colour.
@@ -25,7 +24,7 @@ use crate::graph::core::{
     BufferDesc, BufferNodeId, ExecuteContext, ExtractContext, PassNode, PrepareContext,
     RenderTargetOps, TextureDesc, TextureNodeId,
 };
-use crate::pipeline::{ShaderCompilationOptions, ShaderSource};
+use crate::pipeline::{ShaderCompilationOptions, ShaderManager, ShaderSource};
 use myth_resources::GaussianCloudHandle;
 use myth_resources::gaussian_splat::{
     GaussianCloud, GaussianSHCoefficients, GaussianSplat, Splat2D,
@@ -34,14 +33,25 @@ use myth_resources::image::ColorSpace;
 
 const PREPROCESS_WG_SIZE: u32 = 256;
 
-const SORT_HISTOGRAM_WG_SIZE: u32 = 256;
-const SORT_PREFIX_WG_SIZE: u32 = 128;
-const SORT_SCATTER_WG_SIZE: u32 = 256;
-const SORT_RADIX_LOG2: u32 = 8;
-const SORT_RADIX_SIZE: usize = 1 << SORT_RADIX_LOG2;
-const SORT_KEYVAL_PASSES: u32 = 4;
-const SORT_MIN_BLOCK_ROWS: usize = 1;
-const SORT_MAX_BLOCK_ROWS: usize = 15;
+const SORT_WG_SIZE_X: u32 = 16;
+const SORT_WG_SIZE_Y: u32 = 16;
+const SORT_THREADS_PER_WG: usize = (SORT_WG_SIZE_X * SORT_WG_SIZE_Y) as usize;
+const SORT_ITEMS_PER_THREAD: usize = 8;
+const SORT_KEYS_PER_WG: usize = SORT_THREADS_PER_WG * SORT_ITEMS_PER_THREAD;
+const SORT_RADIX_BITS: u32 = 4;
+const SORT_RADIX_SIZE: usize = 1 << SORT_RADIX_BITS;
+const SORT_PASSES: usize = 32 / SORT_RADIX_BITS as usize;
+const SORT_SCAN_ITEMS_PER_WG: usize = SORT_THREADS_PER_WG * 2;
+const SORT_MAX_SCAN_LEVELS: usize = 4;
+
+const _: () = {
+    assert!(SORT_SCAN_ITEMS_PER_WG == SORT_THREADS_PER_WG * 2);
+    assert!(SORT_SCAN_ITEMS_PER_WG.is_power_of_two());
+    assert!(SORT_THREADS_PER_WG.is_multiple_of(32));
+    assert!(SORT_RADIX_SIZE <= SORT_THREADS_PER_WG);
+    assert!(SORT_RADIX_SIZE.is_power_of_two());
+    assert!(SORT_PASSES.is_multiple_of(2));
+};
 
 const SPLAT_VERTEX_COUNT: u32 = 4;
 const SORT_DISPATCH_INDIRECT_OFFSET: u64 = std::mem::size_of::<[u32; 3]>() as u64;
@@ -72,8 +82,8 @@ struct GpuRenderSettings {
 #[derive(Clone, Copy, bytemuck::Pod, bytemuck::Zeroable)]
 struct GpuSortInfos {
     keys_size: u32,
-    padded_size: u32,
-    passes: u32,
+    max_workgroups: u32,
+    scan_levels: u32,
     dispatch_x: u32,
     dispatch_y: u32,
     dispatch_z: u32,
@@ -101,113 +111,171 @@ struct GaussianCompositePipelineKey {
 
 #[derive(Clone, Copy, Debug)]
 struct SortBufferLayout {
-    padded_key_capacity: usize,
+    key_capacity: usize,
+    max_workgroups: usize,
+    histogram_words: usize,
     internal_buffer_words: usize,
+    scan_level_count: usize,
+    scan_workgroups: [u32; SORT_MAX_SCAN_LEVELS],
 }
 
-/// Device-specialized radix-sort parameters shared by both CPU-side buffer
-/// sizing and WGSL pipeline overrides.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-struct GaussianSortConfig {
-    subgroup_size: u32,
-    block_rows: usize,
-    keys_per_wg: usize,
-    rs_mem_dwords: usize,
-}
+impl SortBufferLayout {
+    fn for_key_count(key_count: usize) -> Self {
+        let key_capacity = key_count.max(1);
+        let max_workgroups = key_capacity.div_ceil(SORT_KEYS_PER_WG);
+        let histogram_words = SORT_RADIX_SIZE
+            .checked_mul(max_workgroups)
+            .expect("Gaussian sort histogram size overflow");
 
-impl GaussianSortConfig {
-    fn for_device(device: &wgpu::Device) -> Self {
-        let subgroup_size = normalize_sort_subgroup_size(device.adapter_info().subgroup_min_size);
-        let max_workgroup_storage_bytes =
-            device.limits().max_compute_workgroup_storage_size as usize;
-        let max_workgroup_storage_words = max_workgroup_storage_bytes / std::mem::size_of::<u32>();
-        let fixed_workgroup_words = SORT_RADIX_SIZE * 2;
-        let block_rows = max_workgroup_storage_words.saturating_sub(fixed_workgroup_words)
-            / SORT_SCATTER_WG_SIZE as usize;
-        let block_rows = block_rows.clamp(SORT_MIN_BLOCK_ROWS, SORT_MAX_BLOCK_ROWS);
-        let keys_per_wg = SORT_HISTOGRAM_WG_SIZE as usize * block_rows;
-        let rs_mem_dwords = SORT_RADIX_SIZE + SORT_SCATTER_WG_SIZE as usize * block_rows;
+        let mut scan_workgroups = [0; SORT_MAX_SCAN_LEVELS];
+        let mut scan_level_count = 0;
+        let mut level_words = histogram_words;
+        let mut internal_buffer_words = histogram_words;
 
-        debug_assert!(
-            (rs_mem_dwords + SORT_RADIX_SIZE) * std::mem::size_of::<u32>()
-                <= max_workgroup_storage_bytes
-        );
+        loop {
+            assert!(
+                scan_level_count < SORT_MAX_SCAN_LEVELS,
+                "Gaussian sort prefix scan exceeds supported hierarchy depth"
+            );
+            let workgroups = level_words.div_ceil(SORT_SCAN_ITEMS_PER_WG);
+            scan_workgroups[scan_level_count] =
+                u32::try_from(workgroups).expect("Gaussian sort scan dispatch exceeds u32");
+            scan_level_count += 1;
+            internal_buffer_words = internal_buffer_words
+                .checked_add(workgroups)
+                .expect("Gaussian sort scratch size overflow");
+
+            if workgroups == 1 {
+                break;
+            }
+            level_words = workgroups;
+        }
 
         Self {
-            subgroup_size,
-            block_rows,
-            keys_per_wg,
-            rs_mem_dwords,
-        }
-    }
-
-    fn buffer_layout(self, key_count: usize) -> SortBufferLayout {
-        let scatter_blocks_ru = self.sort_scatter_blocks(key_count).max(1);
-        let padded_key_capacity = self.padded_sort_key_capacity(key_count);
-        let internal_buffer_words =
-            (SORT_KEYVAL_PASSES as usize + scatter_blocks_ru) * SORT_RADIX_SIZE;
-
-        SortBufferLayout {
-            padded_key_capacity,
+            key_capacity,
+            max_workgroups,
+            histogram_words,
             internal_buffer_words,
+            scan_level_count,
+            scan_workgroups,
         }
     }
-
-    fn padded_sort_key_capacity(self, key_count: usize) -> usize {
-        let key_count = key_count.max(1);
-        ((key_count + self.keys_per_wg) / self.keys_per_wg + 1) * self.keys_per_wg
-    }
-
-    fn sort_scatter_blocks(self, key_count: usize) -> usize {
-        let scatter_block_kvs = SORT_HISTOGRAM_WG_SIZE as usize * self.block_rows;
-        (key_count.max(1) + scatter_block_kvs - 1) / scatter_block_kvs
-    }
-
-    fn block_rows_u32(self) -> u32 {
-        self.block_rows as u32
-    }
-
-    fn keys_per_wg_u32(self) -> u32 {
-        self.keys_per_wg as u32
-    }
-
-    fn rs_mem_dwords_u32(self) -> u32 {
-        self.rs_mem_dwords as u32
-    }
 }
 
-fn normalize_sort_subgroup_size(reported: u32) -> u32 {
-    match reported {
-        32.. => 32,
-        16..=31 => 16,
-        8..=15 => 8,
-        _ => 32,
-    }
-}
-
-fn build_sort_shader_options(sort_config: GaussianSortConfig) -> ShaderCompilationOptions {
-    let subgroup_size = sort_config.subgroup_size;
-
+fn build_sort_shader_options() -> ShaderCompilationOptions {
     let mut options = ShaderCompilationOptions::default();
-    options.add_define("HISTOGRAM_SG_SIZE", &subgroup_size.to_string());
-    options.add_define("HISTOGRAM_WG_SIZE", &SORT_HISTOGRAM_WG_SIZE.to_string());
-    options.add_define("PREFIX_WG_SIZE", &SORT_PREFIX_WG_SIZE.to_string());
-    options.add_define("SCATTER_WG_SIZE", &SORT_SCATTER_WG_SIZE.to_string());
-    options.add_define("RS_RADIX_LOG2", &SORT_RADIX_LOG2.to_string());
-    options.add_define("RS_RADIX_SIZE", &SORT_RADIX_SIZE.to_string());
-    options.add_define("RS_KEYVAL_SIZE", &SORT_KEYVAL_PASSES.to_string());
+    options.add_define("SORT_WG_SIZE_X", &SORT_WG_SIZE_X.to_string());
+    options.add_define("SORT_WG_SIZE_Y", &SORT_WG_SIZE_Y.to_string());
+    options.add_define("SORT_THREADS_PER_WG", &SORT_THREADS_PER_WG.to_string());
+    options.add_define("SORT_ITEMS_PER_THREAD", &SORT_ITEMS_PER_THREAD.to_string());
+    options.add_define("SORT_RADIX_BITS", &SORT_RADIX_BITS.to_string());
+    options.add_define("SORT_RADIX_SIZE", &SORT_RADIX_SIZE.to_string());
+    options.add_define(
+        "SORT_SCAN_ITEMS_PER_WG",
+        &SORT_SCAN_ITEMS_PER_WG.to_string(),
+    );
     options
 }
 
+fn create_sort_pipelines(
+    device: &wgpu::Device,
+    shader_manager: &mut ShaderManager,
+    sort_layout: &wgpu::BindGroupLayout,
+) -> GaussianSortPipelines {
+    let pipeline_layout = device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
+        label: Some("GS Sort Pipeline Layout"),
+        bind_group_layouts: &[Some(sort_layout)],
+        immediate_size: 0,
+    });
+    let make_pipeline = |module: &wgpu::ShaderModule, entry_point: &str, label: &str| {
+        device.create_compute_pipeline(&wgpu::ComputePipelineDescriptor {
+            label: Some(label),
+            layout: Some(&pipeline_layout),
+            module,
+            entry_point: Some(entry_point),
+            compilation_options: wgpu::PipelineCompilationOptions::default(),
+            cache: None,
+        })
+    };
+
+    // Generate pass constants directly into distinct WGSL modules. In
+    // particular, do not use pipeline override values here: Safari/WebKit can
+    // incorrectly reuse a specialization across pipelines from one module.
+    let mut radix_passes = Vec::with_capacity(SORT_PASSES);
+    for pass in 0..SORT_PASSES {
+        let mut options = build_sort_shader_options();
+        options.add_define(
+            "SORT_RADIX_SHIFT",
+            &(u32::try_from(pass).expect("Gaussian radix pass exceeds u32") * SORT_RADIX_BITS)
+                .to_string(),
+        );
+        options.add_define(
+            "SORT_WRITE_KEYS",
+            &u32::from(pass + 1 != SORT_PASSES).to_string(),
+        );
+        options.add_define("SORT_SCAN_LEVEL", "0");
+        let (module, _) = shader_manager.get_or_compile(
+            device,
+            ShaderSource::File("entry/utility/3dgs/gs_radix_sort"),
+            &options,
+        );
+        radix_passes.push(GaussianRadixPassPipelines {
+            histogram: make_pipeline(
+                module,
+                "block_histogram",
+                &format!("GS Sort Histogram {pass}"),
+            ),
+            scatter: make_pipeline(module, "ranked_scatter", &format!("GS Sort Scatter {pass}")),
+        });
+    }
+
+    let mut prefix_scan = Vec::with_capacity(SORT_MAX_SCAN_LEVELS);
+    let mut prefix_add = Vec::with_capacity(SORT_MAX_SCAN_LEVELS.saturating_sub(1));
+    for level in 0..SORT_MAX_SCAN_LEVELS {
+        let mut options = build_sort_shader_options();
+        options.add_define("SORT_RADIX_SHIFT", "0");
+        options.add_define("SORT_WRITE_KEYS", "1");
+        options.add_define(
+            "SORT_SCAN_LEVEL",
+            &u32::try_from(level)
+                .expect("Gaussian scan level exceeds u32")
+                .to_string(),
+        );
+        let (module, _) = shader_manager.get_or_compile(
+            device,
+            ShaderSource::File("entry/utility/3dgs/gs_radix_sort"),
+            &options,
+        );
+        prefix_scan.push(make_pipeline(
+            module,
+            "prefix_scan",
+            &format!("GS Sort Prefix Scan {level}"),
+        ));
+        if level + 1 < SORT_MAX_SCAN_LEVELS {
+            prefix_add.push(make_pipeline(
+                module,
+                "prefix_add",
+                &format!("GS Sort Prefix Add {level}"),
+            ));
+        }
+    }
+
+    GaussianSortPipelines {
+        radix_passes,
+        prefix_scan,
+        prefix_add,
+    }
+}
+
+struct GaussianRadixPassPipelines {
+    histogram: wgpu::ComputePipeline,
+    scatter: wgpu::ComputePipeline,
+}
+
 struct GaussianSortPipelines {
-    pad_keys: wgpu::ComputePipeline,
-    zero_histograms: wgpu::ComputePipeline,
-    calculate_histogram: wgpu::ComputePipeline,
-    prefix_histogram: wgpu::ComputePipeline,
-    scatter_0: wgpu::ComputePipeline,
-    scatter_1: wgpu::ComputePipeline,
-    scatter_2: wgpu::ComputePipeline,
-    scatter_3: wgpu::ComputePipeline,
+    radix_passes: Vec<GaussianRadixPassPipelines>,
+    prefix_scan: Vec<wgpu::ComputePipeline>,
+    prefix_add: Vec<wgpu::ComputePipeline>,
 }
 
 struct CloudGpuData {
@@ -235,6 +303,7 @@ struct CloudGraphBuffers {
     draw_indirect_buf: BufferNodeId,
     render_settings_buf: BufferNodeId,
     num_points: u32,
+    sort_layout: SortBufferLayout,
     sort_infos_init: GpuSortInfos,
     draw_indirect_init: GpuDrawIndirect,
 }
@@ -245,7 +314,8 @@ struct CloudComputeState<'a> {
     preprocess_bg1: Option<&'a wgpu::BindGroup>,
     preprocess_bg2: Option<&'a wgpu::BindGroup>,
     preprocess_bg3: Option<&'a wgpu::BindGroup>,
-    sort_bg: Option<&'a wgpu::BindGroup>,
+    sort_bg_a_to_b: Option<&'a wgpu::BindGroup>,
+    sort_bg_b_to_a: Option<&'a wgpu::BindGroup>,
 }
 
 #[derive(Clone, Copy)]
@@ -257,7 +327,6 @@ struct CloudRenderState<'a> {
 pub struct GaussianSplattingFeature {
     preprocess_pipeline: Option<wgpu::ComputePipeline>,
     preprocess_global_layout_id: Option<u64>,
-    sort_config: Option<GaussianSortConfig>,
     sort_pipelines: Option<GaussianSortPipelines>,
     render_pipeline: Option<wgpu::RenderPipeline>,
     render_pipeline_key: Option<GaussianRenderPipelineKey>,
@@ -291,7 +360,6 @@ impl GaussianSplattingFeature {
         Self {
             preprocess_pipeline: None,
             preprocess_global_layout_id: None,
-            sort_config: None,
             sort_pipelines: None,
             render_pipeline: None,
             render_pipeline_key: None,
@@ -501,11 +569,11 @@ impl GaussianSplattingFeature {
             &wgpu::BindGroupLayoutDescriptor {
                 label: Some("GS Sort"),
                 entries: &[
-                    storage_rw_entry(0, cs),
+                    storage_ro_entry(0, cs),
                     storage_rw_entry(1, cs),
-                    storage_rw_entry(2, cs),
+                    storage_ro_entry(2, cs),
                     storage_rw_entry(3, cs),
-                    storage_rw_entry(4, cs),
+                    storage_ro_entry(4, cs),
                     storage_rw_entry(5, cs),
                 ],
             },
@@ -546,9 +614,6 @@ impl GaussianSplattingFeature {
 
     fn ensure_pipelines(&mut self, ctx: &mut ExtractContext) {
         let device = ctx.device;
-        let sort_config = *self
-            .sort_config
-            .get_or_insert_with(|| GaussianSortConfig::for_device(device));
         let global_state_key = (ctx.render_state.id, ctx.extracted_scene.scene_id);
         let gpu_world = ctx
             .resource_manager
@@ -559,6 +624,7 @@ impl GaussianSplattingFeature {
             || self.preprocess_global_layout_id != Some(gpu_world.layout_id)
         {
             let mut shader_options = ShaderCompilationOptions::default();
+            shader_options.add_define("GS_SORT_KEYS_PER_WG", &SORT_KEYS_PER_WG.to_string());
             shader_options.inject_code("binding_code", &gpu_world.binding_wgsl);
             shader_options.inject_code(
                 "scene_lighting_structs",
@@ -581,22 +647,13 @@ impl GaussianSplattingFeature {
                 immediate_size: 0,
             });
 
-            let preprocess_constants = [(
-                "GS_SORT_KEYS_PER_WG",
-                f64::from(sort_config.keys_per_wg_u32()),
-            )];
-            let preprocess_compilation_options = wgpu::PipelineCompilationOptions {
-                constants: &preprocess_constants,
-                ..Default::default()
-            };
-
             self.preprocess_pipeline = Some(device.create_compute_pipeline(
                 &wgpu::ComputePipelineDescriptor {
                     label: Some("GS Preprocess Pipeline"),
                     layout: Some(&layout),
                     module,
                     entry_point: Some("main"),
-                    compilation_options: preprocess_compilation_options,
+                    compilation_options: wgpu::PipelineCompilationOptions::default(),
                     cache: None,
                 },
             ));
@@ -605,100 +662,11 @@ impl GaussianSplattingFeature {
         }
 
         if self.sort_pipelines.is_none() {
-            let shader_options = build_sort_shader_options(sort_config);
-
-            let layout = device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
-                label: Some("GS Sort Pipeline Layout"),
-                bind_group_layouts: &[Some(self.sort_layout.as_ref().unwrap())],
-                immediate_size: 0,
-            });
-
-            let pad_constants = [(
-                "RS_HISTOGRAM_BLOCK_ROWS",
-                f64::from(sort_config.block_rows_u32()),
-            )];
-            let pad_compilation_options = wgpu::PipelineCompilationOptions {
-                constants: &pad_constants,
-                ..Default::default()
-            };
-            let sort_constants = [
-                (
-                    "RS_HISTOGRAM_BLOCK_ROWS",
-                    f64::from(sort_config.block_rows_u32()),
-                ),
-                (
-                    "RS_SCATTER_BLOCK_ROWS",
-                    f64::from(sort_config.block_rows_u32()),
-                ),
-                ("RS_MEM_DWORDS", f64::from(sort_config.rs_mem_dwords_u32())),
-            ];
-            let sort_compilation_options = wgpu::PipelineCompilationOptions {
-                constants: &sort_constants,
-                ..Default::default()
-            };
-
-            let pad_keys = {
-                let (pad_module, _) = ctx.shader_manager.get_or_compile(
-                    device,
-                    ShaderSource::File("entry/utility/3dgs/gs_pad_sort_keys"),
-                    &shader_options,
-                );
-                device.create_compute_pipeline(&wgpu::ComputePipelineDescriptor {
-                    label: Some("GS Sort Pad Keys"),
-                    layout: Some(&layout),
-                    module: pad_module,
-                    entry_point: Some("main"),
-                    compilation_options: pad_compilation_options,
-                    cache: None,
-                })
-            };
-
-            let (
-                zero_histograms,
-                calculate_histogram,
-                prefix_histogram,
-                scatter_0,
-                scatter_1,
-                scatter_2,
-                scatter_3,
-            ) = {
-                let (sort_module, _) = ctx.shader_manager.get_or_compile(
-                    device,
-                    ShaderSource::File("entry/utility/3dgs/gs_radix_sort"),
-                    &shader_options,
-                );
-                let make_pipeline = |entry_point: &str, label: &str| {
-                    device.create_compute_pipeline(&wgpu::ComputePipelineDescriptor {
-                        label: Some(label),
-                        layout: Some(&layout),
-                        module: sort_module,
-                        entry_point: Some(entry_point),
-                        compilation_options: sort_compilation_options.clone(),
-                        cache: None,
-                    })
-                };
-
-                (
-                    make_pipeline("zero_histograms", "GS Sort Zero Histograms"),
-                    make_pipeline("calculate_histogram", "GS Sort Calculate Histogram"),
-                    make_pipeline("prefix_histogram", "GS Sort Prefix Histogram"),
-                    make_pipeline("scatter_pass_0", "GS Sort Scatter Pass 0"),
-                    make_pipeline("scatter_pass_1", "GS Sort Scatter Pass 1"),
-                    make_pipeline("scatter_pass_2", "GS Sort Scatter Pass 2"),
-                    make_pipeline("scatter_pass_3", "GS Sort Scatter Pass 3"),
-                )
-            };
-
-            self.sort_pipelines = Some(GaussianSortPipelines {
-                pad_keys,
-                zero_histograms,
-                calculate_histogram,
-                prefix_histogram,
-                scatter_0,
-                scatter_1,
-                scatter_2,
-                scatter_3,
-            });
+            self.sort_pipelines = Some(create_sort_pipelines(
+                device,
+                ctx.shader_manager,
+                self.sort_layout.as_ref().unwrap(),
+            ));
         }
 
         let render_key = GaussianRenderPipelineKey {
@@ -863,10 +831,38 @@ impl GaussianSplattingFeature {
             u32::try_from(cloud.num_points).expect("Gaussian cloud exceeds u32 capacity");
         let num_sh_coefficients = u32::try_from(cloud.sh_coefficients.len())
             .expect("Gaussian SH coefficient table exceeds u32 capacity");
-        let sort_layout = self
-            .sort_config
-            .expect("GS sort config must exist before GPU upload")
-            .buffer_layout(cloud.num_points);
+        let sort_layout = SortBufferLayout::for_key_count(cloud.num_points);
+        let limits = device.limits();
+        let preprocess_workgroups = num_points.div_ceil(PREPROCESS_WG_SIZE);
+        assert!(
+            preprocess_workgroups <= limits.max_compute_workgroups_per_dimension,
+            "Gaussian cloud requires {preprocess_workgroups} preprocess workgroups, exceeding the device limit of {}",
+            limits.max_compute_workgroups_per_dimension
+        );
+        assert!(
+            sort_layout.max_workgroups <= limits.max_compute_workgroups_per_dimension as usize,
+            "Gaussian cloud requires {} sort workgroups, exceeding the device limit of {}",
+            sort_layout.max_workgroups,
+            limits.max_compute_workgroups_per_dimension
+        );
+        let key_buffer_size = sort_layout
+            .key_capacity
+            .checked_mul(std::mem::size_of::<u32>())
+            .expect("Gaussian sort key buffer size overflow");
+        let internal_buffer_size = sort_layout
+            .internal_buffer_words
+            .checked_mul(std::mem::size_of::<u32>())
+            .expect("Gaussian sort scratch buffer size overflow");
+        assert!(
+            key_buffer_size <= limits.max_storage_buffer_binding_size as usize,
+            "Gaussian sort key buffer ({key_buffer_size} bytes) exceeds the device storage binding limit ({})",
+            limits.max_storage_buffer_binding_size
+        );
+        assert!(
+            internal_buffer_size <= limits.max_storage_buffer_binding_size as usize,
+            "Gaussian sort scratch buffer ({internal_buffer_size} bytes) exceeds the device storage binding limit ({})",
+            limits.max_storage_buffer_binding_size
+        );
         let upload_count = cloud.num_points.max(1);
         let sh_upload_count = cloud.sh_coefficients.len().max(1);
 
@@ -983,7 +979,7 @@ impl GaussianSplattingFeature {
                 let upload_count = usize::try_from(gpu.num_points.max(1))
                     .expect("Gaussian point count exceeds usize capacity");
                 let sort_key_buffer_size =
-                    (gpu.sort_layout.padded_key_capacity * std::mem::size_of::<u32>()) as u64;
+                    (gpu.sort_layout.key_capacity * std::mem::size_of::<u32>()) as u64;
 
                 let gaussian_buf = builder.read_external_buffer(
                     "GS_Gaussian_Data",
@@ -1042,7 +1038,7 @@ impl GaussianSplattingFeature {
                     "GS_Sort_Internal",
                     BufferDesc::new(
                         (gpu.sort_layout.internal_buffer_words * std::mem::size_of::<u32>()) as u64,
-                        wgpu::BufferUsages::STORAGE,
+                        wgpu::BufferUsages::STORAGE | wgpu::BufferUsages::COPY_DST,
                     ),
                 );
                 let sort_depths_a_buf = builder.create_buffer(
@@ -1085,10 +1081,13 @@ impl GaussianSplattingFeature {
                     draw_indirect_buf,
                     render_settings_buf,
                     num_points: gpu.num_points,
+                    sort_layout: gpu.sort_layout,
                     sort_infos_init: GpuSortInfos {
                         keys_size: 0,
-                        padded_size: gpu.sort_layout.padded_key_capacity as u32,
-                        passes: SORT_KEYVAL_PASSES,
+                        max_workgroups: u32::try_from(gpu.sort_layout.max_workgroups)
+                            .expect("Gaussian sort workgroup count exceeds u32"),
+                        scan_levels: u32::try_from(gpu.sort_layout.scan_level_count)
+                            .expect("Gaussian sort scan level count exceeds u32"),
                         dispatch_x: 0,
                         dispatch_y: 1,
                         dispatch_z: 1,
@@ -1107,7 +1106,8 @@ impl GaussianSplattingFeature {
                     preprocess_bg1: None,
                     preprocess_bg2: None,
                     preprocess_bg3: None,
-                    sort_bg: None,
+                    sort_bg_a_to_b: None,
+                    sort_bg_b_to_a: None,
                 });
             }
 
@@ -1258,8 +1258,8 @@ impl<'a> PassNode<'a> for GaussianComputePassNode<'a> {
                 .bind_buffer(0, cloud.buffers.render_settings_buf)
                 .build();
 
-            let sort_bg = ctx
-                .build_bind_group(self.sort_layout, Some("GS Sort BG"))
+            let sort_bg_a_to_b = ctx
+                .build_bind_group(self.sort_layout, Some("GS Sort BG A to B"))
                 .bind_buffer(0, cloud.buffers.sort_infos_buf)
                 .bind_buffer(1, cloud.buffers.sort_internal_buf)
                 .bind_buffer(2, cloud.buffers.sort_depths_a_buf)
@@ -1267,11 +1267,21 @@ impl<'a> PassNode<'a> for GaussianComputePassNode<'a> {
                 .bind_buffer(4, cloud.buffers.sort_indices_a_buf)
                 .bind_buffer(5, cloud.buffers.sort_indices_b_buf)
                 .build();
+            let sort_bg_b_to_a = ctx
+                .build_bind_group(self.sort_layout, Some("GS Sort BG B to A"))
+                .bind_buffer(0, cloud.buffers.sort_infos_buf)
+                .bind_buffer(1, cloud.buffers.sort_internal_buf)
+                .bind_buffer(2, cloud.buffers.sort_depths_b_buf)
+                .bind_buffer(3, cloud.buffers.sort_depths_a_buf)
+                .bind_buffer(4, cloud.buffers.sort_indices_b_buf)
+                .bind_buffer(5, cloud.buffers.sort_indices_a_buf)
+                .build();
 
             cloud.preprocess_bg1 = Some(preprocess_bg1);
             cloud.preprocess_bg2 = Some(preprocess_bg2);
             cloud.preprocess_bg3 = Some(preprocess_bg3);
-            cloud.sort_bg = Some(sort_bg);
+            cloud.sort_bg_a_to_b = Some(sort_bg_a_to_b);
+            cloud.sort_bg_b_to_a = Some(sort_bg_b_to_a);
         }
     }
 
@@ -1283,8 +1293,7 @@ impl<'a> PassNode<'a> for GaussianComputePassNode<'a> {
         let global_bind_group = ctx.baked_lists.global_bind_group;
 
         for cloud in self.clouds.iter() {
-            let preprocess_workgroups =
-                (cloud.buffers.num_points + PREPROCESS_WG_SIZE - 1) / PREPROCESS_WG_SIZE;
+            let preprocess_workgroups = cloud.buffers.num_points.div_ceil(PREPROCESS_WG_SIZE);
 
             {
                 let mut cpass = encoder.begin_compute_pass(&wgpu::ComputePassDescriptor {
@@ -1319,74 +1328,87 @@ impl<'a> PassNode<'a> for GaussianComputePassNode<'a> {
                 std::mem::size_of::<[u32; 3]>() as u64,
             );
 
-            {
-                let mut cpass = encoder.begin_compute_pass(&wgpu::ComputePassDescriptor {
-                    label: Some("GS Sort Pad Keys"),
-                    timestamp_writes: None,
-                });
-                cpass.set_pipeline(&sort_pipelines.pad_keys);
-                cpass.set_bind_group(0, cloud.sort_bg.expect("GS sort BG missing"), &[]);
-                cpass.dispatch_workgroups_indirect(
-                    ctx.get_buffer(cloud.buffers.sort_dispatch_buf),
-                    0,
-                );
-            }
+            let sort_bg_a_to_b = cloud
+                .sort_bg_a_to_b
+                .expect("GS sort A-to-B bind group missing");
+            let sort_bg_b_to_a = cloud
+                .sort_bg_b_to_a
+                .expect("GS sort B-to-A bind group missing");
+            let sort_dispatch = ctx.get_buffer(cloud.buffers.sort_dispatch_buf);
+            let sort_internal = ctx.get_buffer(cloud.buffers.sort_internal_buf);
+            let histogram_bytes = u64::try_from(
+                cloud
+                    .buffers
+                    .sort_layout
+                    .histogram_words
+                    .checked_mul(std::mem::size_of::<u32>())
+                    .expect("Gaussian sort histogram byte size overflow"),
+            )
+            .expect("Gaussian sort histogram byte size exceeds u64");
 
             {
-                let mut cpass = encoder.begin_compute_pass(&wgpu::ComputePassDescriptor {
-                    label: Some("GS Sort Zero Histograms"),
-                    timestamp_writes: None,
-                });
-                cpass.set_pipeline(&sort_pipelines.zero_histograms);
-                cpass.set_bind_group(0, cloud.sort_bg.expect("GS sort BG missing"), &[]);
-                cpass.dispatch_workgroups_indirect(
-                    ctx.get_buffer(cloud.buffers.sort_dispatch_buf),
-                    0,
-                );
-            }
+                for (pass_index, radix_pass) in sort_pipelines.radix_passes.iter().enumerate() {
+                    let sort_bg = if pass_index % 2 == 0 {
+                        sort_bg_a_to_b
+                    } else {
+                        sort_bg_b_to_a
+                    };
 
-            {
-                let mut cpass = encoder.begin_compute_pass(&wgpu::ComputePassDescriptor {
-                    label: Some("GS Sort Histogram"),
-                    timestamp_writes: None,
-                });
-                cpass.set_pipeline(&sort_pipelines.calculate_histogram);
-                cpass.set_bind_group(0, cloud.sort_bg.expect("GS sort BG missing"), &[]);
-                cpass.dispatch_workgroups_indirect(
-                    ctx.get_buffer(cloud.buffers.sort_dispatch_buf),
-                    0,
-                );
-            }
+                    // The visible count is GPU-generated and can shrink between
+                    // frames. Clear the whole fixed-capacity histogram so
+                    // inactive workgroups never contribute stale counts.
+                    encoder.clear_buffer(sort_internal, 0, Some(histogram_bytes));
 
-            {
-                let mut cpass = encoder.begin_compute_pass(&wgpu::ComputePassDescriptor {
-                    label: Some("GS Sort Prefix"),
-                    timestamp_writes: None,
-                });
-                cpass.set_pipeline(&sort_pipelines.prefix_histogram);
-                cpass.set_bind_group(0, cloud.sort_bg.expect("GS sort BG missing"), &[]);
-                cpass.dispatch_workgroups(SORT_KEYVAL_PASSES, 1, 1);
-            }
+                    {
+                        let mut cpass = encoder.begin_compute_pass(&wgpu::ComputePassDescriptor {
+                            label: Some("GS Sort Histogram"),
+                            timestamp_writes: None,
+                        });
+                        cpass.set_pipeline(&radix_pass.histogram);
+                        cpass.set_bind_group(0, sort_bg, &[]);
+                        cpass.dispatch_workgroups_indirect(sort_dispatch, 0);
+                    }
 
-            for pass_index in 0..SORT_KEYVAL_PASSES {
-                let mut cpass = encoder.begin_compute_pass(&wgpu::ComputePassDescriptor {
-                    label: Some("GS Sort Scatter"),
-                    timestamp_writes: None,
-                });
-                cpass.set_bind_group(0, cloud.sort_bg.expect("GS sort BG missing"), &[]);
+                    for level in 0..cloud.buffers.sort_layout.scan_level_count {
+                        let mut cpass = encoder.begin_compute_pass(&wgpu::ComputePassDescriptor {
+                            label: Some("GS Sort Prefix Scan"),
+                            timestamp_writes: None,
+                        });
+                        cpass.set_pipeline(&sort_pipelines.prefix_scan[level]);
+                        cpass.set_bind_group(0, sort_bg_a_to_b, &[]);
+                        cpass.dispatch_workgroups(
+                            cloud.buffers.sort_layout.scan_workgroups[level],
+                            1,
+                            1,
+                        );
+                    }
 
-                match pass_index {
-                    0 => cpass.set_pipeline(&sort_pipelines.scatter_0),
-                    1 => cpass.set_pipeline(&sort_pipelines.scatter_1),
-                    2 => cpass.set_pipeline(&sort_pipelines.scatter_2),
-                    3 => cpass.set_pipeline(&sort_pipelines.scatter_3),
-                    _ => unreachable!(),
+                    for level in
+                        (0..cloud.buffers.sort_layout.scan_level_count.saturating_sub(1)).rev()
+                    {
+                        let mut cpass = encoder.begin_compute_pass(&wgpu::ComputePassDescriptor {
+                            label: Some("GS Sort Prefix Add"),
+                            timestamp_writes: None,
+                        });
+                        cpass.set_pipeline(&sort_pipelines.prefix_add[level]);
+                        cpass.set_bind_group(0, sort_bg_a_to_b, &[]);
+                        cpass.dispatch_workgroups(
+                            cloud.buffers.sort_layout.scan_workgroups[level],
+                            1,
+                            1,
+                        );
+                    }
+
+                    {
+                        let mut cpass = encoder.begin_compute_pass(&wgpu::ComputePassDescriptor {
+                            label: Some("GS Sort Scatter"),
+                            timestamp_writes: None,
+                        });
+                        cpass.set_pipeline(&radix_pass.scatter);
+                        cpass.set_bind_group(0, sort_bg, &[]);
+                        cpass.dispatch_workgroups_indirect(sort_dispatch, 0);
+                    }
                 }
-
-                cpass.dispatch_workgroups_indirect(
-                    ctx.get_buffer(cloud.buffers.sort_dispatch_buf),
-                    0,
-                );
             }
 
             encoder.copy_buffer_to_buffer(
@@ -1491,5 +1513,365 @@ impl<'a> PassNode<'a> for GaussianCompositePassNode<'a> {
         rpass.set_pipeline(composite_pipeline);
         rpass.set_bind_group(0, self.composite_bg.expect("GS composite BG missing"), &[]);
         rpass.draw(0..3, 0..1);
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn test_storage_entry(binding: u32, read_only: bool) -> wgpu::BindGroupLayoutEntry {
+        wgpu::BindGroupLayoutEntry {
+            binding,
+            visibility: wgpu::ShaderStages::COMPUTE,
+            ty: wgpu::BindingType::Buffer {
+                ty: wgpu::BufferBindingType::Storage { read_only },
+                has_dynamic_offset: false,
+                min_binding_size: None,
+            },
+            count: None,
+        }
+    }
+
+    fn test_buffer(
+        device: &wgpu::Device,
+        label: &str,
+        size: u64,
+        usage: wgpu::BufferUsages,
+    ) -> wgpu::Buffer {
+        device.create_buffer(&wgpu::BufferDescriptor {
+            label: Some(label),
+            size,
+            usage,
+            mapped_at_creation: false,
+        })
+    }
+
+    async fn request_test_device() -> Option<(wgpu::Device, wgpu::Queue)> {
+        let instance =
+            wgpu::Instance::new(wgpu::InstanceDescriptor::new_without_display_handle_from_env());
+        let adapter = match instance
+            .request_adapter(&wgpu::RequestAdapterOptions {
+                power_preference: wgpu::PowerPreference::HighPerformance,
+                compatible_surface: None,
+                force_fallback_adapter: false,
+            })
+            .await
+        {
+            Ok(adapter) => adapter,
+            Err(error) => {
+                eprintln!("skipping Gaussian sort GPU test: no adapter available ({error})");
+                return None;
+            }
+        };
+        adapter
+            .request_device(&wgpu::DeviceDescriptor {
+                label: Some("GS Sort Test Device"),
+                required_features: wgpu::Features::empty(),
+                required_limits: adapter.limits(),
+                memory_hints: wgpu::MemoryHints::Performance,
+                ..Default::default()
+            })
+            .await
+            .map_err(|error| {
+                eprintln!("skipping Gaussian sort GPU test: device request failed ({error})");
+            })
+            .ok()
+    }
+
+    #[test]
+    fn sort_layout_handles_empty_and_workgroup_boundaries() {
+        let empty = SortBufferLayout::for_key_count(0);
+        assert_eq!(empty.key_capacity, 1);
+        assert_eq!(empty.max_workgroups, 1);
+        assert_eq!(empty.histogram_words, SORT_RADIX_SIZE);
+        assert_eq!(empty.internal_buffer_words, SORT_RADIX_SIZE + 1);
+        assert_eq!(empty.scan_level_count, 1);
+        assert_eq!(empty.scan_workgroups[0], 1);
+
+        let exact = SortBufferLayout::for_key_count(SORT_KEYS_PER_WG);
+        assert_eq!(exact.key_capacity, SORT_KEYS_PER_WG);
+        assert_eq!(exact.max_workgroups, 1);
+
+        let overflow = SortBufferLayout::for_key_count(SORT_KEYS_PER_WG + 1);
+        assert_eq!(overflow.max_workgroups, 2);
+        assert_eq!(overflow.histogram_words, SORT_RADIX_SIZE * 2);
+        assert_eq!(overflow.scan_workgroups[0], 1);
+    }
+
+    #[test]
+    fn sort_layout_builds_hierarchical_scan_scratch() {
+        let layout = SortBufferLayout::for_key_count(310_920);
+        assert_eq!(layout.key_capacity, 310_920);
+        assert_eq!(layout.max_workgroups, 152);
+        assert_eq!(layout.histogram_words, 2_432);
+        assert_eq!(layout.scan_level_count, 2);
+        assert_eq!(&layout.scan_workgroups[..2], &[5, 1]);
+        assert_eq!(layout.internal_buffer_words, 2_438);
+
+        let three_levels = SortBufferLayout::for_key_count((16_384 + 1) * SORT_KEYS_PER_WG);
+        assert_eq!(three_levels.scan_level_count, 3);
+        assert_eq!(&three_levels.scan_workgroups[..3], &[513, 2, 1]);
+    }
+
+    #[test]
+    fn even_radix_pass_count_leaves_payload_in_front_buffer() {
+        assert_eq!(SORT_PASSES, 8);
+        assert_eq!(SORT_PASSES % 2, 0);
+    }
+
+    #[test]
+    fn portable_shaders_do_not_use_pipeline_overrides() {
+        let sort_shader =
+            include_str!("../../pipeline/shaders/entry/utility/3dgs/gs_radix_sort.wgsl");
+        let preprocess_shader =
+            include_str!("../../pipeline/shaders/entry/utility/3dgs/gaussian_preprocess.wgsl");
+        for (name, source) in [
+            ("portable sort", sort_shader),
+            ("Gaussian preprocess", preprocess_shader),
+        ] {
+            assert!(
+                !source
+                    .lines()
+                    .any(|line| line.trim_start().starts_with("override ")),
+                "{name} must not depend on WebGPU pipeline override constants"
+            );
+        }
+    }
+
+    #[test]
+    fn portable_gpu_sort_matches_stable_cpu_reference() {
+        pollster::block_on(async {
+            // More than 32 sort workgroups forces a two-level prefix scan.
+            // Repeated buckets are deliberately separated in the input to
+            // verify that the scatter remains stable.
+            let key_count = 70_001usize;
+            let buffer_capacity = 75_003usize;
+            let keys: Vec<u32> = (0..key_count)
+                .map(|index| {
+                    let bucket = u32::try_from(index % 4_096).unwrap();
+                    bucket.wrapping_mul(0x9e37_79b9).rotate_left(bucket & 31)
+                })
+                .collect();
+            let payloads: Vec<u32> = (0..u32::try_from(key_count).unwrap()).collect();
+            let mut expected = payloads.clone();
+            expected.sort_by_key(|&index| keys[index as usize]);
+
+            let layout = SortBufferLayout::for_key_count(buffer_capacity);
+            assert_eq!(layout.scan_level_count, 2);
+
+            let Some((device, queue)) = request_test_device().await else {
+                return;
+            };
+            let bind_group_layout =
+                device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
+                    label: Some("GS Sort Test Layout"),
+                    entries: &[
+                        test_storage_entry(0, true),
+                        test_storage_entry(1, false),
+                        test_storage_entry(2, true),
+                        test_storage_entry(3, false),
+                        test_storage_entry(4, true),
+                        test_storage_entry(5, false),
+                    ],
+                });
+            let mut shader_manager = ShaderManager::new();
+            let pipelines = create_sort_pipelines(&device, &mut shader_manager, &bind_group_layout);
+
+            let infos = GpuSortInfos {
+                keys_size: u32::try_from(key_count).unwrap(),
+                max_workgroups: u32::try_from(layout.max_workgroups).unwrap(),
+                scan_levels: u32::try_from(layout.scan_level_count).unwrap(),
+                dispatch_x: u32::try_from(key_count.div_ceil(SORT_KEYS_PER_WG)).unwrap(),
+                dispatch_y: 1,
+                dispatch_z: 1,
+            };
+            let infos_buffer = test_buffer(
+                &device,
+                "GS Sort Test Infos",
+                std::mem::size_of::<GpuSortInfos>() as u64,
+                wgpu::BufferUsages::STORAGE | wgpu::BufferUsages::COPY_DST,
+            );
+            let internal_buffer = test_buffer(
+                &device,
+                "GS Sort Test Scratch",
+                (layout.internal_buffer_words * std::mem::size_of::<u32>()) as u64,
+                wgpu::BufferUsages::STORAGE | wgpu::BufferUsages::COPY_DST,
+            );
+            let data_size = (buffer_capacity * std::mem::size_of::<u32>()) as u64;
+            let active_data_size = (key_count * std::mem::size_of::<u32>()) as u64;
+            let keys_a = test_buffer(
+                &device,
+                "GS Sort Test Keys A",
+                data_size,
+                wgpu::BufferUsages::STORAGE | wgpu::BufferUsages::COPY_DST,
+            );
+            let keys_b = test_buffer(
+                &device,
+                "GS Sort Test Keys B",
+                data_size,
+                wgpu::BufferUsages::STORAGE,
+            );
+            let payload_a = test_buffer(
+                &device,
+                "GS Sort Test Payload A",
+                data_size,
+                wgpu::BufferUsages::STORAGE
+                    | wgpu::BufferUsages::COPY_DST
+                    | wgpu::BufferUsages::COPY_SRC,
+            );
+            let payload_b = test_buffer(
+                &device,
+                "GS Sort Test Payload B",
+                data_size,
+                wgpu::BufferUsages::STORAGE,
+            );
+            let readback = test_buffer(
+                &device,
+                "GS Sort Test Readback",
+                active_data_size,
+                wgpu::BufferUsages::COPY_DST | wgpu::BufferUsages::MAP_READ,
+            );
+
+            queue.write_buffer(&infos_buffer, 0, bytemuck::bytes_of(&infos));
+            queue.write_buffer(&keys_a, 0, bytemuck::cast_slice(&keys));
+            queue.write_buffer(&payload_a, 0, bytemuck::cast_slice(&payloads));
+
+            let bind_group_a_to_b = device.create_bind_group(&wgpu::BindGroupDescriptor {
+                label: Some("GS Sort Test Bind Group A to B"),
+                layout: &bind_group_layout,
+                entries: &[
+                    wgpu::BindGroupEntry {
+                        binding: 0,
+                        resource: infos_buffer.as_entire_binding(),
+                    },
+                    wgpu::BindGroupEntry {
+                        binding: 1,
+                        resource: internal_buffer.as_entire_binding(),
+                    },
+                    wgpu::BindGroupEntry {
+                        binding: 2,
+                        resource: keys_a.as_entire_binding(),
+                    },
+                    wgpu::BindGroupEntry {
+                        binding: 3,
+                        resource: keys_b.as_entire_binding(),
+                    },
+                    wgpu::BindGroupEntry {
+                        binding: 4,
+                        resource: payload_a.as_entire_binding(),
+                    },
+                    wgpu::BindGroupEntry {
+                        binding: 5,
+                        resource: payload_b.as_entire_binding(),
+                    },
+                ],
+            });
+            let bind_group_b_to_a = device.create_bind_group(&wgpu::BindGroupDescriptor {
+                label: Some("GS Sort Test Bind Group B to A"),
+                layout: &bind_group_layout,
+                entries: &[
+                    wgpu::BindGroupEntry {
+                        binding: 0,
+                        resource: infos_buffer.as_entire_binding(),
+                    },
+                    wgpu::BindGroupEntry {
+                        binding: 1,
+                        resource: internal_buffer.as_entire_binding(),
+                    },
+                    wgpu::BindGroupEntry {
+                        binding: 2,
+                        resource: keys_b.as_entire_binding(),
+                    },
+                    wgpu::BindGroupEntry {
+                        binding: 3,
+                        resource: keys_a.as_entire_binding(),
+                    },
+                    wgpu::BindGroupEntry {
+                        binding: 4,
+                        resource: payload_b.as_entire_binding(),
+                    },
+                    wgpu::BindGroupEntry {
+                        binding: 5,
+                        resource: payload_a.as_entire_binding(),
+                    },
+                ],
+            });
+
+            let mut encoder = device.create_command_encoder(&wgpu::CommandEncoderDescriptor {
+                label: Some("GS Sort Test Encoder"),
+            });
+            let histogram_bytes = (layout.histogram_words * std::mem::size_of::<u32>()) as u64;
+            let sort_workgroups = u32::try_from(key_count.div_ceil(SORT_KEYS_PER_WG)).unwrap();
+
+            for (pass_index, radix_pass) in pipelines.radix_passes.iter().enumerate() {
+                let bind_group = if pass_index % 2 == 0 {
+                    &bind_group_a_to_b
+                } else {
+                    &bind_group_b_to_a
+                };
+                encoder.clear_buffer(&internal_buffer, 0, Some(histogram_bytes));
+                {
+                    let mut pass =
+                        encoder.begin_compute_pass(&wgpu::ComputePassDescriptor::default());
+                    pass.set_pipeline(&radix_pass.histogram);
+                    pass.set_bind_group(0, bind_group, &[]);
+                    pass.dispatch_workgroups(sort_workgroups, 1, 1);
+                }
+                for level in 0..layout.scan_level_count {
+                    let mut pass =
+                        encoder.begin_compute_pass(&wgpu::ComputePassDescriptor::default());
+                    pass.set_pipeline(&pipelines.prefix_scan[level]);
+                    pass.set_bind_group(0, &bind_group_a_to_b, &[]);
+                    pass.dispatch_workgroups(layout.scan_workgroups[level], 1, 1);
+                }
+                for level in (0..layout.scan_level_count.saturating_sub(1)).rev() {
+                    let mut pass =
+                        encoder.begin_compute_pass(&wgpu::ComputePassDescriptor::default());
+                    pass.set_pipeline(&pipelines.prefix_add[level]);
+                    pass.set_bind_group(0, &bind_group_a_to_b, &[]);
+                    pass.dispatch_workgroups(layout.scan_workgroups[level], 1, 1);
+                }
+                {
+                    let mut pass =
+                        encoder.begin_compute_pass(&wgpu::ComputePassDescriptor::default());
+                    pass.set_pipeline(&radix_pass.scatter);
+                    pass.set_bind_group(0, bind_group, &[]);
+                    pass.dispatch_workgroups(sort_workgroups, 1, 1);
+                }
+            }
+            encoder.copy_buffer_to_buffer(&payload_a, 0, &readback, 0, active_data_size);
+            queue.submit([encoder.finish()]);
+
+            let slice = readback.slice(..);
+            let (sender, receiver) = std::sync::mpsc::sync_channel(1);
+            slice.map_async(wgpu::MapMode::Read, move |result| {
+                sender.send(result).ok();
+            });
+            device
+                .poll(wgpu::PollType::wait_indefinitely())
+                .expect("Gaussian sort GPU poll failed");
+            receiver
+                .recv()
+                .expect("Gaussian sort readback callback dropped")
+                .expect("Gaussian sort readback mapping failed");
+
+            let mapped = slice.get_mapped_range();
+            let actual: Vec<u32> = bytemuck::cast_slice(&mapped).to_vec();
+            drop(mapped);
+            readback.unmap();
+
+            if let Some((position, (&actual_index, &expected_index))) = actual
+                .iter()
+                .zip(&expected)
+                .enumerate()
+                .find(|(_, (actual_index, expected_index))| actual_index != expected_index)
+            {
+                panic!(
+                    "portable GPU sort mismatch at {position}: actual index {actual_index}, expected {expected_index}, actual key {}, expected key {}",
+                    keys[actual_index as usize], keys[expected_index as usize]
+                );
+            }
+        });
     }
 }

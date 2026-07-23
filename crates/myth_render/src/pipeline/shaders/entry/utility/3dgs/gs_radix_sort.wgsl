@@ -1,394 +1,278 @@
-// Gaussian Splatting Radix Sort Shader
+// Portable Gaussian Splatting Radix Sort
 //
-// Ported from web-splat's GPU radix sorter and adapted to Myth's shader
-// templating path. Structural topology stays templated, while block rows and
-// workgroup memory footprint are specialized at pipeline creation.
+// This sorter follows the wait-free hierarchical scan described by
+// WebSplatter (arXiv:2602.03207), combined with the 4-bit radix and
+// multi-element bitmask ranking used by PlayCanvas' portable sorter.
+// Every synchronization point is workgroup-local; no workgroup waits for
+// another workgroup to make progress.
+//
+// Portions of the algorithm are adapted from PlayCanvas Engine, licensed
+// under the MIT License.
 
-const histogram_sg_size: u32 = {{ HISTOGRAM_SG_SIZE }}u;
-const histogram_wg_size: u32 = {{ HISTOGRAM_WG_SIZE }}u;
-const rs_radix_log2: u32 = {{ RS_RADIX_LOG2 }}u;
-const rs_radix_size: u32 = {{ RS_RADIX_SIZE }}u;
-const rs_keyval_size: u32 = {{ RS_KEYVAL_SIZE }}u;
-override RS_HISTOGRAM_BLOCK_ROWS: u32 = 15u;
-override RS_SCATTER_BLOCK_ROWS: u32 = 15u;
-override RS_MEM_DWORDS: u32 = 4096u;
+const sort_wg_size_x: u32 = {{ SORT_WG_SIZE_X }}u;
+const sort_wg_size_y: u32 = {{ SORT_WG_SIZE_Y }}u;
+const sort_threads_per_wg: u32 = {{ SORT_THREADS_PER_WG }}u;
+const sort_items_per_thread: u32 = {{ SORT_ITEMS_PER_THREAD }}u;
+const sort_radix_bits: u32 = {{ SORT_RADIX_BITS }}u;
+const sort_radix_size: u32 = {{ SORT_RADIX_SIZE }}u;
+const sort_scan_items_per_wg: u32 = {{ SORT_SCAN_ITEMS_PER_WG }}u;
+const sort_keys_per_wg: u32 = sort_threads_per_wg * sort_items_per_thread;
+const sort_mask_words_per_digit: u32 = sort_threads_per_wg / 32u;
+
+// Keep pass-specific values in the generated WGSL source. Safari/WebKit can
+// miscompile multiple pipeline variants that differ only by override values.
+const radix_shift: u32 = {{ SORT_RADIX_SHIFT }}u;
+const write_keys: u32 = {{ SORT_WRITE_KEYS }}u;
+const scan_level: u32 = {{ SORT_SCAN_LEVEL }}u;
 
 struct SortInfos {
     keys_size: u32,
-    padded_size: u32,
-    passes: u32,
+    max_workgroups: u32,
+    scan_levels: u32,
     dispatch_x: u32,
     dispatch_y: u32,
     dispatch_z: u32,
 };
 
 @group(0) @binding(0)
-var<storage, read_write> infos: SortInfos;
+var<storage, read> infos: SortInfos;
 @group(0) @binding(1)
-var<storage, read_write> internal_mem: array<atomic<u32>>;
+var<storage, read_write> internal_mem: array<u32>;
 @group(0) @binding(2)
-var<storage, read_write> keys_a: array<u32>;
+var<storage, read> input_keys: array<u32>;
 @group(0) @binding(3)
-var<storage, read_write> keys_b: array<u32>;
+var<storage, read_write> output_keys: array<u32>;
 @group(0) @binding(4)
-var<storage, read_write> payload_a: array<u32>;
+var<storage, read> input_payloads: array<u32>;
 @group(0) @binding(5)
-var<storage, read_write> payload_b: array<u32>;
+var<storage, read_write> output_payloads: array<u32>;
 
-@compute @workgroup_size({{ HISTOGRAM_WG_SIZE }})
-fn zero_histograms(@builtin(global_invocation_id) gid: vec3<u32>, @builtin(num_workgroups) nwg: vec3<u32>) {
-    let scatter_block_kvs = histogram_wg_size * RS_SCATTER_BLOCK_ROWS;
-    let scatter_blocks_ru = (infos.keys_size + scatter_block_kvs - 1u) / scatter_block_kvs;
-
-    let histogram_words = (rs_keyval_size + scatter_blocks_ru - 1u) * rs_radix_size;
-
-    let line_size = nwg.x * histogram_wg_size;
-    for (var cur_index = gid.x; cur_index < histogram_words; cur_index += line_size) {
-        atomicStore(&internal_mem[cur_index], 0u);
-    }
+fn ceil_div(value: u32, divisor: u32) -> u32 {
+    return (value + divisor - 1u) / divisor;
 }
 
-var<workgroup> smem: array<atomic<u32>, {{ RS_RADIX_SIZE }}>;
-var<private> kv: array<u32, 15>;
-
-fn zero_smem(lid: u32) {
-    if lid < rs_radix_size {
-        atomicStore(&smem[lid], 0u);
+fn scan_level_words(level: u32) -> u32 {
+    var words = sort_radix_size * infos.max_workgroups;
+    for (var current = 0u; current < level; current += 1u) {
+        words = ceil_div(words, sort_scan_items_per_wg);
     }
+    return words;
 }
 
-fn histogram_pass(pass_: u32, lid: u32) {
-    zero_smem(lid);
+fn scan_level_offset(level: u32) -> u32 {
+    var offset = 0u;
+    var words = sort_radix_size * infos.max_workgroups;
+    for (var current = 0u; current < level; current += 1u) {
+        offset += words;
+        words = ceil_div(words, sort_scan_items_per_wg);
+    }
+    return offset;
+}
+
+var<workgroup> block_histograms: array<atomic<u32>, {{ SORT_RADIX_SIZE }}>;
+
+@compute @workgroup_size({{ SORT_WG_SIZE_X }}, {{ SORT_WG_SIZE_Y }}, 1)
+fn block_histogram(
+    @builtin(workgroup_id) workgroup_id: vec3<u32>,
+    @builtin(local_invocation_index) local_index: u32,
+) {
+    if local_index < sort_radix_size {
+        atomicStore(&block_histograms[local_index], 0u);
+    }
     workgroupBarrier();
 
-    for (var j = 0u; j < RS_HISTOGRAM_BLOCK_ROWS; j++) {
-        let u_val = bitcast<u32>(kv[j]);
-        let digit = extractBits(u_val, pass_ * rs_radix_log2, rs_radix_log2);
-        atomicAdd(&smem[digit], 1u);
+    let block_base = workgroup_id.x * sort_keys_per_wg;
+    for (var item = 0u; item < sort_items_per_thread; item += 1u) {
+        let index = block_base + item * sort_threads_per_wg + local_index;
+        if index < infos.keys_size {
+            let digit = (input_keys[index] >> radix_shift) & (sort_radix_size - 1u);
+            atomicAdd(&block_histograms[digit], 1u);
+        }
     }
 
     workgroupBarrier();
-
-    let histogram_offset = rs_radix_size * pass_ + lid;
-    if lid < rs_radix_size {
-        atomicAdd(&internal_mem[histogram_offset], atomicLoad(&smem[lid]));
+    if local_index < sort_radix_size {
+        let histogram_index =
+            local_index * infos.max_workgroups + workgroup_id.x;
+        internal_mem[histogram_index] =
+            atomicLoad(&block_histograms[local_index]);
     }
 }
 
-fn fill_kv_keys_a(wid: u32, lid: u32) {
-    let rs_block_keyvals = RS_HISTOGRAM_BLOCK_ROWS * histogram_wg_size;
-    let kv_in_offset = wid * rs_block_keyvals + lid;
-    for (var i = 0u; i < RS_HISTOGRAM_BLOCK_ROWS; i++) {
-        let pos = kv_in_offset + i * histogram_wg_size;
-        kv[i] = keys_a[pos];
+var<workgroup> scan_temp: array<u32, {{ SORT_SCAN_ITEMS_PER_WG }}>;
+
+@compute @workgroup_size({{ SORT_WG_SIZE_X }}, {{ SORT_WG_SIZE_Y }}, 1)
+fn prefix_scan(
+    @builtin(workgroup_id) workgroup_id: vec3<u32>,
+    @builtin(local_invocation_index) local_index: u32,
+) {
+    let level_words = scan_level_words(scan_level);
+    let level_offset = scan_level_offset(scan_level);
+    let block_base = workgroup_id.x * sort_scan_items_per_wg;
+    let local_first = local_index * 2u;
+    let first = block_base + local_first;
+    let second = first + 1u;
+
+    scan_temp[local_first] = 0u;
+    scan_temp[local_first + 1u] = 0u;
+    if first < level_words {
+        scan_temp[local_first] = internal_mem[level_offset + first];
     }
-}
+    if second < level_words {
+        scan_temp[local_first + 1u] = internal_mem[level_offset + second];
+    }
 
-@compute @workgroup_size({{ HISTOGRAM_WG_SIZE }})
-fn calculate_histogram(@builtin(workgroup_id) wid: vec3<u32>, @builtin(local_invocation_id) lid: vec3<u32>) {
-    fill_kv_keys_a(wid.x, lid.x);
-
-    histogram_pass(3u, lid.x);
-    histogram_pass(2u, lid.x);
-    histogram_pass(1u, lid.x);
-    histogram_pass(0u, lid.x);
-}
-
-fn prefix_reduce_smem(lid: u32) {
     var offset = 1u;
-    for (var d = rs_radix_size >> 1u; d > 0u; d = d >> 1u) {
+    for (
+        var scan_width = sort_scan_items_per_wg >> 1u;
+        scan_width > 0u;
+        scan_width >>= 1u
+    ) {
         workgroupBarrier();
-        if lid < d {
-            let ai = offset * (2u * lid + 1u) - 1u;
-            let bi = offset * (2u * lid + 2u) - 1u;
-            atomicAdd(&smem[bi], atomicLoad(&smem[ai]));
+        if local_index < scan_width {
+            let left = offset * (2u * local_index + 1u) - 1u;
+            let right = offset * (2u * local_index + 2u) - 1u;
+            scan_temp[right] += scan_temp[left];
         }
-        offset = offset << 1u;
+        offset <<= 1u;
     }
 
-    if lid == 0u {
-        atomicStore(&smem[rs_radix_size - 1u], 0u);
+    workgroupBarrier();
+    if local_index == 0u {
+        let total = scan_temp[sort_scan_items_per_wg - 1u];
+        scan_temp[sort_scan_items_per_wg - 1u] = 0u;
+        internal_mem[level_offset + level_words + workgroup_id.x] = total;
     }
 
-    for (var d = 1u; d < rs_radix_size; d = d << 1u) {
-        offset = offset >> 1u;
+    for (
+        var scan_width = 1u;
+        scan_width < sort_scan_items_per_wg;
+        scan_width <<= 1u
+    ) {
+        offset >>= 1u;
         workgroupBarrier();
-        if lid < d {
-            let ai = offset * (2u * lid + 1u) - 1u;
-            let bi = offset * (2u * lid + 2u) - 1u;
-            let t = atomicLoad(&smem[ai]);
-            atomicStore(&smem[ai], atomicLoad(&smem[bi]));
-            atomicAdd(&smem[bi], t);
+        if local_index < scan_width {
+            let left = offset * (2u * local_index + 1u) - 1u;
+            let right = offset * (2u * local_index + 2u) - 1u;
+            let left_value = scan_temp[left];
+            scan_temp[left] = scan_temp[right];
+            scan_temp[right] += left_value;
         }
     }
-}
 
-@compute @workgroup_size({{ PREFIX_WG_SIZE }})
-fn prefix_histogram(@builtin(workgroup_id) wid: vec3<u32>, @builtin(local_invocation_id) lid: vec3<u32>) {
-
-    let histogram_base = (rs_keyval_size - 1u - wid.x) * rs_radix_size;
-    let histogram_offset = histogram_base + lid.x;
-
-    atomicStore(&smem[lid.x], atomicLoad(&internal_mem[histogram_offset]));
-    atomicStore(&smem[lid.x + {{ PREFIX_WG_SIZE }}u], atomicLoad(&internal_mem[histogram_offset + {{ PREFIX_WG_SIZE }}u]));
-
-    prefix_reduce_smem(lid.x);
     workgroupBarrier();
-
-    atomicStore(&internal_mem[histogram_offset], atomicLoad(&smem[lid.x]));
-    atomicStore(&internal_mem[histogram_offset + {{ PREFIX_WG_SIZE }}u], atomicLoad(&smem[lid.x + {{ PREFIX_WG_SIZE }}u]));
-}
-
-var<workgroup> scatter_smem: array<u32, RS_MEM_DWORDS>;
-
-fn partitions_base_offset() -> u32 {
-    return rs_keyval_size * rs_radix_size;
-}
-
-fn histogram_load(digit: u32) -> u32 {
-    return atomicLoad(&smem[digit]);
-}
-
-fn histogram_store(digit: u32, count: u32) {
-    atomicStore(&smem[digit], count);
-}
-
-const rs_partition_mask_status: u32 = 0xC0000000u;
-const rs_partition_mask_count: u32 = 0x3FFFFFFFu;
-
-var<private> kr: array<u32, 15>;
-var<private> pv: array<u32, 15>;
-
-fn fill_even_kv(wid: u32, lid: u32) {
-    let subgroup_id = lid / histogram_sg_size;
-    let subgroup_invoc_id = lid - subgroup_id * histogram_sg_size;
-    let subgroup_keyvals = RS_SCATTER_BLOCK_ROWS * histogram_sg_size;
-    let rs_block_keyvals = RS_HISTOGRAM_BLOCK_ROWS * histogram_wg_size;
-    let kv_in_offset = wid * rs_block_keyvals + subgroup_id * subgroup_keyvals + subgroup_invoc_id;
-    for (var i = 0u; i < RS_HISTOGRAM_BLOCK_ROWS; i++) {
-        let pos = kv_in_offset + i * histogram_sg_size;
-        kv[i] = keys_a[pos];
-        pv[i] = payload_a[pos];
+    if first < level_words {
+        internal_mem[level_offset + first] = scan_temp[local_first];
+    }
+    if second < level_words {
+        internal_mem[level_offset + second] = scan_temp[local_first + 1u];
     }
 }
 
-fn fill_odd_kv(wid: u32, lid: u32) {
-    let subgroup_id = lid / histogram_sg_size;
-    let subgroup_invoc_id = lid - subgroup_id * histogram_sg_size;
-    let subgroup_keyvals = RS_SCATTER_BLOCK_ROWS * histogram_sg_size;
-    let rs_block_keyvals = RS_HISTOGRAM_BLOCK_ROWS * histogram_wg_size;
-    let kv_in_offset = wid * rs_block_keyvals + subgroup_id * subgroup_keyvals + subgroup_invoc_id;
-    for (var i = 0u; i < RS_HISTOGRAM_BLOCK_ROWS; i++) {
-        let pos = kv_in_offset + i * histogram_sg_size;
-        kv[i] = keys_b[pos];
-        pv[i] = payload_b[pos];
-    }
-}
-
-fn scatter(
-    pass_: u32,
-    lid: vec3<u32>,
-    gid: vec3<u32>,
-    wid: vec3<u32>,
-    nwg: vec3<u32>,
-    partition_status_invalid: u32,
-    partition_status_reduction: u32,
-    partition_status_prefix: u32,
+@compute @workgroup_size({{ SORT_WG_SIZE_X }}, {{ SORT_WG_SIZE_Y }}, 1)
+fn prefix_add(
+    @builtin(workgroup_id) workgroup_id: vec3<u32>,
+    @builtin(local_invocation_index) local_index: u32,
 ) {
-    let partition_mask_invalid = partition_status_invalid << 30u;
-    let partition_mask_reduction = partition_status_reduction << 30u;
-    let partition_mask_prefix = partition_status_prefix << 30u;
+    let level_words = scan_level_words(scan_level);
+    let level_offset = scan_level_offset(scan_level);
+    let parent_offset = level_offset + level_words;
+    let block_base = workgroup_id.x * sort_scan_items_per_wg;
+    let first = block_base + local_index * 2u;
+    let second = first + 1u;
+    let addend = internal_mem[parent_offset + workgroup_id.x];
 
-    let subgroup_id = lid.x / histogram_sg_size;
-    let subgroup_offset = subgroup_id * histogram_sg_size;
-    let subgroup_tid = lid.x - subgroup_offset;
-    let subgroup_count = {{ SCATTER_WG_SIZE }}u / histogram_sg_size;
-    for (var i = 0u; i < RS_SCATTER_BLOCK_ROWS; i++) {
-        let u_val = bitcast<u32>(kv[i]);
-        let digit = extractBits(u_val, pass_ * rs_radix_log2, rs_radix_log2);
-        atomicStore(&smem[lid.x], digit);
-        var count = 0u;
-        var rank = 0u;
+    if first < level_words {
+        internal_mem[level_offset + first] += addend;
+    }
+    if second < level_words {
+        internal_mem[level_offset + second] += addend;
+    }
+}
 
-        for (var j = 0u; j < histogram_sg_size; j++) {
-            if atomicLoad(&smem[subgroup_offset + j]) == digit {
-                count += 1u;
-                if j <= subgroup_tid {
-                    rank += 1u;
-                }
-            }
-        }
+var<workgroup> digit_masks:
+    array<atomic<u32>, {{ SORT_RADIX_SIZE }} * ({{ SORT_THREADS_PER_WG }} / 32)>;
+var<workgroup> digit_offsets: array<u32, {{ SORT_RADIX_SIZE }}>;
 
-        kr[i] = (count << 16u) | rank;
+fn rank_in_round(digit: u32, local_index: u32) -> u32 {
+    let word_index = local_index >> 5u;
+    let bit_index = local_index & 31u;
+    let mask_base = digit * sort_mask_words_per_digit;
+    var rank = digit_offsets[digit];
+
+    for (var word = 0u; word < word_index; word += 1u) {
+        rank += countOneBits(atomicLoad(&digit_masks[mask_base + word]));
     }
 
-    zero_smem(lid.x);
+    let current_word = atomicLoad(&digit_masks[mask_base + word_index]);
+    let lower_bits = (1u << bit_index) - 1u;
+    rank += countOneBits(current_word & lower_bits);
+    return rank;
+}
+
+@compute @workgroup_size({{ SORT_WG_SIZE_X }}, {{ SORT_WG_SIZE_Y }}, 1)
+fn ranked_scatter(
+    @builtin(workgroup_id) workgroup_id: vec3<u32>,
+    @builtin(local_invocation_index) local_index: u32,
+) {
+    if local_index < sort_radix_size {
+        digit_offsets[local_index] = 0u;
+    }
+    for (
+        var mask_index = local_index;
+        mask_index < sort_radix_size * sort_mask_words_per_digit;
+        mask_index += sort_threads_per_wg
+    ) {
+        atomicStore(&digit_masks[mask_index], 0u);
+    }
     workgroupBarrier();
 
-    for (var i = 0u; i < subgroup_count; i++) {
-        if subgroup_id == i {
-            for (var j = 0u; j < RS_SCATTER_BLOCK_ROWS; j++) {
-                let v = bitcast<u32>(kv[j]);
-                let digit = extractBits(v, pass_ * rs_radix_log2, rs_radix_log2);
-                let prev = histogram_load(digit);
-                let rank = kr[j] & 0xFFFFu;
-                let count = kr[j] >> 16u;
-                kr[j] = prev + rank;
+    let block_base = workgroup_id.x * sort_keys_per_wg;
+    for (var item = 0u; item < sort_items_per_thread; item += 1u) {
+        let index = block_base + item * sort_threads_per_wg + local_index;
+        let valid = index < infos.keys_size;
+        var key = 0u;
+        var payload = 0u;
+        var digit = 0u;
 
-                if rank == count {
-                    histogram_store(digit, prev + count);
-                }
-            }
+        if valid {
+            key = input_keys[index];
+            payload = input_payloads[index];
+            digit = (key >> radix_shift) & (sort_radix_size - 1u);
+            let mask_index =
+                digit * sort_mask_words_per_digit + (local_index >> 5u);
+            atomicOr(&digit_masks[mask_index], 1u << (local_index & 31u));
         }
+
         workgroupBarrier();
-    }
-
-    let partition_offset = lid.x + partitions_base_offset();
-    let partition_base = wid.x * rs_radix_size;
-    if wid.x == 0u {
-        let hist_offset = pass_ * rs_radix_size + lid.x;
-        if lid.x < rs_radix_size {
-            let exc = atomicLoad(&internal_mem[hist_offset]);
-            let red = histogram_load(lid.x);
-
-            scatter_smem[lid.x] = exc;
-            atomicStore(&internal_mem[partition_offset], (exc + red) | partition_mask_prefix);
-        }
-    } else {
-        if lid.x < rs_radix_size && wid.x < nwg.x - 1u {
-            let red = histogram_load(lid.x);
-            atomicStore(&internal_mem[partition_offset + partition_base], red | partition_mask_reduction);
-        }
-
-        if lid.x < rs_radix_size {
-            var partition_base_prev = partition_base - rs_radix_size;
-            var exc = 0u;
-
-            loop {
-                let prev = atomicLoad(&internal_mem[partition_base_prev + partition_offset]);
-                if (prev & rs_partition_mask_status) == partition_mask_invalid {
-                    continue;
-                }
-
-                exc += prev & rs_partition_mask_count;
-                if (prev & rs_partition_mask_status) != partition_mask_prefix {
-                    partition_base_prev -= rs_radix_size;
-                    continue;
-                }
-
-                scatter_smem[lid.x] = exc;
-                if wid.x < nwg.x - 1u {
-                    atomicAdd(&internal_mem[partition_offset + partition_base], exc | (1u << 30u));
-                }
-                break;
+        if valid {
+            let local_rank = rank_in_round(digit, local_index);
+            let histogram_index =
+                digit * infos.max_workgroups + workgroup_id.x;
+            let output_index = internal_mem[histogram_index] + local_rank;
+            if write_keys != 0u {
+                output_keys[output_index] = key;
             }
+            output_payloads[output_index] = payload;
         }
-    }
 
-    prefix_reduce_smem(lid.x);
-    workgroupBarrier();
-
-    for (var i = 0u; i < RS_SCATTER_BLOCK_ROWS; i++) {
-        let v = bitcast<u32>(kv[i]);
-        let digit = extractBits(v, pass_ * rs_radix_log2, rs_radix_log2);
-        let exc = histogram_load(digit);
-        let idx = exc + kr[i];
-        kr[i] |= idx << 16u;
-    }
-    workgroupBarrier();
-
-    let smem_reorder_offset = rs_radix_size;
-    let smem_base = smem_reorder_offset + lid.x;
-
-    for (var j = 0u; j < RS_SCATTER_BLOCK_ROWS; j++) {
-        let smem_idx = smem_reorder_offset + (kr[j] >> 16u) - 1u;
-        scatter_smem[smem_idx] = bitcast<u32>(kv[j]);
-    }
-    workgroupBarrier();
-
-    for (var j = 0u; j < RS_SCATTER_BLOCK_ROWS; j++) {
-        kv[j] = scatter_smem[smem_base + j * {{ SCATTER_WG_SIZE }}u];
-    }
-    workgroupBarrier();
-
-    for (var j = 0u; j < RS_SCATTER_BLOCK_ROWS; j++) {
-        let smem_idx = smem_reorder_offset + (kr[j] >> 16u) - 1u;
-        scatter_smem[smem_idx] = pv[j];
-    }
-    workgroupBarrier();
-
-    for (var j = 0u; j < RS_SCATTER_BLOCK_ROWS; j++) {
-        pv[j] = scatter_smem[smem_base + j * {{ SCATTER_WG_SIZE }}u];
-    }
-    workgroupBarrier();
-
-    for (var i = 0u; i < RS_SCATTER_BLOCK_ROWS; i++) {
-        let smem_idx = smem_reorder_offset + (kr[i] >> 16u) - 1u;
-        scatter_smem[smem_idx] = kr[i];
-    }
-    workgroupBarrier();
-
-    for (var i = 0u; i < RS_SCATTER_BLOCK_ROWS; i++) {
-        kr[i] = scatter_smem[smem_base + i * {{ SCATTER_WG_SIZE }}u] & 0xFFFFu;
-    }
-
-    for (var i = 0u; i < RS_SCATTER_BLOCK_ROWS; i++) {
-        let v = bitcast<u32>(kv[i]);
-        let digit = extractBits(v, pass_ * rs_radix_log2, rs_radix_log2);
-        let exc = scatter_smem[digit];
-        kr[i] += exc - 1u;
-    }
-}
-
-
-@compute @workgroup_size({{ SCATTER_WG_SIZE }})
-fn scatter_pass_0(
-    @builtin(workgroup_id) wid: vec3<u32>, @builtin(local_invocation_id) lid: vec3<u32>,
-    @builtin(global_invocation_id) gid: vec3<u32>, @builtin(num_workgroups) nwg: vec3<u32>
-) {
-    fill_even_kv(wid.x, lid.x);
-    scatter(0u, lid, gid, wid, nwg, 0u, 1u, 2u);
-    for (var i = 0u; i < RS_SCATTER_BLOCK_ROWS; i++) {
-        keys_b[kr[i]] = kv[i];
-        payload_b[kr[i]] = pv[i];
-    }
-}
-
-@compute @workgroup_size({{ SCATTER_WG_SIZE }})
-fn scatter_pass_1(
-    @builtin(workgroup_id) wid: vec3<u32>, @builtin(local_invocation_id) lid: vec3<u32>,
-    @builtin(global_invocation_id) gid: vec3<u32>, @builtin(num_workgroups) nwg: vec3<u32>
-) {
-    fill_odd_kv(wid.x, lid.x);
-    scatter(1u, lid, gid, wid, nwg, 2u, 3u, 0u);
-    for (var i = 0u; i < RS_SCATTER_BLOCK_ROWS; i++) {
-        keys_a[kr[i]] = kv[i];
-        payload_a[kr[i]] = pv[i];
-    }
-}
-
-@compute @workgroup_size({{ SCATTER_WG_SIZE }})
-fn scatter_pass_2(
-    @builtin(workgroup_id) wid: vec3<u32>, @builtin(local_invocation_id) lid: vec3<u32>,
-    @builtin(global_invocation_id) gid: vec3<u32>, @builtin(num_workgroups) nwg: vec3<u32>
-) {
-    fill_even_kv(wid.x, lid.x);
-    scatter(2u, lid, gid, wid, nwg, 0u, 1u, 2u);
-    for (var i = 0u; i < RS_SCATTER_BLOCK_ROWS; i++) {
-        keys_b[kr[i]] = kv[i];
-        payload_b[kr[i]] = pv[i];
-    }
-}
-
-@compute @workgroup_size({{ SCATTER_WG_SIZE }})
-fn scatter_pass_3(
-    @builtin(workgroup_id) wid: vec3<u32>, @builtin(local_invocation_id) lid: vec3<u32>,
-    @builtin(global_invocation_id) gid: vec3<u32>, @builtin(num_workgroups) nwg: vec3<u32>
-) {
-    fill_odd_kv(wid.x, lid.x);
-    scatter(3u, lid, gid, wid, nwg, 2u, 3u, 0u);
-    for (var i = 0u; i < RS_SCATTER_BLOCK_ROWS; i++) {
-        keys_a[kr[i]] = kv[i];
-        payload_a[kr[i]] = pv[i];
+        if item + 1u < sort_items_per_thread {
+            workgroupBarrier();
+            if local_index < sort_radix_size {
+                let mask_base = local_index * sort_mask_words_per_digit;
+                var count = 0u;
+                for (
+                    var word = 0u;
+                    word < sort_mask_words_per_digit;
+                    word += 1u
+                ) {
+                    let mask_index = mask_base + word;
+                    count += countOneBits(atomicLoad(&digit_masks[mask_index]));
+                    atomicStore(&digit_masks[mask_index], 0u);
+                }
+                digit_offsets[local_index] += count;
+            }
+            workgroupBarrier();
+        }
     }
 }
