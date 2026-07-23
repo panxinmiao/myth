@@ -16,13 +16,39 @@ use winit::{event::WindowEvent, window::Window};
 pub use egui;
 pub use renderer::{Renderer, RendererOptions, ScreenDescriptor};
 
+/// Texture commands waiting for the next UI pass that reaches RDG prepare.
+///
+/// Surface acquisition can skip a frame before pass preparation. Keep commands
+/// from those frames so a later partial update never overtakes the full texture
+/// allocation it depends on.
+#[derive(Default)]
+struct PendingTexturesDelta(egui::TexturesDelta);
+
+impl PendingTexturesDelta {
+    fn append(&mut self, textures_delta: egui::TexturesDelta) {
+        self.0.append(textures_delta);
+    }
+
+    fn queue_free(&mut self, id: egui::TextureId) {
+        self.0.free.push(id);
+    }
+
+    fn clear_prepared_sets(&mut self) {
+        self.0.set.clear();
+    }
+
+    fn drain_submitted_frees(&mut self) -> std::vec::Drain<'_, egui::TextureId> {
+        self.0.free.drain(..)
+    }
+}
+
 /// Egui-based UI render pass integrated with Myth's render graph.
 pub struct UiPass {
     egui_ctx: egui::Context,
     state: egui_winit::State,
     renderer: Renderer,
     clipped_primitives: Vec<egui::ClippedPrimitive>,
-    textures_delta: egui::TexturesDelta,
+    textures_delta: PendingTexturesDelta,
     screen_descriptor: ScreenDescriptor,
     textures: TextureRegistry,
 }
@@ -41,7 +67,7 @@ impl UiPass {
             state,
             renderer,
             clipped_primitives: Vec::new(),
-            textures_delta: egui::TexturesDelta::default(),
+            textures_delta: PendingTexturesDelta::default(),
             screen_descriptor: ScreenDescriptor {
                 size_in_pixels: [size.width, size.height],
                 pixels_per_point: window.scale_factor() as f32,
@@ -85,9 +111,13 @@ impl UiPass {
         Some(self.texture_id(handle))
     }
 
+    /// Retires a registered Myth texture after the next successfully submitted
+    /// UI pass, once all encoded uses of its current binding are queue-owned.
     #[allow(dead_code)]
     pub fn free_texture(&mut self, handle: TextureHandle) {
-        self.textures.free(handle, &mut self.renderer);
+        if let Some(id) = self.textures.remove(handle) {
+            self.textures_delta.queue_free(id);
+        }
     }
 
     #[allow(dead_code)]
@@ -114,7 +144,7 @@ impl UiPass {
         } = self.egui_ctx.end_pass();
 
         self.state.handle_platform_output(window, platform_output);
-        self.textures_delta = textures_delta;
+        self.textures_delta.append(textures_delta);
         self.clipped_primitives = self
             .egui_ctx
             .tessellate(shapes, self.egui_ctx.pixels_per_point());
@@ -146,6 +176,19 @@ impl UiPass {
         self.textures
             .resolve(device, resource_manager, &mut self.renderer);
     }
+
+    fn retire_submitted_texture_frees(&mut self) {
+        let Self {
+            renderer,
+            textures_delta,
+            textures,
+            ..
+        } = self;
+        for id in textures_delta.drain_submitted_frees() {
+            renderer.free_texture(&id);
+            textures.free_by_id(id);
+        }
+    }
 }
 
 pub struct UiPassNode<'a> {
@@ -158,7 +201,7 @@ impl<'a> PassNode<'a> for UiPassNode<'a> {
         let device = ctx.device;
         let queue = ctx.queue;
 
-        for (id, delta) in &self.pass.textures_delta.set {
+        for (id, delta) in &self.pass.textures_delta.0.set {
             self.pass.renderer.update_texture(device, queue, *id, delta);
         }
 
@@ -169,13 +212,10 @@ impl<'a> PassNode<'a> for UiPassNode<'a> {
             &self.pass.screen_descriptor,
         );
 
-        for id in &self.pass.textures_delta.free {
-            self.pass.renderer.free_texture(id);
-            self.pass.textures.free_by_id(*id);
-        }
-
-        self.pass.textures_delta.set.clear();
-        self.pass.textures_delta.free.clear();
+        // A prepared frame can still fail before queue submission. Acknowledge
+        // texture uploads now, but retain frees until `after_submit` proves that
+        // this frame's last texture uses were accepted by the queue.
+        self.pass.textures_delta.clear_prepared_sets();
     }
 
     fn execute(&self, ctx: &ExecuteContext, encoder: &mut wgpu::CommandEncoder) {
@@ -204,5 +244,75 @@ impl<'a> PassNode<'a> for UiPassNode<'a> {
             &self.pass.clipped_primitives,
             &self.pass.screen_descriptor,
         );
+    }
+
+    fn after_submit(&mut self) {
+        self.pass.retire_submitted_texture_frees();
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::PendingTexturesDelta;
+
+    #[test]
+    fn texture_deltas_survive_a_frame_that_skips_prepare() {
+        let texture_id = egui::TextureId::Managed(0);
+        let options = egui::TextureOptions::LINEAR;
+        let full = egui::epaint::ImageDelta::full(
+            egui::ColorImage::filled([2, 2], egui::Color32::WHITE),
+            options,
+        );
+        let partial = egui::epaint::ImageDelta::partial(
+            [1, 1],
+            egui::ColorImage::filled([1, 1], egui::Color32::BLACK),
+            options,
+        );
+
+        let mut pending = PendingTexturesDelta::default();
+        pending.append(egui::TexturesDelta {
+            set: vec![(texture_id, full)],
+            free: Vec::new(),
+        });
+
+        // Simulate an occluded surface: RDG prepare is skipped, so the first
+        // frame's full allocation remains pending when the next frame arrives.
+        pending.append(egui::TexturesDelta {
+            set: vec![(texture_id, partial)],
+            free: Vec::new(),
+        });
+
+        let updates = &pending.0.set;
+        assert_eq!(updates.len(), 2);
+        assert_eq!(updates[0].0, texture_id);
+        assert!(updates[0].1.is_whole());
+        assert_eq!(updates[1].0, texture_id);
+        assert_eq!(updates[1].1.pos, Some([1, 1]));
+
+        pending.clear_prepared_sets();
+        assert!(pending.0.set.is_empty());
+    }
+
+    #[test]
+    fn texture_frees_wait_for_a_successful_submission() {
+        let first = egui::TextureId::Managed(7);
+        let second = egui::TextureId::User(8);
+        let mut pending = PendingTexturesDelta::default();
+
+        pending.append(egui::TexturesDelta {
+            set: Vec::new(),
+            free: vec![first],
+        });
+        pending.clear_prepared_sets();
+
+        // Simulate a failure after prepare but before queue submission. The
+        // explicit-free path then queues more work without retiring the first.
+        pending.queue_free(second);
+        pending.clear_prepared_sets();
+        assert_eq!(pending.0.free, [first, second]);
+
+        let retired = pending.drain_submitted_frees().collect::<Vec<_>>();
+        assert_eq!(retired, [first, second]);
+        assert!(pending.0.free.is_empty());
     }
 }

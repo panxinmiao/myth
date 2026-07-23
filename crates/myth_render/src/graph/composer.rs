@@ -80,6 +80,18 @@ use myth_resources::uniforms::LightBufferMetadata;
 use myth_scene::Scene;
 use myth_scene::camera::RenderCamera;
 
+fn present_then_reconfigure_if_needed<T>(
+    output: T,
+    reconfigure_after_present: bool,
+    present: impl FnOnce(T),
+    reconfigure: impl FnOnce(),
+) {
+    present(output);
+    if reconfigure_after_present {
+        reconfigure();
+    }
+}
+
 pub struct ComposerContext<'a> {
     pub wgpu_ctx: &'a mut WgpuContext,
     pub resource_manager: &'a mut ResourceManager,
@@ -418,18 +430,41 @@ impl<'a> FrameComposer<'a> {
         // `surface_output` is `Some` only in windowed mode and holds the
         // `SurfaceTexture` that must be `.present()`ed after submission.
         let (surface_view, width, height, surface_output);
+        let mut reconfigure_after_present = false;
 
         if let Some(surface) = &self.ctx.wgpu_ctx.surface {
             let output = match surface.get_current_texture() {
                 wgpu::CurrentSurfaceTexture::Success(frame) => frame,
                 wgpu::CurrentSurfaceTexture::Suboptimal(frame) => {
+                    reconfigure_after_present = true;
+                    log::debug!(
+                        "Acquired suboptimal swap-chain surface; reconfiguring after present"
+                    );
+                    frame
+                }
+                wgpu::CurrentSurfaceTexture::Timeout => {
+                    log::trace!("Skipped frame: timed out acquiring swap-chain surface");
+                    return;
+                }
+                wgpu::CurrentSurfaceTexture::Occluded => {
+                    log::debug!("Skipped frame: swap-chain surface is occluded");
+                    return;
+                }
+                wgpu::CurrentSurfaceTexture::Outdated => {
                     if let Some(config) = &self.ctx.wgpu_ctx.config {
                         surface.configure(&self.ctx.wgpu_ctx.device, config);
                     }
-                    frame
+                    log::debug!("Skipped frame: reconfigured outdated swap-chain surface");
+                    return;
                 }
-                _ => {
-                    log::error!("Failed to acquire swap-chain surface");
+                wgpu::CurrentSurfaceTexture::Lost => {
+                    log::warn!(
+                        "Skipped frame: lost swap-chain surface must be recreated by the application"
+                    );
+                    return;
+                }
+                wgpu::CurrentSurfaceTexture::Validation => {
+                    log::error!("Validation error while acquiring swap-chain surface");
                     return;
                 }
             };
@@ -456,8 +491,6 @@ impl<'a> FrameComposer<'a> {
 
         // ━━━ 2. Build Unified RDG ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 
-        let mut graph = RenderGraph::new(self.ctx.graph_storage, self.ctx.frame_arena);
-
         let surface_desc = TextureDesc::new_2d(
             width,
             height,
@@ -466,6 +499,10 @@ impl<'a> FrameComposer<'a> {
         );
 
         let surface_view_tracked = Tracked::with_id(surface_view, 0);
+
+        // Declared after the tracked external view so reverse drop order keeps
+        // the raw external-view pointer valid for the graph's whole lifetime.
+        let mut graph = RenderGraph::new(self.ctx.graph_storage, self.ctx.frame_arena);
 
         let surface_out =
             graph.import_external_resource("Surface_View", surface_desc, &surface_view_tracked);
@@ -1261,10 +1298,57 @@ impl<'a> FrameComposer<'a> {
             // ━━━ 4. Submit & Present ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 
             self.ctx.wgpu_ctx.queue.submit(Some(encoder.finish()));
+            graph.run_after_submit_hooks();
         };
 
+        // RenderGraph intentionally has no Drop implementation; consuming it
+        // here ends its storage borrow and all access to the raw external-view
+        // pointer before the tracked view is released.
+        #[allow(clippy::drop_non_drop)]
+        drop(graph);
+        drop(surface_view_tracked);
+
         if let Some(output) = surface_output {
-            output.present();
+            present_then_reconfigure_if_needed(
+                output,
+                reconfigure_after_present,
+                wgpu::SurfaceTexture::present,
+                || {
+                    if let (Some(surface), Some(config)) =
+                        (&self.ctx.wgpu_ctx.surface, &self.ctx.wgpu_ctx.config)
+                    {
+                        surface.configure(&self.ctx.wgpu_ctx.device, config);
+                    }
+                },
+            );
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::present_then_reconfigure_if_needed;
+
+    #[test]
+    fn suboptimal_surface_reconfigures_only_after_present() {
+        use std::cell::RefCell;
+
+        let events = RefCell::new(Vec::new());
+        present_then_reconfigure_if_needed(
+            (),
+            true,
+            |()| events.borrow_mut().push("present"),
+            || events.borrow_mut().push("reconfigure"),
+        );
+        assert_eq!(*events.borrow(), ["present", "reconfigure"]);
+
+        events.borrow_mut().clear();
+        present_then_reconfigure_if_needed(
+            (),
+            false,
+            |()| events.borrow_mut().push("present"),
+            || events.borrow_mut().push("reconfigure"),
+        );
+        assert_eq!(*events.borrow(), ["present"]);
     }
 }

@@ -15,12 +15,14 @@ use wgpu::CommandEncoder;
 ///
 /// Resource topology and naming are declared **outside** the `PassNode`,
 /// inside the closure passed to [`RenderGraph::add_pass`].  The node
-/// itself only participates in two runtime phases:
+/// itself participates in three runtime phases:
 ///
 /// 1. **`prepare`** — called after graph compilation and transient memory
 ///    allocation.  Assemble `BindGroup`s that reference RDG-managed
 ///    transient textures.
 /// 2. **`execute`** — record GPU commands into the shared encoder.
+/// 3. **`after_submit`** — retire pass-owned resources only after the shared
+///    command buffer has been handed to the queue.
 ///
 /// # Lifetime Model
 ///
@@ -46,6 +48,15 @@ pub trait PassNode<'a>: Send + Sync {
 
     /// Record GPU commands into the shared encoder.
     fn execute(&self, ctx: &ExecuteContext, encoder: &mut CommandEncoder);
+
+    /// Retire resources whose last encoded use has been handed to the queue.
+    ///
+    /// This is called synchronously once for each live pass after
+    /// [`wgpu::Queue::submit`] returns. It is not called when target
+    /// acquisition, preparation, or command encoding does not reach
+    /// submission. The callback observes queue submission, not GPU completion;
+    /// wgpu retains submitted resources for as long as the device needs them.
+    fn after_submit(&mut self) {}
 }
 
 // ─── NodeSlot ──────────────────────────────────────────────────────────────
@@ -61,7 +72,7 @@ pub trait PassNode<'a>: Send + Sync {
 ///
 /// The arena allocation must outlive this handle.  In practice this is
 /// guaranteed by the frame lifecycle: `arena.reset()` is called only
-/// after the entire execute phase completes.
+/// after execute and all after-submit callbacks complete.
 pub(crate) struct NodeSlot {
     /// Fat pointer to the `dyn PassNode` trait object.
     pub(crate) ptr: *mut dyn PassNode<'static>,
@@ -164,7 +175,7 @@ impl PassRecord {
     ///
     /// The returned reference is derived from a raw pointer stored in
     /// [`NodeSlot`].  Callers must ensure no aliasing mutable references
-    /// exist.  In practice, the sequential prepare→execute pipeline
+    /// exist.  In practice, the sequential prepare→execute→after-submit pipeline
     /// guarantees this.
     #[inline]
     #[allow(clippy::transmute_ptr_to_ptr)]

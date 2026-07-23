@@ -13,7 +13,9 @@
 //!    contiguously in pre-allocated memory chunks.
 //! 3. **Execute phase** — objects are accessed linearly, maximising
 //!    CPU L1/L2 cache hit rates.
-//! 4. Goto 1.
+//! 4. **Post-submit phase** — live passes receive
+//!    [`PassNode::after_submit`](super::node::PassNode::after_submit).
+//! 5. Goto 1.
 //!
 //! # Safety Contract
 //!

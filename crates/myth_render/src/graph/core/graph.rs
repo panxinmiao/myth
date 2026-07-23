@@ -1035,6 +1035,18 @@ impl<'a> RenderGraph<'a> {
     pub fn dump_mermaid(&self) -> String {
         self.storage.dump_mermaid()
     }
+
+    /// Notify every DPE-live pass after the frame has crossed the queue-submit
+    /// boundary.
+    ///
+    /// The composer calls this exactly once after a successful submission.
+    /// Keeping the traversal on `RenderGraph` centralizes access to the
+    /// arena-backed pass nodes.
+    pub(crate) fn run_after_submit_hooks(&mut self) {
+        for &pass_idx in &self.storage.execution_queue {
+            self.storage.passes[pass_idx].get_pass_mut().after_submit();
+        }
+    }
 }
 
 #[cfg(test)]
@@ -1518,6 +1530,41 @@ mod tests {
             .map(|&i| graph.storage.passes[i].name)
             .collect();
         assert_eq!(names, vec!["Writer", "Mutator", "Reader"]);
+    }
+
+    #[test]
+    fn after_submit_hooks_run_once_for_live_passes_only() {
+        use std::sync::atomic::{AtomicUsize, Ordering};
+
+        struct SubmitProbe<'a>(&'a AtomicUsize);
+
+        impl<'a> PassNode<'a> for SubmitProbe<'a> {
+            fn execute(&self, _ctx: &ExecuteContext, _encoder: &mut wgpu::CommandEncoder) {}
+
+            fn after_submit(&mut self) {
+                self.0.fetch_add(1, Ordering::Relaxed);
+            }
+        }
+
+        let live_submissions = AtomicUsize::new(0);
+        let dead_submissions = AtomicUsize::new(0);
+        let mut storage = GraphStorage::new();
+        let arena = FrameArena::new();
+        let mut graph = begin_test_frame(&mut storage, &arena);
+
+        graph.add_pass("Dead_Submit_Probe", |_builder| {
+            (SubmitProbe(&dead_submissions), ())
+        });
+        graph.add_pass("Live_Submit_Probe", |builder| {
+            builder.mark_side_effect();
+            (SubmitProbe(&live_submissions), ())
+        });
+
+        graph.compile_topology();
+        graph.run_after_submit_hooks();
+
+        assert_eq!(live_submissions.load(Ordering::Relaxed), 1);
+        assert_eq!(dead_submissions.load(Ordering::Relaxed), 0);
     }
 
     #[test]

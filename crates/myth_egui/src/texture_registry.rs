@@ -44,10 +44,8 @@ impl TextureRegistry {
         id
     }
 
-    pub(crate) fn free(&mut self, handle: TextureHandle, renderer: &mut Renderer) {
-        if let Some(texture) = self.textures.remove(&handle) {
-            renderer.free_texture(&texture.id);
-        }
+    pub(crate) fn remove(&mut self, handle: TextureHandle) -> Option<egui::TextureId> {
+        self.textures.remove(&handle).map(|texture| texture.id)
     }
 
     pub(crate) fn free_by_id(&mut self, id: egui::TextureId) {
