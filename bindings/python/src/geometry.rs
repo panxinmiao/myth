@@ -420,6 +420,7 @@ pub struct PyCustomGeometry {
     positions: Option<Vec<f32>>,
     normals: Option<Vec<f32>>,
     uvs: Option<Vec<f32>>,
+    colors: Option<Vec<f32>>,
     indices: Option<Vec<u32>>,
     handle: Option<myth_engine::GeometryHandle>,
 }
@@ -432,6 +433,7 @@ impl PyCustomGeometry {
             positions: None,
             normals: None,
             uvs: None,
+            colors: None,
             indices: None,
             handle: None,
         }
@@ -452,6 +454,12 @@ impl PyCustomGeometry {
     /// Set UV coordinates as a flat list [u0,v0, u1,v1, ...].
     fn set_uvs(&mut self, data: Vec<f32>) {
         self.uvs = Some(data);
+        self.handle = None;
+    }
+
+    /// Set vertex colors as a flat list [r0,g0,b0, r1,g1,b1, ...].
+    fn set_colors(&mut self, data: Vec<f32>) {
+        self.colors = Some(data);
         self.handle = None;
     }
 
@@ -501,6 +509,16 @@ impl PyCustomGeometry {
                     myth_engine::Attribute::new_planar::<[f32; 2]>(
                         bytemuck::cast_slice(uvs),
                         myth_engine::VertexFormat::Float32x2,
+                    ),
+                );
+            }
+
+            if let Some(ref colors) = self.colors {
+                geo.set_attribute(
+                    "color",
+                    myth_engine::Attribute::new_planar::<[f32; 4]>(
+                        bytemuck::cast_slice(colors),
+                        myth_engine::VertexFormat::Float32x4,
                     ),
                 );
             }
