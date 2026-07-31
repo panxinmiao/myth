@@ -2,6 +2,12 @@
 
 ## Unreleased
 
+## v0.3.0
+
+2026-07-31
+
+v0.3.0 establishes a stable baseline for the work completed since v0.2.0. The opt-in 3D Gaussian Splatting API remains experimental and may continue to evolve in future minor releases.
+
 ### Major Changes
 - Introduced **SSR (Screen Space Reflections)** as a first-class real-time reflection feature in Myth's high-fidelity renderer.
   - **Hierarchical Screen-Space Tracing:** Uses Hi-Z ray marching against the scene depth pyramid to trace glossy and mirror-like reflections efficiently.
@@ -18,10 +24,10 @@
   - **Scalable Quality Tiers:** Provides Low / Medium / High / Ultra presets to scale ray budget and denoiser cost across desktop and constrained hardware targets.
 
 - Introduced a **procedural sky system** powered by a physically-based atmospheric scattering model (Hillaire 2020), enabling high-quality real-time sky rendering with procedural celestial bodies (sun, moon, and stars).
-Also includes a `DayNightCycle` component for dynamic time progression, automatically syncing the trajectories of the sun, moon, and star field with scene parameters.
+  - Added a `DayNightCycle` component for dynamic time progression, automatically syncing the trajectories of the sun, moon, and star field with scene parameters.
 
-- Overhauled the **RenderGraph** into a more complete typed-resource system: buffers and textures are now first-class SSA resources with unified dependency tracking, typed node handles, and transient power-of-two buffer pooling for compatible reuse.
-Also migrated major compute-heavy paths such as 3D Gaussian Splatting, atmosphere baking, and PMREM/environment processing onto RDG-managed buffer lifetimes, removing ad-hoc side channels around the graph.
+- Overhauled the **RenderGraph** from texture-only SSA tracking into a unified typed-resource system: buffers and textures now share dependency tracking, typed node handles, and transient power-of-two buffer pooling for compatible reuse.
+  - Registered or imported resources used by 3D Gaussian Splatting, atmosphere baking, and PMREM/environment processing in the graph for dependency tracking; transient Gaussian scratch buffers use compatible pooled graph allocations.
 
 - Introduced a unified cached bind-group assembly API across `PrepareContext` and `ExtractContext`, centered around a fluent builder plus `myth_bind_group!`. This removes repetitive wgpu boilerplate, unifies static and transient bind-group construction, and ensures that RDG buffer bindings clamp pooled physical allocations back to their logical resource sizes.
 
@@ -36,12 +42,29 @@ Also migrated major compute-heavy paths such as 3D Gaussian Splatting, atmospher
   - Scene Graph & Post-Processing Integration: Gaussian clouds participate in the render state, scene graph, and High-Fidelity frame composition.
   - Asset Support: Load `.ply`, compressed `.npz` (via `gaussian-npz`), and SPZ v4 `NGSP` files (via `gaussian-spz`) through the async asset server.
 
+### Breaking Changes / Upgrade Notes
+- `AppHandler::compose_frame` was replaced by `AppHandler::render(&mut self, &mut Engine, &dyn Window)`. The default implementation calls `Engine::render_active_scene`; custom frame-graph users should call `Engine::compose_frame`, inject their passes, and finish with `FrameComposer::render`.
+- `Renderer::begin_frame` now takes an owned `RenderCamera` rather than `&RenderCamera`. `Camera::extract_render_camera` now requires `&mut self` so it can consume one-frame camera-cut state used by temporal effects.
+- Replaced `Scene::screen_space` with independent `Scene::ssss`, `Scene::ssr`, and `Scene::ssgi` settings. Use each setting's `set_enabled` method instead of `screen_space.enable_sss` / `screen_space.enable_ssr`.
+- `Image::data` is no longer a public `Option<Vec<u8>>`. Read bytes through `Image::data()` or `Image::with_data(...)`; create streaming images with `Image::new_dynamic` and update asset-managed textures through `AssetServer::update_dynamic_texture`.
+- `ToneMappingSettings::set_vignette_color` and `vignette_color` now use `Vec3` instead of `Vec4`. A separate final-display gamma control is available through `set_gamma` / `gamma`.
+- Removed `RendererInitConfig::required_limits`; renderer initialization now requests the selected adapter's limits. The default `power_preference` changed from `HighPerformance` to `None`, so applications that require a discrete/high-performance adapter should set it explicitly.
+- RenderGraph resource handles are now typed and versioned. Low-level code that accessed `TextureNodeId.0` must use `index()`; use `register_texture` / `register_buffer` and the generic `read`, `write`, `mutate`, or `replace` APIs for new graph code. Texture-specific compatibility helpers remain available.
+- `FpsCounter` is no longer re-exported from `myth::utils`; it lives in the repository's `myth_dev_utils` support crate for examples and integration tests. Downstream crates should provide their own counter.
+
+### Feature Flags
+- The umbrella crate's default features are now `winit`, `gltf`, `http`, and the new `advanced_noise` feature. `advanced_noise` embeds the full blue-noise array used by stochastic rendering passes.
+- `3dgs` enables the experimental Gaussian scene/rendering path and binary PLY loading. It is not enabled by default.
+- `gaussian-npz` and `gaussian-spz` each imply `3dgs` and add the compressed NPZ and SPZ v4 loaders respectively.
+- `egui` enables the optional `myth_egui` facade and Myth-native render-graph UI pass.
+- Existing opt-in flags such as `debug_view`, `rdg_inspector`, and `gltf-meshopt` remain opt-in.
+
 ### Refactored / Changed
 - Split egui support into a dedicated `myth_egui` crate with a Myth-native renderer and optional `myth/egui` facade, removing the examples' dependency on `egui-wgpu`.
   - Added stable Myth texture registration for egui via `UiPass::texture_id` / `UiPass::register_texture`, allowing `TextureHandle` values to be shown directly in egui while the backend keeps the GPU view and sampler synchronized.
 
 - Removed the `compose_frame` method from `AppHandler` and narrowed its responsibility to providing only a high-level render trigger, with full render graph orchestration delegated to the `Engine`.
-  > _Note: This simplifies `AppRunner`, returning control of `RedrawRequested` execution to the user. It also improves the extensibility of headless mode — `FrameComposer` can now be accessed directly to attach custom RenderGraph nodes (e.g., offline data extraction or custom compute passes), without being constrained by the window system lifecycle._
+  > _Note: This simplifies `AppRunner` while giving applications an explicit render hook for frame composition. It also improves the extensibility of headless mode — `FrameComposer` can now be accessed directly to attach custom RenderGraph nodes (e.g., offline data extraction or custom compute passes), without being constrained by the window system lifecycle._
 
 - Updated `RenderCamera` in `Renderer::begin_frame` and `ComposerContext` to be passed by value.
   > _Note: This clarifies the architectural intent of `RenderCamera` data as a transient snapshot and removes borrowing dependencies on local variables._
@@ -51,11 +74,14 @@ Also migrated major compute-heavy paths such as 3D Gaussian Splatting, atmospher
 - Added "dynamic image/texture" support via `Image::new_dynamic` and `AssetServer::update_dynamic_texture`. The update path reuses an existing buffer when the replacement byte length matches, supporting video frames, dynamic UI elements, and procedural textures.
 - Added some custom material examples to the Gallery, showcasing the use of custom shader code and material definitions.
 - Added some primitive geometry constructors to the API, such as `create_cone`, `create_cylinder`, `create_torus`, etc.
-- Added `LIGHT_FLAG_IS_SUN`/`LIGHT_FLAG_IS_MOON` flags to the `Light` struct, allowing the renderer to identify and treat directional lights as celestial bodies for sky rendering and IBL purposes. Now sunlight correctly considers the atmospheric scattering effects from the procedural sky system.
+- Added `LIGHT_FLAG_IS_SUN`/`LIGHT_FLAG_IS_MOON` flags to mark celestial directional lights so punctual direct lighting can apply atmospheric transmittance.
 
 ### Fixed
 - Fixed an issue of UnlitMaterial UV transform not taking effect.
 - Fixed an issue causing conflicts in GPU resource ID allocation.
+- Fixed SSR temporal jitter and strengthened its diagnostic/debug-view paths.
+- Fixed glTF meshopt loading regressions.
+- Hardened surface presentation/reconfiguration and egui frame lifecycle handling.
 
 ### Engineering & DX (Developer Experience)
 * **[Build]** Replaced legacy shell/batch build scripts with a pure-Rust `cargo xtask` workflow, ensuring cross-platform consistency for WebAssembly compilation and Gallery generation.
@@ -128,7 +154,8 @@ Inspired by the ergonomic simplicity of Three.js and built on the modern power o
 
 ## Diffs
 
-- [Unreleased](https://github.com/panxinmiao/myth/compare/0.2.0...HEAD)
+- [Unreleased](https://github.com/panxinmiao/myth/compare/0.3.0...HEAD)
+- [v0.3.0](https://github.com/panxinmiao/myth/compare/0.2.0...0.3.0)
 - [v0.2.0](https://github.com/panxinmiao/myth/compare/0.1.1...0.2.0)
 - [v0.1.1](https://github.com/panxinmiao/myth/compare/0.1.0...0.1.1)
 - [v0.1.0](https://github.com/panxinmiao/myth/compare/0.0.1...0.1.0)

@@ -17,6 +17,8 @@ use crate::scene::{Scene, SceneLogic};
 ///
 /// The current implementation assumes an equinox sun path, which keeps the
 /// API compact while still producing physically coherent daily motion.
+/// Its local astronomical frame maps north to world `-Z` and south to world
+/// `+Z`; world `+X` points east and `+Y` points toward the zenith.
 #[derive(Debug, Clone)]
 pub struct DayNightCycle {
     /// Local solar time in hours.
@@ -263,7 +265,7 @@ mod tests {
         let cycle = DayNightCycle::new(12.0, 45.0);
         let sun = cycle.compute_sun_direction();
         assert!(sun.y > 0.0);
-        assert!(sun.z < 0.0);
+        assert!(sun.z > 0.0);
     }
 
     #[test]
