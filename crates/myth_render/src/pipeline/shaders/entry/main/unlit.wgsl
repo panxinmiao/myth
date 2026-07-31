@@ -88,6 +88,11 @@ fn vs_main(in: VertexInput, @builtin(vertex_index) vertex_index: u32) -> VertexO
 @fragment
 fn fs_main(in: VertexOutput) -> FragmentOutput {
     var diffuse_color = u_material.color;
+
+    $$ if HAS_COLOR
+    diffuse_color = diffuse_color * in.color;
+    $$ endif
+
     {$ if HAS_MAP $}
     let tex_color = textureSample(t_map, s_map, in.map_uv);
     diffuse_color = diffuse_color * tex_color;
