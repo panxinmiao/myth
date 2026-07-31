@@ -162,6 +162,18 @@ impl Engine {
         Ok(())
     }
 
+    pub fn init_from_existing(
+        &mut self,
+        device: myth_render::wgpu::Device,
+        queue: myth_render::wgpu::Queue,
+        width: u32,
+        height: u32,
+        format: myth_render::wgpu::TextureFormat,
+    ) -> myth_core::Result<()> {
+        self.renderer.init_from_existing(device, queue, width, height, format)?;
+        Ok(())
+    }
+
     /// Reads back the current headless render target as raw pixel data.
     ///
     /// The returned `Vec<u8>` contains tightly-packed pixel data whose byte

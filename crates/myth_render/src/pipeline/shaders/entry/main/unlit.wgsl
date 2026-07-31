@@ -57,6 +57,15 @@ fn vs_main(in: VertexInput, @builtin(vertex_index) vertex_index: u32) -> VertexO
         $$ endif
     $$ endif
 
+    $$ if HAS_NORMAL
+    if u_material.extrusion > 0.0 {
+        let norm_len = length(local_normal);
+        if norm_len > 0.0 {
+            local_pos = vec4<f32>(local_pos.xyz + (local_normal / norm_len) * u_material.extrusion, 1.0);
+        }
+    }
+    $$ endif
+
     let world_pos = u_model.world_matrix * local_pos;
 
     $$ if IN_TRANSPARENT_PASS is defined

@@ -2,7 +2,7 @@
 var lutTex: texture_storage_2d<rgba16float, write>;
 
 const PI: f32 = 3.141592653589793;
-const SAMPLE_COUNT: u32 = 1024u;
+const SAMPLE_COUNT: u32 = 256u;
 
 // Hammersley Sequence
 fn hammersley(i: u32, N: u32) -> vec2<f32> {

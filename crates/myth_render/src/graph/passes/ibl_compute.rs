@@ -18,7 +18,7 @@ use crate::pipeline::{
 };
 
 const SCENE_CACHE_TTL: u64 = 120;
-const STATIC_PMREM_SAMPLE_COUNT: u32 = 4096;
+const STATIC_PMREM_SAMPLE_COUNT: u32 = 256;
 const DYNAMIC_PMREM_SAMPLE_COUNT: u32 = 64;
 
 pub struct IblGraphOutput {

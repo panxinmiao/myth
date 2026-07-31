@@ -252,6 +252,31 @@ impl WgpuContext {
         })
     }
 
+    pub fn new_from_existing(
+        device: wgpu::Device,
+        queue: wgpu::Queue,
+        width: u32,
+        height: u32,
+        target_format: wgpu::TextureFormat,
+    ) -> Self {
+        let headless_texture = Self::create_headless_texture(&device, width, height, target_format);
+        Self {
+            device,
+            queue,
+            surface: None,
+            config: None,
+            headless_texture: Some(headless_texture),
+            target_width: width,
+            target_height: height,
+            depth_format: wgpu::TextureFormat::Depth32Float,
+            surface_view_format: target_format,
+            msaa_samples: 1,
+            anisotropy_clamp: 16,
+            render_path: RenderPath::BasicForward,
+            pipeline_settings_version: 0,
+        }
+    }
+
     /// Creates the offscreen render target texture for headless mode.
     fn create_headless_texture(
         device: &wgpu::Device,

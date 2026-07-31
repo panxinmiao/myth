@@ -264,6 +264,33 @@ impl Renderer {
         Ok(())
     }
 
+    pub fn init_from_existing(
+        &mut self,
+        device: wgpu::Device,
+        queue: wgpu::Queue,
+        width: u32,
+        height: u32,
+        format: wgpu::TextureFormat,
+    ) -> Result<()> {
+        if self.context.is_some() {
+            return Ok(());
+        }
+
+        self.size = (width, height);
+
+        let wgpu_ctx = WgpuContext::new_from_existing(
+            device,
+            queue,
+            width,
+            height,
+            format,
+        );
+
+        self.assemble_state(wgpu_ctx);
+        log::info!("Renderer initialized from existing GPU context ({width}×{height})");
+        Ok(())
+    }
+
     /// Assembles the internal renderer state from a fully initialised GPU context.
     fn assemble_state(&mut self, wgpu_ctx: WgpuContext) {
         let resource_manager = ResourceManager::new(

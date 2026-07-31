@@ -17,6 +17,10 @@ pub struct UnlitMaterial {
     #[uniform]
     pub alpha_test: f32,
 
+    /// Dynamic extrusion thickness (0.0 to disable).
+    #[uniform(default = "0.0")]
+    pub extrusion: f32,
+
     /// The color map.
     #[texture]
     pub map: TextureSlot,
