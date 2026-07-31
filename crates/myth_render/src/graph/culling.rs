@@ -571,8 +571,8 @@ fn prepare_shadow_commands(
                 let binding_code = format!(
                     "{}\n{}\n{}",
                     SHADOW_BINDING_WGSL,
-                    &gpu_material.binding_wgsl,
-                    &item.object_bind_group.binding_wgsl
+                    gpu_material.binding_wgsl,
+                    item.object_bind_group.binding_wgsl
                 );
 
                 options.inject_code(

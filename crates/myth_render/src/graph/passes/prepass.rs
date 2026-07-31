@@ -219,9 +219,9 @@ impl PrepassFeature {
             // ── Shader generation ──────────────────────────────────────
             let binding_code = format!(
                 "{}\n{}\n{}",
-                &gpu_world_binding_wgsl,
-                &gpu_material.binding_wgsl,
-                &cmd.object_bind_group.binding_wgsl
+                gpu_world_binding_wgsl,
+                gpu_material.binding_wgsl,
+                cmd.object_bind_group.binding_wgsl
             );
 
             options.inject_code(

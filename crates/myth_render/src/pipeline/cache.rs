@@ -279,7 +279,7 @@ impl PipelineCache {
         // Compile shader via ShaderManager
         let binding_code = format!(
             "{}\n{}\n{}",
-            &gpu_world.binding_wgsl, &gpu_material.binding_wgsl, &object_bind_group.binding_wgsl
+            gpu_world.binding_wgsl, gpu_material.binding_wgsl, object_bind_group.binding_wgsl
         );
 
         let mut opts = options.clone();
