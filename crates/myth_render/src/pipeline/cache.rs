@@ -26,6 +26,7 @@
 
 #[cfg(feature = "debug_view")]
 use myth_scene::DebugViewMode;
+use myth_scene::light::ShadowFaces;
 use rustc_hash::FxHashMap;
 use smallvec::SmallVec;
 
@@ -70,6 +71,7 @@ pub struct FastShadowPipelineKey {
     pub geometry_version: u64,
     pub instance_variants: u32,
     pub pipeline_settings_version: u64,
+    pub faces: ShadowFaces,
 }
 
 // ─── Pipeline Cache ──────────────────────────────────────────────────────────

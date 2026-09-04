@@ -46,6 +46,7 @@ use myth_resources::RenderableMaterialTrait;
 use myth_resources::material::{AlphaMode, Side};
 use myth_resources::uniforms::{DynamicModelUniforms, Mat3Uniform};
 use myth_scene::camera::RenderCamera;
+use myth_scene::light::ShadowFaces;
 
 /// Shadow-only WGSL binding declaration, injected into shadow depth shaders.
 const SHADOW_BINDING_WGSL: &str = "
@@ -512,6 +513,13 @@ fn prepare_shadow_commands(
 
         let view_frustum = view.frustum;
 
+        let faces = extracted_scene
+            .lights
+            .iter()
+            .find(|light| light.id == light_id)
+            .and_then(|light| light.shadow.as_ref())
+            .map_or(ShadowFaces::Back, |shadow| shadow.faces);
+
         let queue = render_lists
             .shadow_queues
             .entry((light_id, layer_index))
@@ -552,6 +560,7 @@ fn prepare_shadow_commands(
                 geometry_version: geometry.layout_version(),
                 instance_variants: item.item_variant_flags,
                 pipeline_settings_version,
+                faces,
             };
 
             let pipeline_id = if let Some(id) = pipeline_cache.get_shadow_pipeline_fast(fast_key) {
@@ -611,9 +620,12 @@ fn prepare_shadow_commands(
                     .map(|l| l.as_wgpu())
                     .collect();
 
-                // For shadow pipelines, we always cull front faces to avoid self-shadowing artifacts.
-                // Todo: consider making this configurable per-material or per-item if we encounter cases where back-face shadows are desirable.
-                let cull_mode = Some(wgpu::Face::Front);
+                // Recording one side means culling the other.
+                let cull_mode = match faces {
+                    ShadowFaces::Back => Some(wgpu::Face::Front),
+                    ShadowFaces::Front => Some(wgpu::Face::Back),
+                    ShadowFaces::Both => None,
+                };
 
                 let front_face = if item.item_variant_flags & 0x1 != 0 {
                     wgpu::FrontFace::Cw

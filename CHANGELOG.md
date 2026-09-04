@@ -2,6 +2,9 @@
 
 ## Unreleased
 
+### Added
+- `ShadowConfig::faces` selects which faces a light writes into its shadow map. The default records back faces as before, which keeps the occluder a wall's thickness from receivers outside a closed solid — but inside one that recorded face *is* the receiver, and a sealed room showed a bright line where its walls met its floor. Interiors can now record front faces and lean on `bias`/`normal_bias` instead.
+
 ## v0.3.0
 
 2026-07-31
