@@ -7,6 +7,20 @@ pub const LIGHT_FLAG_IS_SUN: u32 = 1 << 0;
 /// Light flag marking a directional light as the moon.
 pub const LIGHT_FLAG_IS_MOON: u32 = 1 << 1;
 
+/// Which faces of an occluder are written into the shadow map.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub enum ShadowFaces {
+    /// Back faces (default). On a closed solid this puts the recorded surface
+    /// a thickness away from any receiver outside it, which hides acne.
+    Back,
+    /// Front faces. Needed when a receiver is *inside* a closed solid, where
+    /// the back face is the receiver and the depth test has nothing to
+    /// separate. Costs the usual acne, so pair it with `bias`/`normal_bias`.
+    Front,
+    /// Both faces.
+    Both,
+}
+
 #[derive(Debug, Clone)]
 pub struct ShadowConfig {
     pub bias: f32,
@@ -20,6 +34,8 @@ pub struct ShadowConfig {
     /// Maximum shadow distance for directional lights (default 100.0).
     /// Beyond this distance, no shadow is rendered.
     pub max_shadow_distance: f32,
+    /// Which faces this light's shadow map records (default [`ShadowFaces::Back`]).
+    pub faces: ShadowFaces,
 }
 
 impl Default for ShadowConfig {
@@ -31,6 +47,7 @@ impl Default for ShadowConfig {
             cascade_count: 4,
             cascade_split_lambda: 0.5,
             max_shadow_distance: 100.0,
+            faces: ShadowFaces::Back,
         }
     }
 }
